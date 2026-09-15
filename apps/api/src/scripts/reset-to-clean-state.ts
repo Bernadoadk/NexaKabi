@@ -1,0 +1,129 @@
+/**
+ * Remet la base à son état de départ : référentiels et superadministrateur.
+ *
+ * ── Ce qui est conservé ───────────────────────────────────────────────────
+ *   · les catégories et les villes — référentiels du cahier des charges
+ *     (§6 et §57), sans lesquels aucun événement ne peut être créé ;
+ *   · les comptes SUPERADMIN, avec leurs identifiants et leur double
+ *     authentification, pour que la console reste accessible ;
+ *   · l'historique des migrations.
+ *
+ * ── Ce qui est effacé ─────────────────────────────────────────────────────
+ * Tout le reste : utilisateurs, organisations, événements, commandes,
+ * paiements, billets, contrôles d'entrée, grand livre, retraits,
+ * notifications, signalements, sessions, journal d'audit.
+ *
+ * ── Garde-fous ────────────────────────────────────────────────────────────
+ * Refuse de tourner en production. Exige `--confirmer`. N'efface rien sans
+ * qu'une sauvegarde `pg_dump` ait été faite — le script ne la fait pas, il
+ * vérifie qu'elle existe dans `storage/backups/` et date de moins d'une heure.
+ *
+ * Usage :
+ *   pg_dump … -f apps/api/storage/backups/<nom>.sql
+ *   pnpm --filter @nexakabi/api exec tsx src/scripts/reset-to-clean-state.ts --confirmer
+ */
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import 'dotenv/config';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../generated/prisma/client';
+
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+});
+
+/** Tables jamais vidées. Noms PostgreSQL, tels que `@@map` les déclare. */
+const KEPT_TABLES = new Set(['category', 'city', 'user', 'admin_credential', '_prisma_migrations']);
+
+const confirmed = process.argv.includes('--confirmer');
+
+function assertRecentBackup(): void {
+  const dir = join(process.cwd(), 'storage', 'backups');
+  let files: string[] = [];
+
+  try {
+    files = readdirSync(dir).filter((name) => name.endsWith('.sql'));
+  } catch {
+    // Dossier absent : aucune sauvegarde.
+  }
+
+  const recent = files
+    .map((name) => ({ name, mtime: statSync(join(dir, name)).mtimeMs }))
+    .filter((file) => Date.now() - file.mtime < 60 * 60_000);
+
+  if (recent.length === 0) {
+    console.error('Aucune sauvegarde de moins d’une heure dans storage/backups/.');
+    console.error('Faites d’abord un pg_dump : cette opération est irréversible.');
+    process.exit(1);
+  }
+
+  console.log(`Sauvegarde trouvée : ${recent[0]!.name}`);
+}
+
+async function main(): Promise<void> {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('Refusé en production.');
+    process.exit(1);
+  }
+
+  const tables = await prisma.$queryRaw<{ table_name: string }[]>`
+    SELECT table_name FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    ORDER BY table_name
+  `;
+
+  const toTruncate = tables.map((row) => row.table_name).filter((name) => !KEPT_TABLES.has(name));
+
+  const superadmins = await prisma.user.findMany({
+    where: { globalRole: 'SUPERADMIN', deletedAt: null },
+    select: { id: true, email: true },
+  });
+
+  const otherUsers = await prisma.user.count({
+    where: { NOT: { id: { in: superadmins.map((user) => user.id) } } },
+  });
+
+  console.log('');
+  console.log(`${toTruncate.length} table(s) seront vidées :`);
+  console.log(`  ${toTruncate.join(', ')}`);
+  console.log('');
+  console.log(`${otherUsers} compte(s) utilisateur seront supprimés.`);
+  console.log(
+    `${superadmins.length} superadministrateur(s) conservé(s) : ${superadmins.map((user) => user.email).join(', ')}`,
+  );
+  console.log('Catégories et villes conservées.');
+  console.log('');
+
+  if (superadmins.length === 0) {
+    console.error('Aucun SUPERADMIN en base : la console deviendrait inaccessible. Abandon.');
+    process.exit(1);
+  }
+
+  if (!confirmed) {
+    console.log('Aucune modification. Relancez avec --confirmer pour exécuter.');
+    return;
+  }
+
+  assertRecentBackup();
+
+  // TRUNCATE ... CASCADE vide aussi les tables qui référencent celles-ci,
+  // ce qui couvre toute dépendance oubliée. Les tables conservées ne sont pas
+  // dans la liste, et rien ne les référence en cascade depuis celles-ci.
+  const list = toTruncate.map((name) => `"${name}"`).join(', ');
+  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
+
+  const { count } = await prisma.user.deleteMany({
+    where: { NOT: { id: { in: superadmins.map((user) => user.id) } } },
+  });
+
+  console.log('');
+  console.log(`${toTruncate.length} table(s) vidée(s), ${count} compte(s) supprimé(s).`);
+  console.log('La base est à son état de départ.');
+}
+
+main()
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  })
+  .finally(() => void prisma.$disconnect());

@@ -1,0 +1,101 @@
+/**
+ * Styles de base de l'application.
+ * Importés après `tokens.css` et après la directive `@import 'tailwindcss'`.
+ */
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Le corail est réservé à l'action : il porte donc les liens,
+     mais jamais du texte courant en dessous de 16 px semi-gras. */
+  a {
+    color: var(--color-coral);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--color-coral-hover);
+  }
+
+  /* Les montants s'alignent verticalement dans les tables et les récapitulatifs. */
+  :where(input, textarea, select, button) {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Anneau de focus visible, identique partout — exigence d'accessibilité AA. */
+  :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-text-strong);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-scrollbar-thumb);
+    border-radius: 8px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  /* Chiffres tabulaires : obligatoire sur tout montant, toute référence,
+     tout compte à rebours. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Sur-titre des sections et des cartes. */
+  .eyebrow {
+    font-size: var(--text-eyebrow);
+    line-height: var(--text-eyebrow--line-height);
+    letter-spacing: var(--text-eyebrow--letter-spacing);
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+
+  /* Dégradé encre appliqué au bas de chaque visuel d'événement,
+     pour garantir la lisibilité du texte superposé. */
+  .ink-scrim {
+    background: linear-gradient(
+      to top,
+      rgb(18 16 43 / 0.94) 0%,
+      rgb(18 16 43 / 0.55) 38%,
+      transparent 70%
+    );
+  }
+
+  .ink-scrim-soft {
+    background: linear-gradient(to top, rgb(18 16 43 / 0.85), transparent 65%);
+  }
+
+  /* Zones tactiles. */
+  .tap {
+    min-height: var(--tap-min);
+  }
+
+  .tap-mobile {
+    min-height: var(--tap-mobile);
+  }
+}

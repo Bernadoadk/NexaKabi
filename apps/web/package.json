@@ -1,0 +1,39 @@
+{
+  "name": "@nexakabi/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000",
+    "lint": "eslint app",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rimraf .next .turbo"
+  },
+  "dependencies": {
+    "@nexakabi/contracts": "workspace:*",
+    "@nexakabi/ui": "workspace:*",
+    "@nexakabi/utils": "workspace:*",
+    "@noble/ed25519": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "@zxing/browser": "catalog:",
+    "dexie": "catalog:",
+    "lucide-react": "catalog:",
+    "next": "catalog:",
+    "qrcode": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@nexakabi/config": "workspace:*",
+    "@tailwindcss/postcss": "catalog:",
+    "@types/node": "catalog:",
+    "@types/qrcode": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "eslint": "catalog:",
+    "postcss": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:"
+  }
+}

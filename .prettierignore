@@ -1,0 +1,17 @@
+# Prototype de référence — LECTURE SEULE.
+# Ces fichiers ne doivent jamais être modifiés, formatés ni déplacés.
+design-reference/
+
+# Code généré
+apps/api/src/generated/
+**/dist/
+**/.next/
+**/.turbo/
+**/node_modules/
+**/coverage/
+
+# Verrous
+pnpm-lock.yaml
+
+# Généré par Next.js à chaque build
+apps/web/next-env.d.ts

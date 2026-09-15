@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+
+/* Mêmes jetons que le reste du produit : l'administration n'a pas son propre
+   thème. Un écran qui ne ressemble à rien d'autre se relit moins vite. */
+@import '@nexakabi/ui/styles/tokens.css';
+@import '@nexakabi/ui/styles/base.css';
+
+@source '../../../packages/ui/src';

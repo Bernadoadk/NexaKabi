@@ -1,0 +1,54 @@
+# Dépendances
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Turborepo
+.turbo/
+
+# Environnement
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Tests et couverture
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Éditeurs
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.swp
+
+# Système
+.DS_Store
+Thumbs.db
+
+# Prisma
+apps/api/prisma/*.db
+apps/api/prisma/*.db-journal
+# Client généré : reproductible par `pnpm db:generate`
+apps/api/src/generated/
+
+# Divers
+.cache/
+tmp/
+
+# Fichiers déposés en développement
+apps/api/storage/

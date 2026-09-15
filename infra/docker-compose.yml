@@ -1,0 +1,57 @@
+name: nexakabi
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: nexakabi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nexakabi
+      POSTGRES_PASSWORD: nexakabi
+      POSTGRES_DB: nexakabi
+      # Collation française : le tri des listes d'événements et de participants
+      # doit placer « École » avant « Zone », accents compris.
+      POSTGRES_INITDB_ARGS: '--locale=fr_FR.UTF-8 --encoding=UTF8'
+      LANG: fr_FR.utf8
+    ports:
+      # Lié à la BOUCLE LOCALE, jamais à toutes les interfaces.
+      #
+      # `'5432:5432'` publie sur 0.0.0.0 : sur un poste en réseau partagé — un
+      # espace de coworking, le wifi d'un client — la base devient joignable par
+      # tout le sous-réseau, avec les identifiants de développement qui figurent
+      # juste au-dessus. Le préfixe d'adresse ferme cela sans rien changer à
+      # l'usage local.
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nexakabi -d nexakabi']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexakabi-redis
+    restart: unless-stopped
+    # Redis porte les files BullMQ, la limitation de débit et les verrous de
+    # réservation de stock : la persistance AOF évite de perdre une réservation
+    # au redémarrage.
+    # `--requirepass` : Redis écoute sans aucune authentification par défaut.
+    # Il portera les files BullMQ, la limitation de débit et les verrous de
+    # réservation de stock — c'est-à-dire de quoi bloquer les ventes d'un
+    # événement pour qui sait s'y connecter.
+    command: redis-server --appendonly yes --requirepass nexakabi
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', 'nexakabi', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:

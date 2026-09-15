@@ -1,0 +1,35 @@
+{
+  "name": "@nexakabi/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contrat d'API partagé : énumérations et schémas Zod, source unique de vérité entre le web et l'API",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "clean": "rimraf dist .turbo"
+  },
+  "dependencies": {
+    "@nexakabi/utils": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@nexakabi/config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:"
+  }
+}

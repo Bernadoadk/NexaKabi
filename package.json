@@ -1,0 +1,33 @@
+{
+  "name": "nexa-kabi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plateforme béninoise de découverte, billetterie et gestion d'événements",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "format": "prettier --write . --ignore-path .gitignore --ignore-path .prettierignore",
+    "format:check": "prettier --check . --ignore-path .gitignore --ignore-path .prettierignore",
+    "clean": "turbo run clean && rimraf node_modules",
+    "db:generate": "pnpm --filter @nexakabi/api db:generate",
+    "db:migrate": "pnpm --filter @nexakabi/api db:migrate",
+    "db:studio": "pnpm --filter @nexakabi/api db:studio",
+    "db:seed": "pnpm --filter @nexakabi/api db:seed",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "infra:reset": "docker compose -f infra/docker-compose.yml down -v && docker compose -f infra/docker-compose.yml up -d"
+  },
+  "devDependencies": {
+    "@nexakabi/config": "workspace:*",
+    "prettier": "catalog:",
+    "rimraf": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:"
+  }
+}

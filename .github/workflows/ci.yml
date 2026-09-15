@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Qualité
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Installer les dépendances
+        run: pnpm install --frozen-lockfile
+
+      - name: Générer le client Prisma
+        run: pnpm db:generate
+
+      - name: Format
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Vérification des types
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Sécurité
+      # ─────────────────────────────────────────────────────────────────────
+      # Placés APRÈS le build : une régression de sécurité doit être visible,
+      # pas masquer une erreur de compilation qu'on aurait vue en premier.
+
+      - name: Audit des dépendances
+        # Bloque sur `high` et `critical`. Les avis `moderate` sont rapportés
+        # sans faire échouer : sinon un avis publié un mardi matin arrête tous
+        # les correctifs en cours, ce qui finit par faire désactiver l'étape.
+        run: |
+          pnpm audit --audit-level=moderate || true
+          pnpm audit --audit-level=high
+
+      - name: Recherche de secrets committés
+        # Le dépôt ne doit contenir aucune clé. `.env` est ignoré par git, mais
+        # un fichier ajouté de force ou un secret recopié dans du code source
+        # passeraient sans cela inaperçus.
+        env:
+          PATTERN: '(AKIA[0-9A-Z]{16}|sk_live_[0-9a-zA-Z]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+        run: |
+          if git grep -nIE "$PATTERN" -- ':!*.example' ':!pnpm-lock.yaml'; then
+            echo "::error::Secret potentiel détecté dans le dépôt."
+            exit 1
+          fi
+          echo "Aucun secret détecté."
+
+      - name: Secrets d'exemple non modifiés
+        # Les valeurs d'exemple ne doivent jamais quitter `.env.example` : la
+        # validation de démarrage les refuse en production, ce contrôle-ci les
+        # attrape avant même le déploiement.
+        run: |
+          if git grep -nI "remplacer-par-48-octets" -- ':!*.example'; then
+            echo "::error::Valeur d'exemple présente hors de .env.example."
+            exit 1
+          fi
+          echo "Aucune valeur d'exemple hors de .env.example."

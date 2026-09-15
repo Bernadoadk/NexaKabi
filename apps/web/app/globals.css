@@ -1,0 +1,9 @@
+@import 'tailwindcss';
+
+/* Jetons et styles de base du design system Nexa-Kabi. */
+@import '@nexakabi/ui/styles/tokens.css';
+@import '@nexakabi/ui/styles/base.css';
+
+/* Le design system vit hors du dossier de l'application : Tailwind doit
+   scanner ses sources pour générer les utilitaires qu'il utilise. */
+@source '../../../packages/ui/src';

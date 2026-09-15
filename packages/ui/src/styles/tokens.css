@@ -1,0 +1,364 @@
+/**
+ * Nexa-Kabi — jetons de design.
+ *
+ * Toutes les valeurs de ce fichier sont relevées dans le prototype de référence
+ * `design-reference/Nexa-Kabi.dc.html` (écrans « Direction artistique » et
+ * « Design system »). Aucune n'est inventée ni approximée.
+ *
+ * Intention : « La nuit d'un concert, la clarté d'une banque. »
+ *   — fond encre profonde pour l'énergie et l'émotion,
+ *   — surfaces papier chaud pour l'argent et les données,
+ *   — un seul accent corail, réservé à l'action.
+ *
+ * Voir docs/PROJECT_ANALYSIS.md §3 pour l'analyse complète.
+ */
+
+@theme {
+  /* ───────────────────────────────────────────────────────────────────────
+     Couleurs principales
+     ─────────────────────────────────────────────────────────────────────── */
+  --color-ink: #12102b;
+  --color-ink-700: #1e1a48;
+  --color-ink-900: #0b0918;
+  --color-ink-800: #161228;
+
+  --color-coral: #ff4d2e;
+  --color-coral-hover: #e93f21;
+  --color-coral-50: #ffede8;
+  --color-coral-200: #ffb9a9;
+  --color-coral-300: #ff9e86;
+  --color-coral-400: #ff7a5c;
+  --color-coral-700: #c0341a;
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Couleurs de statut
+     ─────────────────────────────────────────────────────────────────────── */
+  --color-mint: #12b981;
+  --color-mint-50: #eefbf6;
+  --color-mint-200: #c7eedf;
+  --color-mint-300: #7be3bf;
+  --color-mint-700: #0b7a57;
+  --color-mint-950: #062f22;
+
+  --color-amber: #f0a92e;
+  --color-amber-50: #fff7ed;
+  --color-amber-200: #f6e2c0;
+  --color-amber-600: #c08a20;
+  --color-amber-700: #8a6a20;
+  --color-amber-800: #c58612;
+
+  --color-red: #e03535;
+  --color-red-50: #feecec;
+  --color-red-100: #fddfdf;
+  --color-red-200: #f6c9c9;
+  --color-red-700: #c42b2b;
+  --color-red-tint: #fef6f6;
+
+  --color-blue: #3b82f6;
+  --color-blue-50: #eef4ff;
+  --color-blue-200: #cfddfa;
+  --color-blue-700: #2a5bc0;
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Surfaces et neutres
+     ─────────────────────────────────────────────────────────────────────── */
+  --color-paper: #f6f5f2;
+  --color-surface: #ffffff;
+  --color-surface-alt: #fbfaf8;
+  --color-surface-warm: #fffdf8;
+  --color-surface-cold: #fffafa;
+
+  --color-border: #e7e4dc;
+  --color-border-field: #d8d4ca;
+  --color-border-subtle: #efece5;
+  --color-border-strong: #e2dfd7;
+
+  --color-fill-muted: #edeae2;
+  --color-fill-neutral: #f1f0ec;
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Texte
+     ─────────────────────────────────────────────────────────────────────── */
+  --color-text: #12102b;
+  --color-text-strong: #3a3652;
+  --color-text-2: #6e6a80;
+  --color-text-3: #9c98ac;
+  --color-text-disabled: #b4b0be;
+  --color-text-faint: #c4c0d0;
+  --color-text-neutral: #5c5870;
+
+  /* Texte posé sur fond encre */
+  --color-on-ink: #ffffff;
+  --color-on-ink-2: #b9b5d0;
+  --color-on-ink-3: #8a86a8;
+  --color-on-ink-4: #6b6790;
+  --color-on-ink-soft: #cfcbe4;
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Verdicts de scan — fonds pleine page, lisibles à un mètre
+     ─────────────────────────────────────────────────────────────────────── */
+  --color-verdict-valid: #0b7a57;
+  --color-verdict-used: #c58612;
+  --color-verdict-invalid: #c42b2b;
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Typographie
+     ─────────────────────────────────────────────────────────────────────── */
+  /* `--font-bricolage` et `--font-jakarta` sont fournies par `next/font` quand
+     les polices sont auto-hébergées ; le nom littéral sert de repli. */
+  --font-display:
+    var(--font-bricolage, 'Bricolage Grotesque'), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-jakarta, 'Plus Jakarta Sans'), ui-sans-serif, system-ui, sans-serif;
+
+  --text-display: 3.5rem; /* 56 px */
+  --text-display--line-height: 1.02;
+  --text-display--letter-spacing: -0.035em;
+
+  --text-h1: 2.125rem; /* 34 px */
+  --text-h1--line-height: 1.1;
+  --text-h1--letter-spacing: -0.025em;
+
+  --text-h2: 1.5rem; /* 24 px */
+  --text-h2--line-height: 1.2;
+  --text-h2--letter-spacing: -0.02em;
+
+  --text-h3: 1.0625rem; /* 17 px */
+  --text-h3--line-height: 1.3;
+
+  --text-body-l: 0.9375rem; /* 15 px */
+  --text-body-l--line-height: 1.65;
+
+  --text-body: 0.84375rem; /* 13.5 px */
+  --text-body--line-height: 1.6;
+
+  --text-body-s: 0.78125rem; /* 12.5 px */
+  --text-body-s--line-height: 1.55;
+
+  --text-micro: 0.71875rem; /* 11.5 px */
+  --text-micro--line-height: 1.5;
+
+  --text-caption: 0.6875rem; /* 11 px */
+  --text-caption--line-height: 1.45;
+  --text-caption--letter-spacing: 0.14em;
+
+  --text-eyebrow: 0.625rem; /* 10 px */
+  --text-eyebrow--line-height: 1.4;
+  --text-eyebrow--letter-spacing: 0.14em;
+
+  --text-amount: 1.875rem; /* 30 px */
+  --text-amount--line-height: 1.1;
+  --text-amount--letter-spacing: -0.02em;
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Rayons — chaque valeur a un usage précis, ne pas improviser
+     ─────────────────────────────────────────────────────────────────────── */
+  --radius-badge: 6px;
+  --radius-chip: 7px;
+  --radius-field: 10px;
+  --radius-button: 11px;
+  --radius-card: 14px;
+  --radius-panel: 18px;
+  --radius-block: 24px;
+  --radius-sheet: 29px;
+  --radius-device: 38px;
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Ombres
+     ─────────────────────────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgb(18 16 43 / 0.06);
+  --shadow-md: 0 6px 18px -6px rgb(18 16 43 / 0.18);
+  --shadow-lg: 0 20px 44px -16px rgb(18 16 43 / 0.32);
+  --shadow-xl: 0 20px 44px -26px rgb(18 16 43 / 0.22);
+  --shadow-sheet: 0 -20px 44px -16px rgb(18 16 43 / 0.4);
+  --shadow-device: 0 30px 60px -22px rgb(18 16 43 / 0.5);
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Points de rupture — le prototype définit quatre paliers
+     360–767 · 768–1023 · 1024–1439 · 1440+
+     ─────────────────────────────────────────────────────────────────────── */
+  --breakpoint-sm: 480px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1440px;
+
+  /* ───────────────────────────────────────────────────────────────────────
+     Animations — trois seulement, pour tenir la promesse de légèreté
+     ─────────────────────────────────────────────────────────────────────── */
+  --animate-nk-pulse: nk-pulse 1.6s ease-in-out infinite;
+  --animate-nk-spin: nk-spin 1.2s linear infinite;
+  --animate-nk-scan: nk-scan 2s ease-in-out infinite alternate;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Mode sombre.
+   ─────────────────────────────────────────────────────────────────────────
+   Seuls les jetons de RÔLE changent ici — surfaces, bordures, texte, et les
+   teintes pâles utilisées comme fond de badge/alerte. La palette de MARQUE
+   (--color-ink, --color-coral, --color-mint, --color-amber, --color-red,
+   --color-blue, dans leurs teintes saturées) ne bouge jamais : le corail reste
+   le corail, et les blocs « encre » (bg-ink) restent le repère visuel sombre
+   qu'ils ont toujours été, de jour comme de nuit — c'est déjà l'esprit du
+   thème (« la nuit d'un concert »), pas quelque chose à réinventer.
+
+   Trois sélecteurs, dans cet ordre précis :
+   1. `:root`            → clair, la valeur par défaut définie plus haut.
+   2. `@media` + `:not([data-theme="light"])` → thème système, si l'utilisateur
+      n'a pas explicitement forcé le clair.
+   3. `[data-theme="dark"]` → forcé par l'utilisateur, l'emporte dans les deux
+      sens grâce à la spécificité identique mais à l'ordre de déclaration.
+   ───────────────────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --color-paper: #0b0918;
+    --color-surface: #161228;
+    --color-surface-alt: #1c1834;
+    --color-surface-warm: #1c1834;
+    --color-surface-cold: #181430;
+
+    --color-border: #2a2550;
+    --color-border-field: #342e5c;
+    --color-border-subtle: #211c3d;
+    --color-border-strong: #3a3468;
+
+    --color-fill-muted: #231e42;
+    --color-fill-neutral: #1f1a3a;
+
+    --color-text: #f5f3fa;
+    --color-text-strong: #ffffff;
+    --color-text-2: #b8b4cc;
+    --color-text-3: #8d89a6;
+    --color-text-disabled: #5c5878;
+    --color-text-faint: #474262;
+    --color-text-neutral: #c4c0d6;
+
+    --color-mint-50: #0f2e22;
+    --color-mint-700: #4ade9a;
+    --color-amber-50: #332608;
+    --color-amber-700: #f0c674;
+    --color-red-50: #3a1414;
+    --color-red-100: #4a1a1a;
+    --color-red-200: #5c2222;
+    --color-red-700: #f68888;
+    --color-red-tint: #2c1212;
+    --color-blue-50: #12213d;
+    --color-blue-200: #1c3157;
+    --color-blue-700: #8fb4f5;
+    --color-coral-50: #3d1a10;
+    --color-coral-700: #ff9e86;
+
+    --color-scrollbar-thumb: #363058;
+    --focus-ring: 0 0 0 3px rgb(245 243 250 / 0.14);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-paper: #0b0918;
+  --color-surface: #161228;
+  --color-surface-alt: #1c1834;
+  --color-surface-warm: #1c1834;
+  --color-surface-cold: #181430;
+
+  --color-border: #2a2550;
+  --color-border-field: #342e5c;
+  --color-border-subtle: #211c3d;
+  --color-border-strong: #3a3468;
+
+  --color-fill-muted: #231e42;
+  --color-fill-neutral: #1f1a3a;
+
+  --color-text: #f5f3fa;
+  --color-text-strong: #ffffff;
+  --color-text-2: #b8b4cc;
+  --color-text-3: #8d89a6;
+  --color-text-disabled: #5c5878;
+  --color-text-faint: #474262;
+  --color-text-neutral: #c4c0d6;
+
+  --color-mint-50: #0f2e22;
+  --color-mint-700: #4ade9a;
+  --color-amber-50: #332608;
+  --color-amber-700: #f0c674;
+  --color-red-50: #3a1414;
+  --color-red-100: #4a1a1a;
+  --color-red-200: #5c2222;
+  --color-red-700: #f68888;
+  --color-red-tint: #2c1212;
+  --color-blue-50: #12213d;
+  --color-blue-200: #1c3157;
+  --color-blue-700: #8fb4f5;
+  --color-coral-50: #3d1a10;
+  --color-coral-700: #ff9e86;
+
+  --color-scrollbar-thumb: #363058;
+  --focus-ring: 0 0 0 3px rgb(245 243 250 / 0.14);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Variables hors @theme : dimensions tactiles et durées.
+   Elles ne génèrent pas d'utilitaires Tailwind, elles sont consommées
+   directement par les composants.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+
+  /* Teinte du survol de piste de défilement — reprise en mode sombre juste
+     en dessous, `base.css` s'appuie sur ce jeton plutôt qu'une valeur figée. */
+  --color-scrollbar-thumb: #d6d2c8;
+
+  /* Hauteur minimale de toute zone tactile. Non négociable :
+     le contrôleur scanne debout, d'une main. */
+  --tap-min: 44px;
+  --tap-mobile: 48px;
+  --tap-primary: 52px;
+  --tap-large: 56px;
+
+  /* Élévation de carte au survol : 120 ms, valeur imposée par le prototype. */
+  --duration-hover: 120ms;
+
+  /* Largeur maximale du contenu au palier grand écran. */
+  --content-max: 1440px;
+
+  /* Anneau de focus, repris tel quel du prototype. */
+  --focus-ring: 0 0 0 3px rgb(18 16 43 / 0.1);
+}
+
+@keyframes nk-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes nk-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes nk-scan {
+  from {
+    transform: translateY(-38px);
+  }
+  to {
+    transform: translateY(38px);
+  }
+}
+
+/* Le prototype n'autorise que trois micro-interactions. Elles sont toutes
+   désactivées si l'utilisateur a demandé une réduction des animations. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

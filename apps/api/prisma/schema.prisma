@@ -1,0 +1,1900 @@
+// Schéma Prisma — Nexa-Kabi
+//
+// Le modèle de données complet est décrit dans docs/DATABASE_PROPOSAL.md.
+// Les entités sont introduites phase par phase, au fur et à mesure des besoins
+// (voir docs/DEVELOPMENT_ROADMAP.md) — pas toutes d'un bloc.
+//
+// Phase 1 : socle transverse uniquement (journal d'audit).
+// Phase 3 : User, Device, OtpChallenge, AdminCredential.
+// Phase 4 : Organization, OrganizationMember, MemberInvitation, …
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7 : l'URL de connexion ne vit plus ici mais dans prisma.config.ts
+// pour les migrations, et dans le driver adapter pour le client applicatif.
+datasource db {
+  provider = "postgresql"
+}
+
+/// Auteur d'une action tracée.
+enum ActorType {
+  USER
+  ADMIN
+  SYSTEM
+}
+
+/// Journal d'audit.
+///
+/// Écrit pour toute action financière, toute modification de rôle, toute
+/// publication ou annulation d'événement, tout accès à une pièce d'identité.
+/// Le prototype en fait une exigence : « Toute action sensible est horodatée et
+/// attribuée : c'est indispensable dès qu'une équipe touche à l'argent. »
+///
+/// Les lignes ne sont jamais modifiées ni supprimées.
+model AuditLog {
+  id String @id @default(cuid())
+
+  actorUserId String?
+  actorType   ActorType @default(USER)
+
+  organizationId String?
+
+  /// Action au format `domaine.verbe` : `event.published`, `payout.requested`.
+  action String
+
+  entityType String
+  entityId   String
+
+  /// État avant et après, pour les modifications.
+  changes Json?
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@map("audit_log")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3 — Identité et accès
+//
+// L'authentification repose sur le NUMÉRO DE TÉLÉPHONE et un code à 6 chiffres.
+// Aucun mot de passe pour les participants, les organisateurs et les
+// contrôleurs : le prototype pose que « le mot de passe est un obstacle réel ».
+// Seuls les administrateurs plateforme en ont un, avec 2FA obligatoire.
+//
+// Voir docs/DATABASE_PROPOSAL.md §3 et docs/TECHNICAL_ARCHITECTURE.md §5.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Rôle sur la plateforme. À ne pas confondre avec le rôle dans une
+/// organisation : « organisateur » n'est pas un rôle global, c'est la
+/// conséquence d'appartenir à au moins une organisation.
+enum GlobalRole {
+  USER
+  SUPPORT
+  ADMIN
+  SUPERADMIN
+}
+
+enum UserStatus {
+  /// Compte créé pendant un achat, numéro non encore vérifié.
+  UNVERIFIED
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum OtpPurpose {
+  LOGIN
+  PHONE_CHANGE
+  TEAM_INVITE
+  TICKET_RECOVERY
+}
+
+enum OtpChannel {
+  SMS
+  WHATSAPP
+}
+
+model User {
+  id String @id @default(cuid())
+
+  /// Identifiant principal, au format E.164 (`+2290197441208`).
+  phone           String    @unique
+  phoneVerifiedAt DateTime?
+
+  /// Canal de secours pour la livraison des billets. Facultatif.
+  email           String?   @unique
+  emailVerifiedAt DateTime?
+
+  /// Un seul champ : le prototype refuse d'imposer prénom + nom séparés.
+  fullName  String
+  avatarUrl String?
+
+  globalRole GlobalRole @default(USER)
+  status     UserStatus @default(UNVERIFIED)
+
+  locale String @default("fr-BJ")
+
+  /// Consentement explicite, recueilli à l'inscription.
+  marketingOptIn  Boolean   @default(false)
+  /// Preuve horodatée d'acceptation des conditions.
+  termsAcceptedAt DateTime?
+
+  suspendedReason String?
+  lastSeenAt      DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  devices         Device[]
+  adminCredential AdminCredential?
+
+  orders                Order[]
+  ownedOrganizations    Organization[]        @relation("OrganizationOwner")
+  memberships           OrganizationMember[]
+  membersInvited        OrganizationMember[]  @relation("MemberInvitedBy")
+  invitationsSent       MemberInvitation[]    @relation("InvitationSentBy")
+  verificationsReviewed VerificationRequest[] @relation("VerificationReviewedBy")
+  scansPerformed        CheckIn[]             @relation("CheckInScannedBy")
+  payoutsRequested      Payout[]              @relation("PayoutRequestedBy")
+  payoutsProcessed      Payout[]              @relation("PayoutProcessedBy")
+  scansRevoked          CheckIn[]             @relation("CheckInRevokedBy")
+  conflictsResolved     CheckInConflict[]     @relation("ConflictResolvedBy")
+
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+  messageLogs            MessageLog[]
+
+  adminSessions   AdminSession[] @relation("AdminSessionUser")
+  reportsFiled    Report[]       @relation("ReportFiledBy")
+  reportsAssigned Report[]       @relation("ReportAssignedTo")
+  reportsResolved Report[]       @relation("ReportResolvedBy")
+  reportNotes     ReportNote[]   @relation("ReportNoteAuthor")
+
+  @@index([status])
+  @@map("user")
+}
+
+/// Session persistante liée à un appareil.
+///
+/// Le refresh token n'est JAMAIS stocké en clair. Sa rotation à chaque usage,
+/// combinée à la notion de famille, permet de détecter un vol : si un jeton
+/// déjà consommé est présenté, toute la famille est révoquée.
+model Device {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 du refresh token. Le jeton porte 256 bits d'entropie : une
+  /// fonction de dérivation lente n'apporterait rien face à un tel espace.
+  refreshTokenHash String @unique
+
+  /// Toute la lignée issue d'une même authentification. Révoquée d'un bloc en
+  /// cas de réutilisation d'un jeton déjà consommé.
+  tokenFamily String
+
+  userAgent String?
+  ipAddress String?
+  /// Libellé lisible : « Chrome sur Android · Cotonou ».
+  label     String?
+
+  /// 90 jours par défaut. Ramené à la fin de l'événement + 24 h pour un
+  /// contrôleur, afin d'éviter tout accès résiduel.
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime  @default(now())
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, revokedAt])
+  @@index([tokenFamily])
+  @@index([expiresAt])
+  @@map("device")
+}
+
+/// Code à 6 chiffres envoyé par SMS, avec repli WhatsApp.
+model OtpChallenge {
+  id String @id @default(cuid())
+
+  phone    String
+  /// HMAC-SHA256 du code, salé par un secret serveur. Le code n'est jamais
+  /// stocké en clair : le pepper rend le rejeu impossible même si la base fuit.
+  codeHash String
+
+  purpose OtpPurpose @default(LOGIN)
+  channel OtpChannel @default(SMS)
+
+  /// 5 tentatives au maximum, puis le défi est invalidé.
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+
+  /// TTL de 5 minutes.
+  expiresAt DateTime
+
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([phone, consumedAt, expiresAt])
+  @@index([expiresAt])
+  @@map("otp_challenge")
+}
+
+/// Identifiants des administrateurs plateforme.
+///
+/// Séparés de `User` : eux seuls disposent d'un mot de passe, et la double
+/// authentification leur est imposée avant tout accès.
+model AdminCredential {
+  id String @id @default(cuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// scrypt (paramètres OWASP), pas Argon2id : ce dernier exige une dépendance
+  /// native compilée par plateforme, pour quelques comptes d'administration.
+  /// Voir `apps/api/src/modules/admin/password.ts`.
+  passwordHash String
+
+  /// Chiffré au repos en AES-256-GCM, format `enc.v1.<iv>.<tag>.<données>`.
+  /// La clé vit dans ADMIN_ENCRYPTION_KEY, jamais dans cette base : une copie
+  /// du contenu ne livre donc pas les graines TOTP des administrateurs.
+  /// Voir `apps/api/src/modules/admin/secret-box.ts`.
+  /// Obligatoire avant tout accès à l'administration.
+  totpSecret    String?
+  totpEnabledAt DateTime?
+
+  /// Codes de secours, hachés.
+  recoveryCodes String[] @default([])
+
+  lastPasswordChangeAt DateTime @default(now())
+
+  /// Échecs de connexion consécutifs, et blocage temporaire.
+  ///
+  /// ── Pourquoi en base et non en mémoire ──────────────────────────────────
+  /// Le compteur vivait dans une `Map` d'instance : un redémarrage le remettait
+  /// à zéro, et deux instances n'en partageaient rien. Le plafond de cinq
+  /// tentatives devenait « cinq par instance et par redémarrage » — c'est-à-dire
+  /// aucun plafond face à quelqu'un de patient.
+  ///
+  /// Une écriture par échec est un coût négligeable : les échecs sont rares, et
+  /// quand ils cessent de l'être, c'est justement qu'il faut compter.
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+
+  /// Dernier pas TOTP accepté, pour refuser le rejeu d'un code intercepté
+  /// pendant sa fenêtre de validité.
+  ///
+  /// En base pour la même raison que le compteur ci-dessus : gardé en mémoire,
+  /// la protection tombait à chaque redémarrage et ne couvrait qu'une instance.
+  /// L'attaque suppose d'intercepter un code ET de le rejouer en moins de
+  /// quatre-vingt-dix secondes — mais c'est justement le genre de fenêtre qu'un
+  /// déploiement multi-instance rouvre sans que personne ne s'en aperçoive.
+  lastTotpStep Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("admin_credential")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4 — Organisations et équipes
+//
+// Une organisation est le contenant de tout le reste : événements, billets,
+// finances. « Organisateur » n'est pas un rôle global, c'est la conséquence
+// d'appartenir à une organisation — une même personne peut être participante
+// ici et administratrice là-bas.
+//
+// Voir docs/DATABASE_PROPOSAL.md §4 et docs/TECHNICAL_ARCHITECTURE.md §5.2.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum OrganizationType {
+  INDIVIDUAL
+  COMPANY
+  ASSOCIATION
+  INSTITUTION
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  INCOMPLETE
+  VERIFIED
+  REJECTED
+}
+
+/// Rôles au sein d'une organisation.
+/// Le libellé montré à l'utilisateur est une PHRASE, jamais une matrice de
+/// cases à cocher : un organisateur indépendant ne doit pas avoir à interpréter
+/// des permissions techniques.
+enum OrgRole {
+  /// Créateur. Seul habilité à supprimer ou transférer l'organisation.
+  OWNER
+  ADMIN
+  MANAGER
+  /// Portée limitée à un ou plusieurs événements précis.
+  SCANNER
+  ANALYST
+}
+
+enum MemberStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+enum DocumentType {
+  CIP
+  PASSPORT
+  RCCM
+  IFU
+  ASSOCIATION_STATUTES
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum PayoutAccountType {
+  MOBILE_MONEY
+  BANK
+}
+
+model Organization {
+  id String @id @default(cuid())
+
+  /// Identifiant public : `/o/yele-productions`. Immuable après publication.
+  slug String @unique
+  name String
+
+  /// Raison sociale, si différente du nom d'usage.
+  legalName String?
+
+  type        OrganizationType @default(INDIVIDUAL)
+  description String?
+
+  logoUrl  String?
+  coverUrl String?
+
+  email String?
+  phone String?
+
+  /// Canal de contact réel au Bénin.
+  whatsapp String?
+
+  website   String?
+  facebook  String?
+  instagram String?
+  tiktok    String?
+
+  /// La table `City` arrive en phase 5 ; le nom suffit d'ici là.
+  cityName String?
+  address  String?
+
+  status             OrganizationStatus @default(ACTIVE)
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  verifiedAt         DateTime?
+
+  /// Levier de modération de PREMIER RECOURS.
+  /// Suspendre un événement pénalise d'abord les acheteurs ; geler le solde
+  /// laisse la vente continuer et donne à l'organisateur une raison très
+  /// concrète de répondre dans l'heure.
+  payoutFrozen       Boolean @default(false)
+  payoutFrozenReason String?
+
+  /// Détermine le palier de déblocage du solde (voir docs, ambiguïté A4).
+  completedEventsCount Int @default(0)
+
+  /// Propriétaire. Redondant avec le membre OWNER, mais conservé pour garantir
+  /// qu'une organisation en a exactement un.
+  ownerId String
+  owner   User   @relation("OrganizationOwner", fields: [ownerId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  members             OrganizationMember[]
+  invitations         MemberInvitation[]
+  payoutAccounts      PayoutAccount[]
+  verificationRequest VerificationRequest?
+  events              Event[]
+  ledgerEntries       LedgerEntry[]
+  payouts             Payout[]
+  reports             Report[]
+
+  @@index([status, verificationStatus])
+  @@index([ownerId])
+  @@map("organization")
+}
+
+model OrganizationMember {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role   OrgRole
+  status MemberStatus @default(INVITED)
+
+  /// Événements autorisés — UNIQUEMENT pour le rôle SCANNER.
+  /// Tableau plutôt que table de jointure : un contrôleur est assigné à un ou
+  /// deux événements, jamais des centaines, et cela évite une jointure sur le
+  /// chemin critique du scan.
+  scopedEventIds String[] @default([])
+
+  /// Porte assignée : « Porte principale ».
+  gate String?
+
+  /// Fin de l'accès, pour un rôle limité dans le temps.
+  ///
+  /// Un contrôleur recruté pour une soirée n'a rien à faire dans l'organisation
+  /// une fois la soirée passée : son accès se ferme 24 h après la fin du
+  /// dernier événement qui lui est assigné. La ligne reste — les scans qu'il a
+  /// faits lui restent attribués, et l'organisateur garde de quoi le payer.
+  /// Null : accès sans limite, cas des rôles permanents.
+  expiresAt DateTime?
+
+  invitedById String?
+  invitedBy   User?   @relation("MemberInvitedBy", fields: [invitedById], references: [id])
+
+  joinedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  /// Une personne n'a qu'un seul rôle par organisation.
+  @@unique([organizationId, userId])
+  @@index([userId, status])
+  @@map("organization_member")
+}
+
+/// Invitation à rejoindre une équipe.
+/// Lien à usage unique envoyé par WhatsApp, valable 7 jours.
+model MemberInvitation {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Jeton public, indevinable. Haché : un vol de la base ne livre pas d'accès.
+  tokenHash String @unique
+
+  /// Au moins l'un des deux est renseigné.
+  phone String?
+  email String?
+
+  role           OrgRole
+  scopedEventIds String[] @default([])
+  gate           String?
+
+  invitedById String
+  invitedBy   User   @relation("InvitationSentBy", fields: [invitedById], references: [id])
+
+  /// 7 jours, valeur du prototype.
+  expiresAt DateTime
+
+  acceptedAt       DateTime?
+  acceptedByUserId String?
+
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([organizationId, acceptedAt])
+  @@index([expiresAt])
+  @@map("member_invitation")
+}
+
+/// Compte de réception des retraits.
+model PayoutAccount {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  type PayoutAccountType
+
+  /// `mtn_momo`, `moov_money`, `celtiis_cash` pour le Mobile Money.
+  provider String?
+
+  /// Numéro Mobile Money en E.164, ou IBAN/RIB.
+  accountNumber String
+
+  /// Doit correspondre au nom porté par la pièce d'identité vérifiée.
+  accountHolderName String
+  bankName          String?
+
+  isDefault  Boolean   @default(false)
+  verifiedAt DateTime?
+
+  /// « Le numéro n'est pas un compte marchand » — cas relevé dans le prototype.
+  lastFailureReason String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  payouts Payout[]
+
+  @@index([organizationId, deletedAt])
+  @@map("payout_account")
+}
+
+/// Dossier de vérification d'identité.
+///
+/// Règle de conception majeure : la vérification conditionne LE RETRAIT DES
+/// FONDS, pas la vente. Un organisateur non vérifié peut publier et vendre,
+/// mais son solde reste bloqué. C'est la protection la plus efficace contre les
+/// faux événements sans freiner l'activité légitime.
+model VerificationRequest {
+  id String @id @default(cuid())
+
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  status VerificationStatus @default(PENDING)
+
+  contactName  String
+  contactPhone String
+
+  submittedAt DateTime  @default(now())
+  reviewedAt  DateTime?
+
+  reviewedById String?
+  reviewedBy   User?   @relation("VerificationReviewedBy", fields: [reviewedById], references: [id])
+
+  /// Motif obligatoire en cas de refus.
+  decisionNote String?
+
+  /// Les TROIS contrôles du prototype, cochés individuellement :
+  /// identité concordante avec le compte de retrait, téléphone confirmé,
+  /// document légal valide. Tout le reste est indicatif.
+  checks Json?
+
+  documents VerificationDocument[]
+
+  @@index([status, submittedAt])
+  @@map("verification_request")
+}
+
+/// Pièce déposée à l'appui d'une vérification.
+///
+/// Contient des pièces d'identité : stockage privé, accès par URL signée
+/// uniquement, jamais d'URL publique, chaque consultation tracée dans l'audit.
+model VerificationDocument {
+  id String @id @default(cuid())
+
+  requestId String
+  request   VerificationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  type DocumentType
+
+  /// Clé de stockage objet. Jamais une URL directe.
+  fileKey   String
+  fileName  String?
+  mimeType  String?
+  sizeBytes Int?
+
+  status          DocumentStatus @default(PENDING)
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([requestId, status])
+  @@map("verification_document")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 5 — Catalogue, événements et billetterie
+//
+// La page événement est « la page la plus importante du produit » : c'est elle
+// qui reçoit le trafic WhatsApp et qui convertit. Son slug est donc immuable
+// après publication, et son `shortCode` sert au lien court et au QR.
+//
+// Voir docs/DATABASE_PROPOSAL.md §5.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum EventStatus {
+  DRAFT
+  PENDING_REVIEW
+  REJECTED
+  PUBLISHED
+  SOLD_OUT
+  POSTPONED
+  CANCELLED
+  COMPLETED
+  ARCHIVED
+}
+
+enum EventVisibility {
+  PUBLIC
+  /// Accessible par lien uniquement, jamais référencé.
+  PRIVATE
+}
+
+enum EventFormat {
+  PHYSICAL
+  ONLINE
+  HYBRID
+}
+
+enum RefundPolicy {
+  UNTIL_DAYS_BEFORE
+  NONE
+  CASE_BY_CASE
+}
+
+enum TicketTypeStatus {
+  DRAFT
+  ON_SALE
+  PAUSED
+  SOLD_OUT
+  CLOSED
+}
+
+enum TicketVisibility {
+  PUBLIC
+  /// Billet partenaire, presse, invitation : accessible par lien ou code.
+  HIDDEN
+}
+
+enum EventImageType {
+  COVER
+  POSTER
+  GALLERY
+  /// Plan du lieu — stands, scènes, entrées. Facultatif, affiché tel quel :
+  /// un plan recadré en 16:9 perdrait ce qu'il est censé montrer.
+  FLOOR_PLAN
+}
+
+/// Catégorie d'événement.
+model Category {
+  id String @id @default(cuid())
+
+  slug String @unique
+  name String
+
+  /// Sous-catégories : « Musique » → « Concert », « Festival ».
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+
+  /// Sans image, l'événement retombe sur une plaque typographique colorée
+  /// dérivée de sa catégorie : jamais de rectangle gris.
+  colorToken String  @default("#1E1A48")
+  icon       String?
+
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events    Event[] @relation("EventCategory")
+  subEvents Event[] @relation("EventSubcategory")
+
+  @@index([isActive, position])
+  @@map("category")
+}
+
+model City {
+  id String @id @default(cuid())
+
+  slug String @unique
+  name String
+
+  /// Département.
+  region      String?
+  /// Prépare l'extension vers l'Afrique de l'Ouest.
+  countryCode String  @default("BJ")
+
+  latitude  Float?
+  longitude Float?
+
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  venues Venue[]
+  events Event[]
+
+  @@index([countryCode, isActive])
+  @@map("city")
+}
+
+/// Lieu réutilisable : « Plage de Fidjrossè », « Sofitel ».
+model Venue {
+  id String @id @default(cuid())
+
+  name    String
+  address String?
+
+  cityId String
+  city   City   @relation(fields: [cityId], references: [id])
+
+  latitude  Float?
+  longitude Float?
+
+  /// Identifiant du lieu chez Google Places, quand il en vient.
+  /// Sert à reconnaître un lieu déjà enregistré plutôt que de le créer deux
+  /// fois, et à rouvrir sa fiche si les coordonnées doivent être rafraîchies.
+  googlePlaceId String?
+
+  /// Null pour un lieu public partagé entre organisations.
+  organizationId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events Event[]
+
+  @@index([cityId])
+  @@index([organizationId])
+  @@index([googlePlaceId])
+  @@map("venue")
+}
+
+model Event {
+  id String @id @default(cuid())
+
+  /// `nexakabi.bj/e/yele-2026`. IMMUABLE après publication : un renommage crée
+  /// une redirection, jamais une modification.
+  slug String @unique
+
+  /// Encodé dans le QR et le lien court `nxk.bj/…`.
+  shortCode String @unique
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// 80 caractères au maximum : au-delà, le titre est tronqué sur mobile.
+  title       String
+  subtitle    String?
+  /// Texte riche, assaini côté serveur avant stockage.
+  description String?
+
+  categoryId String
+  category   Category @relation("EventCategory", fields: [categoryId], references: [id])
+
+  subcategoryId String?
+  subcategory   Category? @relation("EventSubcategory", fields: [subcategoryId], references: [id])
+
+  format EventFormat @default(PHYSICAL)
+
+  venueId String?
+  venue   Venue?  @relation(fields: [venueId], references: [id])
+
+  /// Dénormalisé pour le filtrage du catalogue.
+  cityId String?
+  city   City?   @relation(fields: [cityId], references: [id])
+
+  onlineUrl      String?
+  onlinePlatform String?
+
+  startsAt    DateTime
+  endsAt      DateTime
+  /// « Ouverture des portes à 17 h 30 » figure sur le billet.
+  doorsOpenAt DateTime?
+
+  timezone String @default("Africa/Porto-Novo")
+
+  coverImageUrl String?
+
+  status     EventStatus     @default(DRAFT)
+  visibility EventVisibility @default(PUBLIC)
+
+  publishedAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+
+  /// Report : les billets existants restent valides pour la nouvelle date.
+  postponedFromEventId String?
+
+  refundPolicy       RefundPolicy @default(UNTIL_DAYS_BEFORE)
+  refundDeadlineDays Int?         @default(7)
+
+  minimumAge Int?
+
+  /// Certains événements n'exigent pas de nom par billet — un concert, par
+  /// exemple. Le champ reste toujours renseigné en base, avec le nom de
+  /// l'acheteur, pour éviter un cas nul dans le carnet de scan.
+  requiresAttendeeName Boolean @default(false)
+
+  maxTicketsPerOrder Int?
+
+  /// « Fouille à l'entrée · boissons extérieures interdites »
+  accessInstructions String?
+
+  /// Étape courante de l'assistant en 8 étapes, pour reprendre exactement là
+  /// où l'organisateur s'est arrêté.
+  draftStep Int?  @default(1)
+  /// Brouillon auto-sauvegardé. Seul usage de `Json` sur une donnée métier :
+  /// un brouillon incomplet ne peut pas satisfaire les contraintes du schéma.
+  /// Vidé à la publication.
+  draftData Json?
+
+  /// Compteurs dénormalisés, maintenus transactionnellement.
+  salesCount     Int @default(0)
+  revenueTotal   Int @default(0)
+  checkedInCount Int @default(0)
+
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  ticketTypes   TicketType[]
+  images        EventImage[]
+  signingKey    EventSigningKey?
+  orders        Order[]
+  tickets       Ticket[]
+  checkIns      CheckIn[]
+  ledgerEntries LedgerEntry[]
+  notifications Notification[]
+
+  @@index([status, visibility, startsAt])
+  @@index([cityId, categoryId, startsAt])
+  @@index([organizationId, status])
+  @@index([startsAt])
+  @@map("event")
+}
+
+model EventImage {
+  id String @id @default(cuid())
+
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  url String
+  alt String?
+
+  type     EventImageType @default(GALLERY)
+  position Int            @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([eventId, type, position])
+  @@map("event_image")
+}
+
+model TicketType {
+  id String @id @default(cuid())
+
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  name        String
+  /// Avantages inclus, affichés sur la page événement.
+  description String?
+
+  /// Montant ENTIER, en unité entière de la devise. Le XOF n'a pas de
+  /// sous-unité : aucun flottant ne représente jamais de l'argent.
+  price    Int
+  currency String @default("XOF")
+
+  quantityTotal    Int
+  /// Maintenus transactionnellement. La contrainte
+  /// `sold + reserved <= total` est vérifiée en base, pas seulement en
+  /// applicatif : c'est la protection ultime contre la sur-vente.
+  quantitySold     Int @default(0)
+  quantityReserved Int @default(0)
+
+  minPerOrder Int  @default(1)
+  maxPerOrder Int?
+
+  salesStartAt DateTime?
+  salesEndAt   DateTime?
+
+  visibility TicketVisibility @default(PUBLIC)
+  /// Accès à un billet caché par lien ou code.
+  accessCode String?
+
+  status   TicketTypeStatus @default(DRAFT)
+  position Int              @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  orderItems   OrderItem[]
+  reservations StockReservation[]
+  tickets      Ticket[]
+
+  @@index([eventId, status, position])
+  @@map("ticket_type")
+}
+
+/// Paire de clés de signature des QR, propre à chaque événement.
+///
+/// La clé PRIVÉE ne figure jamais en base : seule sa référence dans le coffre
+/// de secrets est stockée. La clé publique est distribuée aux contrôleurs avec
+/// le carnet, ce qui leur permet de vérifier un billet hors ligne sans jamais
+/// pouvoir en forger un. Utilisée à partir de la phase 7.
+model EventSigningKey {
+  id String @id @default(cuid())
+
+  eventId String @unique
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  /// Version de clé, pour permettre une rotation.
+  keyId         String
+  publicKey     String
+  /// Référence vers le coffre de secrets. Jamais la clé elle-même.
+  privateKeyRef String
+
+  rotatedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@map("event_signing_key")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 6 — Commandes et paiements
+//
+// La partie critique du produit. Deux principes gouvernent tout ce qui suit :
+//
+//  1. SEUL LE WEBHOOK DE L'OPÉRATEUR FAIT FOI. Un paiement n'est jamais déclaré
+//     échoué parce que l'utilisateur a quitté la page ou qu'un délai navigateur
+//     est écoulé. Le Mobile Money est asynchrone : l'utilisateur part valider
+//     sur son téléphone, et le navigateur ne sait rien pendant ce temps.
+//
+//  2. UNE TRANSACTION NE SE MODIFIE JAMAIS. Une correction est une opération
+//     inverse, elle-même tracée.
+//
+// Voir docs/TECHNICAL_ARCHITECTURE.md §6 et docs/DATABASE_PROPOSAL.md §6.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum OrderStatus {
+  /// Panier en cours de constitution.
+  DRAFT
+  AWAITING_PAYMENT
+  PAID
+  COMPLETED
+  EXPIRED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentAttemptKind {
+  INITIATE
+  STATUS_POLL
+  WEBHOOK
+  REFUND
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  /// Déjà traité : rejeu bénin de l'opérateur.
+  IGNORED
+  FAILED
+}
+
+enum LedgerEntryType {
+  SALE
+  HOLD
+  RELEASE
+  PLATFORM_FEE
+  PROVIDER_FEE
+  REFUND
+  REFUND_FEE_REVERSAL
+  PAYOUT
+  PAYOUT_FEE
+  PAYOUT_REVERSAL
+  FREEZE
+  UNFREEZE
+  ADJUSTMENT
+}
+
+enum BalanceState {
+  /// Bloqué jusqu'à `availableAt`.
+  PENDING
+  /// Retirable immédiatement.
+  AVAILABLE
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum TicketStatus {
+  VALID
+  /// Entré. Le check-in de la phase 8 pose ce statut.
+  USED
+  CANCELLED
+  REFUNDED
+  /// Événement passé sans entrée enregistrée.
+  EXPIRED
+}
+
+enum RefundReason {
+  EVENT_CANCELLED
+  CUSTOMER_REQUEST
+  DUPLICATE_PAYMENT
+  DISPUTE
+  ADMIN
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Order {
+  id String @id @default(cuid())
+
+  /// `NK-8F4C21` — hexadécimal majuscule, comme dans le prototype.
+  reference String @unique
+
+  /// Null tant que le compte n'est pas créé : l'achat sans compte préalable est
+  /// une décision de conversion majeure.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  /// Toujours renseigné, même sans compte : c'est par là que le billet arrive.
+  buyerPhone String
+  buyerName  String
+  buyerEmail String?
+
+  /// Une commande porte sur UN SEUL événement. Cela simplifie radicalement la
+  /// réservation de stock, les frais, le remboursement et le grand livre.
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id])
+
+  status OrderStatus @default(DRAFT)
+
+  /// Tous les montants sont des ENTIERS, en unité entière de la devise.
+  subtotalAmount Int @default(0)
+  discountAmount Int @default(0)
+
+  /// Commission plateforme totale, puis sa répartition.
+  platformFeeAmount  Int @default(0)
+  buyerFeeAmount     Int @default(0)
+  organizerFeeAmount Int @default(0)
+  /// Frais réellement facturés par l'opérateur de paiement.
+  providerFeeAmount  Int @default(0)
+
+  /// Ce que le participant paie.
+  totalAmount        Int @default(0)
+  /// Ce qui revient à l'organisateur.
+  organizerNetAmount Int @default(0)
+
+  currency String @default("XOF")
+
+  /// Preuve horodatée d'acceptation des conditions de vente.
+  termsAcceptedAt DateTime?
+  whatsappOptIn   Boolean   @default(false)
+
+  /// Fin de la réservation de stock.
+  expiresAt   DateTime?
+  paidAt      DateTime?
+  cancelledAt DateTime?
+
+  ipAddress String?
+  userAgent String?
+  /// Attribution : `?ref=` sur un lien partagé.
+  referrer  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items         OrderItem[]
+  reservations  StockReservation[]
+  payments      Payment[]
+  refunds       Refund[]
+  tickets       Ticket[]
+  ledgerEntries LedgerEntry[]
+  notifications Notification[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([eventId, status])
+  @@index([buyerPhone, createdAt(sort: Desc)])
+  @@index([status, expiresAt])
+  @@map("order")
+}
+
+model OrderItem {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  ticketTypeId String
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  quantity Int
+
+  /// Prix FIGÉ à la commande : un changement de tarif ultérieur ne modifie pas
+  /// les commandes déjà passées.
+  unitPrice Int
+  unitFee   Int @default(0)
+  subtotal  Int
+
+  /// `[{ name, phone? }]` si l'événement exige un nom par billet.
+  attendees Json?
+
+  tickets Ticket[]
+
+  @@index([orderId])
+  @@map("order_item")
+}
+
+/// Réservation temporaire de stock.
+///
+/// Rend explicite ce qui serait sinon déduit de l'état des commandes. Une place
+/// retenue pendant un paiement Mobile Money n'est plus vendable, même si elle
+/// n'est pas encore payée.
+model StockReservation {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  ticketTypeId String
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  quantity Int
+
+  expiresAt  DateTime
+  releasedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt, releasedAt])
+  @@index([ticketTypeId])
+  @@map("stock_reservation")
+}
+
+model Payment {
+  id String @id @default(cuid())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  /// `mock`, `mtn_momo`, `moov_money`, `celtiis_cash`, `card`.
+  providerCode      String
+  /// Référence chez l'opérateur.
+  providerReference String?
+
+  /// Empêche la double initiation sur un double-clic ou un réessai réseau.
+  idempotencyKey String @unique
+
+  amount   Int
+  currency String @default("XOF")
+
+  status PaymentStatus @default(INITIATED)
+
+  /// Numéro Mobile Money utilisé pour payer.
+  payerPhone String?
+
+  failureCode   String?
+  failureReason String?
+
+  initiatedAt DateTime  @default(now())
+  confirmedAt DateTime?
+  failedAt    DateTime?
+  expiresAt   DateTime?
+
+  /// Réponse brute de l'opérateur, pour l'audit.
+  providerPayload Json?
+
+  /// Le SEUL horodatage qui fasse foi pour un encaissement.
+  webhookReceivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attempts PaymentAttempt[]
+  refunds  Refund[]
+
+  @@unique([providerCode, providerReference])
+  @@index([status, initiatedAt])
+  @@index([orderId])
+  @@map("payment")
+}
+
+/// Journal de chaque échange avec l'opérateur.
+/// Indispensable pour diagnostiquer un webhook manquant.
+model PaymentAttempt {
+  id String @id @default(cuid())
+
+  paymentId String
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  kind PaymentAttemptKind
+
+  requestPayload  Json?
+  responsePayload Json?
+
+  httpStatus Int?
+  durationMs Int?
+  error      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([paymentId, createdAt])
+  @@map("payment_attempt")
+}
+
+/// Événement reçu d'un opérateur de paiement.
+///
+/// L'index unique `(providerCode, externalId)` EST la garantie d'idempotence.
+/// Sans lui, un webhook rejoué — et les opérateurs rejouent — émettrait des
+/// billets en double.
+model WebhookEvent {
+  id String @id @default(cuid())
+
+  providerCode String
+  externalId   String
+
+  /// Vérifiée AVANT toute lecture du corps.
+  signature String?
+  /// Corps brut conservé, pour rejeu et audit.
+  rawBody   String
+
+  status WebhookStatus @default(RECEIVED)
+
+  paymentId   String?
+  processedAt DateTime?
+  error       String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([providerCode, externalId])
+  @@index([status, createdAt])
+  @@map("webhook_event")
+}
+
+model Refund {
+  id String @id @default(cuid())
+
+  paymentId String
+  payment   Payment @relation(fields: [paymentId], references: [id])
+
+  /// Dénormalisé : les remboursements se consultent par commande.
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  amount Int
+
+  reason RefundReason
+  status RefundStatus @default(PENDING)
+
+  /// Les frais de service ne sont pas remboursés par défaut.
+  feesRefunded Boolean @default(false)
+
+  requestedById String?
+  approvedById  String?
+
+  providerReference String?
+  /// Motif obligatoire en cas de refus.
+  note              String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([orderId])
+  @@index([status, createdAt])
+  @@map("refund")
+}
+
+/// Billet nominatif. UN billet = UN QR = UNE entrée.
+///
+/// Créé UNIQUEMENT à la transition `Payment → SUCCEEDED`, dans la même
+/// transaction que le passage de la commande à `PAID`. Un billet ne peut donc
+/// jamais exister sans encaissement confirmé.
+model Ticket {
+  id String @id @default(cuid())
+
+  /// 16 octets aléatoires en base64url. C'est CE champ qui est encodé dans le
+  /// QR — jamais `id`, qui ne doit pas circuler.
+  publicId String @unique
+
+  /// Jeton de la route publique `/t/[token]`. DISTINCT de `publicId` : un lien
+  /// partagé sur WhatsApp ne doit pas révéler le contenu du QR, sans quoi
+  /// transférer le lien reviendrait à transférer le billet.
+  accessToken String @unique
+
+  /// Dernière rotation du lien d'accès.
+  ///
+  /// Le jeton ci-dessus ouvre la page du billet et son PDF, sans compte et sans
+  /// expiration : un lien transféré par WhatsApp reste valable indéfiniment.
+  /// C'est voulu — le porteur doit pouvoir le retrouver un an après —, mais il
+  /// lui faut un moyen de couper un partage qu'il regrette. La rotation le lui
+  /// donne, et cette date le lui rappelle.
+  accessTokenRotatedAt DateTime?
+
+  /// `NK-8F4C21-01` — référence de commande, suffixe séquentiel du billet.
+  reference String @unique
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  ticketTypeId String
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  /// Dénormalisé : le scan est le chemin le plus critique du produit.
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  /// Toujours renseigné. Vaut le nom de l'acheteur quand l'événement n'exige
+  /// pas de nom par billet — le carnet du contrôleur n'a ainsi aucun cas nul.
+  attendeeName  String
+  attendeePhone String?
+  attendeeEmail String?
+
+  status TicketStatus @default(VALID)
+
+  /// Signature Ed25519 du jeton QR, en base64url.
+  signature      String
+  /// Identifie la clé d'événement utilisée. Permet la rotation sans invalider
+  /// les billets déjà émis.
+  signatureKeyId String
+
+  /// Fin de l'événement + 24 h.
+  qrExpiresAt DateTime
+
+  issuedAt    DateTime  @default(now())
+  usedAt      DateTime?
+  cancelledAt DateTime?
+
+  /// Réservé pour le transfert de billet (ambiguïté A7). Aucune logique au MVP.
+  transferredAt      DateTime?
+  transferredToPhone String?
+
+  /// Clé du PDF généré, mis en cache.
+  pdfKey String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  checkIns  CheckIn[]
+  conflicts CheckInConflict[]
+
+  @@index([eventId, status])
+  @@index([orderId])
+  @@index([ticketTypeId])
+  @@map("ticket")
+}
+
+/// Entrée enregistrée à la porte.
+///
+/// Un scan est écrit LOCALEMENT d'abord, puis synchronisé. Le contrôleur
+/// travaille souvent sans réseau : attendre le serveur pour afficher un verdict
+/// rendrait le produit inutilisable là où il doit servir.
+model CheckIn {
+  id String @id @default(cuid())
+
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  /// Dénormalisé : les compteurs et l'historique se lisent par événement.
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  scannedByUserId String
+  scannedBy       User   @relation("CheckInScannedBy", fields: [scannedByUserId], references: [id])
+
+  /// Porte ou entrée, pour le comptage d'affluence.
+  gate String?
+
+  /// Horodatage de l'APPAREIL, corrigé de l'écart d'horloge mesuré au
+  /// téléchargement du carnet. C'est lui qui arbitre un conflit : deux
+  /// contrôleurs hors ligne n'ont que leurs propres horloges.
+  scannedAt  DateTime
+  /// Horodatage du serveur, posé à la synchronisation.
+  recordedAt DateTime @default(now())
+
+  wasOffline Boolean @default(false)
+  deviceId   String?
+
+  /// Identifiant unique du scan, tiré par l'appareil.
+  /// C'est LUI qui rend la synchronisation par lots rejouable sans dommage :
+  /// un lot renvoyé après une coupure réseau ne crée pas de doublon.
+  nonce String @unique
+
+  /// `false` pour le scan perdant d'un conflit. L'entrée reste consignée —
+  /// l'organisateur doit pouvoir reconstituer ce qui s'est passé.
+  isEffective Boolean @default(true)
+
+  revokedAt       DateTime?
+  revokedByUserId String?
+  revokedBy       User?     @relation("CheckInRevokedBy", fields: [revokedByUserId], references: [id])
+  /// Motif d'annulation : « scanné par erreur », « refusé à la porte ».
+  revokeReason    String?
+
+  createdAt DateTime @default(now())
+
+  conflictsWon  CheckInConflict[] @relation("ConflictWinner")
+  conflictsLost CheckInConflict[] @relation("ConflictLoser")
+
+  @@index([eventId, scannedAt(sort: Desc)])
+  @@index([ticketId])
+  @@index([scannedByUserId, scannedAt(sort: Desc)])
+  @@map("check_in")
+}
+
+/// Double scan détecté à la synchronisation.
+///
+/// Deux contrôleurs hors ligne peuvent valider le même billet sans le savoir.
+/// Le prototype tranche : **jamais d'erreur affichée au contrôleur pendant
+/// l'événement**, qui ne peut rien y faire sur le moment. Le conflit remonte à
+/// l'organisateur, après coup.
+model CheckInConflict {
+  id String @id @default(cuid())
+
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  /// Le scan dont l'horodatage client est le plus ancien.
+  winningCheckInId String
+  winningCheckIn   CheckIn @relation("ConflictWinner", fields: [winningCheckInId], references: [id], onDelete: Cascade)
+
+  losingCheckInId String
+  losingCheckIn   CheckIn @relation("ConflictLoser", fields: [losingCheckInId], references: [id], onDelete: Cascade)
+
+  detectedAt DateTime @default(now())
+
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+  resolvedBy       User?     @relation("ConflictResolvedBy", fields: [resolvedByUserId], references: [id])
+  resolutionNote   String?
+
+  /// Un même couple de scans ne produit qu'un seul conflit.
+  @@unique([losingCheckInId])
+  @@index([ticketId])
+  @@index([resolvedAt])
+  @@map("check_in_conflict")
+}
+
+/// Écriture du grand livre. IMMUABLE.
+///
+/// Aucune mise à jour, aucune suppression — la base le fait respecter par des
+/// déclencheurs, pas seulement le code applicatif. Une correction est une
+/// écriture INVERSE, jamais une modification.
+///
+/// C'est ce qui rend un solde explicable : chaque franc affiché correspond à
+/// une ligne datée, attribuée, et rattachée au fait qui l'a produite.
+model LedgerEntry {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  type LedgerEntryType
+
+  /// SIGNÉ : positif = crédit, négatif = débit. Une contrainte en base vérifie
+  /// la cohérence du signe avec le type.
+  amount   Int
+  currency String @default("XOF")
+
+  balanceState BalanceState @default(AVAILABLE)
+
+  /// Instant de déblocage d'une écriture `PENDING`.
+  ///
+  /// Le déblocage n'est PAS une mise à jour : le solde disponible additionne
+  /// les écritures `AVAILABLE` et les écritures `PENDING` dont cette date est
+  /// passée. Le temps fait le travail, l'immuabilité est préservée.
+  availableAt DateTime?
+
+  eventId   String?
+  event     Event?  @relation(fields: [eventId], references: [id])
+  orderId   String?
+  order     Order?  @relation(fields: [orderId], references: [id])
+  paymentId String?
+  payoutId  String?
+  payout    Payout? @relation(fields: [payoutId], references: [id])
+  refundId  String?
+
+  /// Libellé lisible par l'organisateur, en français.
+  description String
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, balanceState])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([balanceState, availableAt])
+  @@index([eventId])
+  @@index([payoutId])
+  @@map("ledger_entry")
+}
+
+/// Demande de retrait.
+model Payout {
+  id String @id @default(cuid())
+
+  /// `NKP-8F4C21`, sur le modèle des références de commande.
+  reference String @unique
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  payoutAccountId String
+  payoutAccount   PayoutAccount @relation(fields: [payoutAccountId], references: [id])
+
+  requestedByUserId String
+  requestedBy       User   @relation("PayoutRequestedBy", fields: [requestedByUserId], references: [id])
+
+  /// Montant demandé, frais compris.
+  grossAmount Int
+  feeAmount   Int
+  /// Ce que l'organisateur reçoit réellement. Affiché AVANT validation.
+  netAmount   Int
+  currency    String @default("XOF")
+
+  status PayoutStatus @default(PENDING)
+
+  providerReference String?
+  /// « Le numéro n'est pas un compte marchand » — jamais un code brut seul.
+  failureReason     String?
+
+  requestedAt DateTime  @default(now())
+  processedAt DateTime?
+  completedAt DateTime?
+
+  processedByUserId String?
+  processedBy       User?   @relation("PayoutProcessedBy", fields: [processedByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ledgerEntries LedgerEntry[]
+
+  @@index([organizationId, requestedAt(sort: Desc)])
+  @@index([status, requestedAt])
+  @@map("payout")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Les quatre types du produit, et pas un de plus.
+///
+/// Chacun correspond à quelque chose que le participant a demandé — en
+/// achetant, en s'inscrivant — et chacun porte une action. Le cahier des
+/// charges interdit explicitement toute notification promotionnelle non
+/// sollicitée : ajouter un cinquième type serait la première marche.
+enum NotificationType {
+  /// « Ton paiement est confirmé » → voir le billet.
+  PAYMENT_CONFIRMED
+  /// « Ton événement est dans deux jours » → voir le billet.
+  EVENT_REMINDER
+  /// « Le lieu a changé », « l'événement est annulé » → voir l'événement.
+  EVENT_UPDATED
+  /// « Yélé Productions publie un nouvel événement » → le découvrir.
+  ORGANIZER_PUBLISHED
+}
+
+/// Canaux de diffusion. `PUSH` est déclaré pour l'enum partagé avec les
+/// contrats, mais aucun envoi ne l'emprunte encore : les notifications web
+/// push demandent une clé VAPID et un service worker abonné, hors périmètre du
+/// MVP. Le centre in-app tient ce rôle en attendant.
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  PUSH
+}
+
+/// Sort d'un envoi sortant.
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+/// Notification destinée à un participant.
+///
+/// Toujours porteuse d'une action : `actionUrl` et `actionLabel` ne sont pas
+/// facultatifs. Une notification sans destination est un bruit qu'on apprend à
+/// ignorer, et le jour où elle compte vraiment, elle n'est plus lue.
+model Notification {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type NotificationType
+
+  title String
+  body  String
+
+  /// Où mène la notification, en chemin relatif (`/mon-compte/billets/xxx`).
+  actionUrl   String
+  actionLabel String
+
+  /// Contexte, pour le regroupement et le dédoublonnage.
+  eventId String?
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// Empreinte d'unicité : `reminder:<eventId>:<offsetHours>` par exemple.
+  ///
+  /// Un balayage qui repasse ne doit pas produire un second rappel. L'index
+  /// unique partiel ci-dessous le garantit en base, pas seulement dans le code.
+  dedupeKey String?
+
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  deliveries MessageLog[]
+
+  /// Une empreinte donnée ne produit qu'une notification par destinataire.
+  @@unique([userId, dedupeKey])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+  @@index([eventId])
+  @@map("notification")
+}
+
+/// Préférences de notification, une ligne par participant.
+///
+/// Deux types NE FIGURENT PAS ici : `PAYMENT_CONFIRMED` et `EVENT_CHANGED`.
+/// Ils sont transactionnels — ils portent un billet ou une annulation. Les
+/// rendre optionnels reviendrait à laisser quelqu'un se présenter devant une
+/// salle fermée.
+model NotificationPreference {
+  id String @id @default(cuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Rappels J-7, J-1 et H-3. Actifs par défaut : ils rendent service.
+  eventReminders Boolean @default(true)
+
+  /// Publications des organisateurs suivis. Inactif par défaut : c'est le seul
+  /// type qui n'est pas déclenché par une action du participant lui-même.
+  organizerPublications Boolean @default(false)
+
+  /// Canaux acceptés. L'in-app est toujours actif et n'a donc pas de champ.
+  whatsapp Boolean @default(true)
+  sms      Boolean @default(true)
+  email    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("notification_preference")
+}
+
+/// Trace d'un envoi sortant, tous canaux confondus.
+///
+/// ── Pourquoi conserver cette table ────────────────────────────────────────
+/// Quand un participant affirme n'avoir jamais reçu son billet, la question
+/// n'est pas « le code est-il correct » mais « qu'est-ce qui est parti, quand,
+/// et qu'a répondu l'opérateur ». Sans ce journal, le support répond au doigt
+/// mouillé.
+///
+/// Le corps du message n'est PAS stocké : il contient le nom du participant et
+/// parfois son numéro. Le journal garde le fait, pas le contenu.
+model MessageLog {
+  id String @id @default(cuid())
+
+  notificationId String?
+  notification   Notification? @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  channel NotificationChannel
+
+  /// Destinataire tel qu'utilisé — numéro E.164 ou adresse. Nécessaire pour
+  /// répondre à « sur quel numéro ? » sans deviner.
+  destination String
+
+  status MessageStatus @default(QUEUED)
+
+  /// Identifiant chez l'agrégateur, pour rapprocher un accusé de réception.
+  providerReference String?
+  /// Message d'échec en clair, jamais un code brut seul.
+  failureReason     String?
+
+  attemptCount Int @default(0)
+
+  sentAt      DateTime?
+  deliveredAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@index([notificationId])
+  @@map("message_log")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMINISTRATION ET MODÉRATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum ReportTargetType {
+  EVENT
+  ORGANIZATION
+  USER
+}
+
+enum ReportReason {
+  /// « Cet événement n'existe pas », « on m'a vendu un faux billet ».
+  FRAUD
+  /// Informations trompeuses : lieu inexact, artiste annoncé qui ne vient pas.
+  FALSE_INFO
+  INAPPROPRIATE
+  /// L'événement n'a pas eu lieu, sans annulation ni remboursement.
+  NO_SHOW
+  OTHER
+}
+
+enum ReportStatus {
+  NEW
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+}
+
+/// Signalement déposé par un participant ou détecté par la plateforme.
+///
+/// ── Ce qu'un signalement doit permettre de décider ─────────────────────────
+/// Une seule question : faut-il geler les fonds de cet organisateur avant son
+/// prochain versement ? Tout le reste — échanger avec les parties, corriger une
+/// information — se règle sans procédure.
+///
+/// Le gel est la mesure conservatoire qui compte, parce qu'un versement parti
+/// ne revient pas. C'est pourquoi un signalement porte l'organisation visée même
+/// quand il cible un événement : c'est elle qui détient les fonds.
+model Report {
+  id String @id @default(cuid())
+
+  /// `NKR-4F2A81`, sur le modèle des commandes et des retraits.
+  reference String @unique
+
+  targetType ReportTargetType
+  /// Identifiant de la cible, selon `targetType`.
+  targetId   String
+
+  /// Organisation concernée, déduite de la cible. Renseignée même pour un
+  /// signalement d'événement : c'est elle qui porte le risque financier.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  reason  ReportReason
+  /// Ce que le signalant a écrit. Repris tel quel dans le dossier.
+  details String
+
+  /// Auteur du signalement. Nul si déposé sans compte — un participant qui a
+  /// acheté sans s'inscrire doit pouvoir signaler.
+  reporterUserId String?
+  reporter       User?   @relation("ReportFiledBy", fields: [reporterUserId], references: [id], onDelete: SetNull)
+  /// Numéro laissé par un signalant sans compte, pour le recontacter.
+  reporterPhone  String?
+
+  status ReportStatus @default(NEW)
+
+  assignedToUserId String?
+  assignedTo       User?   @relation("ReportAssignedTo", fields: [assignedToUserId], references: [id])
+
+  /// Motif de la clôture. Obligatoire pour RESOLVED et DISMISSED : une décision
+  /// non motivée est indéfendable trois mois plus tard, y compris pour celui
+  /// qui l'a prise.
+  resolutionNote   String?
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+  resolvedBy       User?     @relation("ReportResolvedBy", fields: [resolvedByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  notes ReportNote[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([organizationId, status])
+  @@index([targetType, targetId])
+  @@map("report")
+}
+
+/// Note interne d'un dossier de signalement.
+///
+/// Le fil de discussion des modérateurs. Jamais visible du signalant ni de
+/// l'organisateur : c'est là qu'on écrit « le numéro correspond à un dossier
+/// classé le mois dernier », ce qui n'a pas à sortir.
+model ReportNote {
+  id String @id @default(cuid())
+
+  reportId String
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  authorUserId String
+  author       User   @relation("ReportNoteAuthor", fields: [authorUserId], references: [id])
+
+  body String
+
+  createdAt DateTime @default(now())
+
+  @@index([reportId, createdAt])
+  @@map("report_note")
+}
+
+/// Session d'administration.
+///
+/// ── Pourquoi elle ne réutilise pas `Device` ───────────────────────────────
+/// Une session participant dure quatre-vingt-dix jours et survit à la fermeture
+/// du navigateur : c'est ce qu'on veut pour retrouver un billet. Une session
+/// d'administration donne accès aux pièces d'identité de tous les organisateurs
+/// et au gel des fonds — elle expire en quelques heures, et l'écart entre ces
+/// deux durées est trop grand pour tenir dans un même modèle avec un drapeau.
+///
+/// La séparation vaut aussi pour la surface d'attaque : un vol de cookie
+/// participant ne donne rien ici, et réciproquement.
+model AdminSession {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation("AdminSessionUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 du jeton. Jamais le jeton lui-même.
+  tokenHash String @unique
+
+  /// Vrai seulement après validation du code TOTP. Une session qui a passé le
+  /// mot de passe mais pas la seconde étape n'ouvre AUCUNE porte.
+  totpVerifiedAt DateTime?
+
+  ipAddress String?
+  userAgent String?
+
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+  @@map("admin_session")
+}

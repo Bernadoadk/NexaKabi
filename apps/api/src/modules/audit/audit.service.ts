@@ -88,15 +88,21 @@ export const AUDIT_ACTIONS = {
 
   // ── Administration ────────────────────────────────────────────────────────
   //
-  // Chaque étape de connexion est tracée, échecs compris. Un accès aux pièces
-  // d'identité de tous les organisateurs et au gel des fonds se justifie a
-  // posteriori, ou ne se justifie pas.
-  adminLoginPassword: 'admin.login.password',
+  // Chaque connexion est tracée. Un accès aux pièces d'identité de tous les
+  // organisateurs et au gel des fonds se justifie a posteriori, ou ne se
+  // justifie pas.
   adminLoginCompleted: 'admin.login.completed',
-  adminLoginTotpFailed: 'admin.login.totp_failed',
-  adminTotpEnabled: 'admin.totp.enabled',
-  /** Un code de secours consommé signale un appareil perdu — ou un vol. */
-  adminRecoveryCodeUsed: 'admin.recovery_code.used',
+  adminPasswordChanged: 'admin.password.changed',
+  /**
+   * Composition de l'équipe par le propriétaire : qui a donné quel droit à
+   * qui, et quand. Une équipe qui touche à l'argent doit pouvoir le dire.
+   */
+  adminStaffCreated: 'admin.staff.created',
+  adminStaffUpdated: 'admin.staff.updated',
+  adminStaffSuspended: 'admin.staff.suspended',
+  adminStaffReactivated: 'admin.staff.reactivated',
+  adminStaffPasswordReset: 'admin.staff.password_reset',
+  adminStaffDeleted: 'admin.staff.deleted',
   adminVerificationReviewed: 'admin.verification.reviewed',
   /** Revue du premier événement d'une organisation, avant publication. */
   adminEventReviewed: 'admin.event.reviewed',

@@ -168,6 +168,26 @@ export function formatPhone(
 }
 
 /**
+ * Comme `formatPhone`, mais ne lève jamais : un numéro qui ne se formate pas
+ * est rendu tel quel.
+ *
+ * Pour les écrans qui AFFICHENT des données venues de la base — une console
+ * d'administration, une liste — où une seule ligne mal formée (numéro
+ * provisoire d'un compte d'équipe, donnée d'avant une migration) ne doit pas
+ * faire tomber toute la page. La saisie, elle, reste stricte.
+ */
+export function formatPhoneSafe(
+  e164: string,
+  style: 'international' | 'national' = 'international',
+): string {
+  try {
+    return formatPhone(e164, style);
+  } catch {
+    return e164;
+  }
+}
+
+/**
  * Masque un numéro pour les contextes où il ne doit pas être exposé en entier
  * (carnet du contrôleur, écrans publics).
  *

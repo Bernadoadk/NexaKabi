@@ -17,8 +17,12 @@ import { API_URL, clearAdminCookie, readAdminToken, setAdminCookie } from '@/lib
  */
 const ALLOWED: readonly RegExp[] = [
   /^auth\/login$/,
-  /^auth\/totp$/,
   /^auth\/logout$/,
+  /^auth\/password$/,
+  /^staff$/,
+  /^staff\/[\w-]+$/,
+  /^staff\/[\w-]+\/status$/,
+  /^staff\/[\w-]+\/password$/,
   /^dashboard$/,
   /^verifications$/,
   /^verifications\/[\w-]+$/,
@@ -39,7 +43,7 @@ const ALLOWED: readonly RegExp[] = [
 async function relay(
   request: NextRequest,
   path: string[],
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
 ): Promise<Response> {
   const target = path.join('/');
 
@@ -48,7 +52,7 @@ async function relay(
   }
 
   const token = await readAdminToken();
-  const body = method === 'GET' ? undefined : await request.text();
+  const body = method === 'GET' || method === 'DELETE' ? undefined : await request.text();
 
   const upstream = await fetch(`${API_URL}/admin/${target}`, {
     method,
@@ -62,9 +66,7 @@ async function relay(
 
   const payload: unknown = await upstream.json().catch(() => null);
 
-  const isLoginStep = target === 'auth/login' || target === 'auth/totp';
-
-  if (upstream.ok && isLoginStep) {
+  if (upstream.ok && target === 'auth/login') {
     const session = payload as { token?: string; expiresAt?: string } | null;
 
     if (session?.token && session.expiresAt) {
@@ -114,4 +116,12 @@ export async function PATCH(
 ): Promise<Response> {
   const { path } = await context.params;
   return relay(request, path, 'PATCH');
+}
+
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ path: string[] }> },
+): Promise<Response> {
+  const { path } = await context.params;
+  return relay(request, path, 'DELETE');
 }

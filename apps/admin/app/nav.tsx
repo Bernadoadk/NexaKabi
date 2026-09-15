@@ -1,23 +1,30 @@
+import type { AdminSpace } from '@nexakabi/contracts';
 import type { SectionNavEntry } from '@nexakabi/ui';
 
 /**
- * Entrées de la console admin.
+ * Entrées de la console.
  *
- * ── Ce qui a changé ────────────────────────────────────────────────────────
- * Quatre entrées à l'origine, avec ce commentaire : « L'administration n'a
- * pas vocation à devenir un back-office complet ». Le principe reste juste —
- * chaque entrée doit correspondre à une file réelle —, mais trois files
- * réelles n'avaient PAS d'écran du tout : geler un compte n'était possible
- * qu'en passant par un signalement déjà ouvert contre lui, exécuter un
- * retrait exigeait de déjà connaître son identifiant, et rien ne permettait
- * de chercher un compte utilisateur pour lui-même.
+ * Chaque entrée porte l'ESPACE qu'elle ouvre : le cadre (`shell.tsx`) ne
+ * montre à un employé que les espaces auxquels le propriétaire lui a donné
+ * accès. Le tableau de bord n'a pas d'espace : tout le monde y entre, il
+ * filtre lui-même ses compteurs.
+ *
+ * Le principe reste celui d'origine : chaque entrée correspond à une file
+ * réelle, jamais à un back-office complet.
  */
-export const ADMIN_NAV_ENTRIES: readonly SectionNavEntry[] = [
+export interface AdminNavEntry extends SectionNavEntry {
+  space?: AdminSpace;
+  /** Réservée au propriétaire. */
+  ownerOnly?: boolean;
+}
+
+export const ADMIN_NAV_ENTRIES: readonly AdminNavEntry[] = [
   { href: '/', label: 'Tableau de bord', exact: true },
-  { href: '/evenements', label: 'Événements' },
-  { href: '/verifications', label: 'Vérifications' },
-  { href: '/signalements', label: 'Signalements' },
-  { href: '/organisations', label: 'Organisations' },
-  { href: '/utilisateurs', label: 'Utilisateurs' },
-  { href: '/retraits', label: 'Retraits' },
+  { href: '/evenements', label: 'Événements', space: 'events' },
+  { href: '/verifications', label: 'Vérifications', space: 'verifications' },
+  { href: '/signalements', label: 'Signalements', space: 'reports' },
+  { href: '/organisations', label: 'Organisations', space: 'organizations' },
+  { href: '/utilisateurs', label: 'Utilisateurs', space: 'users' },
+  { href: '/retraits', label: 'Retraits', space: 'payouts' },
+  { href: '/equipe', label: 'Équipe', ownerOnly: true },
 ];

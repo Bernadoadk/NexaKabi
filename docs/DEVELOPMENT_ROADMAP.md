@@ -117,7 +117,7 @@ avec leur phase.
 | Sessions | JWT court + refresh opaque avec rotation, détection de réutilisation, cookies httpOnly, durée 90 jours         |
 | Écrans   | P8 (3 étapes du prototype), P9 récupération d'accès, U7 profil                                                 |
 | Guards   | `SessionGuard`, `RequireGlobalRole`                                                                            |
-| Sécurité | Argon2id, TOTP pour l'administration, limitation par numéro et par IP, absence d'énumération de comptes        |
+| Sécurité | scrypt et droits par espace pour l'administration, limitation par numéro et par IP, absence d'énumération de comptes |
 | Tests    | Parcours OTP complet, expiration, tentatives maximales, rotation de jeton, détection de rejeu                  |
 
 **Critère de sortie** : un utilisateur s'inscrit avec son numéro, reçoit un code, ouvre une session,

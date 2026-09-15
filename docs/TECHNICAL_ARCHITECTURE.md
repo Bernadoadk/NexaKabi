@@ -102,7 +102,6 @@ documentation OpenAPI et le type client.
 | **`@nestjs/throttler`**               | Limitation de débit sur l'authentification et les webhooks                                                                                                                |
 | **`pino`** + `nestjs-pino`            | Journalisation structurée JSON avec identifiant de corrélation — condition d'un audit financier exploitable                                                               |
 | **`@node-rs/argon2`**                 | Hachage des mots de passe administrateurs (les participants n'en ont pas)                                                                                                 |
-| **`otplib`**                          | TOTP pour la double authentification administrateur                                                                                                                       |
 | **`@aws-sdk/client-s3`**              | Compatible Cloudflare R2 et S3 ; évite un verrouillage fournisseur                                                                                                        |
 | **`sharp`**                           | Redimensionnement et conversion AVIF/WebP des visuels à l'upload — la cible de 150 Ko l'exige                                                                             |
 | **`pdfkit`** ou `@react-pdf/renderer` | Billet PDF et relevés. `@react-pdf/renderer` permet de réutiliser les tokens du design system                                                                             |
@@ -471,11 +470,21 @@ Deux points méritent attention :
 non partagé avec le domaine principal. Un jeton volé côté public ne doit jamais ouvrir
 l'administration.
 
-### Administrateurs plateforme — avec mot de passe et 2FA
+### Équipe d'administration — identifiant et mot de passe
 
-Email + mot de passe (Argon2id) + **TOTP obligatoire**, conformément à l'exigence du prototype
-(« double authentification obligatoire »). Sessions courtes (8 h), liste blanche d'adresses IP
-optionnelle, journalisation exhaustive de toutes les actions.
+Un **propriétaire** unique (`nom.owner@xxxx`, amorcé par script) et des **employés**
+(`nom.staff@xxxx`, créés depuis l'écran Équipe). Mot de passe seul, haché en scrypt, douze
+caractères au minimum ; la double authentification a été retirée à la demande du propriétaire.
+Ce qui porte la sécurité à sa place : blocage de quinze minutes après cinq échecs, jeton de
+session opaque vérifié en base à chaque requête (révocation immédiate), sessions de 8 h, sessions
+coupées à la suspension, à la suppression et à tout changement de mot de passe, journalisation
+exhaustive.
+
+Les droits d'un employé sont **par espace** (Événements, Vérifications, Signalements,
+Organisations, Utilisateurs, Retraits), à deux niveaux — *consultation* ou *décision* — plus un
+droit distinct **Mouvements d'argent** (exécuter ou enregistrer un retrait, geler ou dégeler des
+fonds), jamais impliqué par un espace. Le calcul vit dans `@nexakabi/contracts`
+(`hasAdminAccess`, `canMoveMoney`) et sert des deux côtés : la console masque, l'API refuse.
 
 ### Contrôleurs
 
@@ -507,10 +516,13 @@ export class OrganizerEventsController {
 @UseGuards(SessionGuard, EventScopeGuard)      // vérifie scopedEventIds pour SCANNER
 export class CheckInController { … }
 
-@Controller('admin/transactions')
-@UseGuards(AdminSessionGuard, TwoFactorGuard)
-@RequireGlobalRole('ADMIN', 'SUPERADMIN')
-export class AdminTransactionsController { … }
+@Controller('admin')
+@UseGuards(AdminSessionGuard)
+export class AdminController {
+  @RequireAdminAccess('payouts', 'act')
+  @RequireMoney()
+  @Post('payouts/:id/execute') … // « Retraits · décision » ET « Mouvements d'argent »
+}
 ```
 
 L'organisation active est déterminée par un en-tête `X-Organization-Id` (ou un segment de route),

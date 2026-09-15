@@ -39,6 +39,9 @@ export function Dialog({
         <RadixDialog.Content
           className={cn(
             'fixed left-1/2 top-1/2 z-50 w-[calc(100%-2.5rem)] max-w-[440px] -translate-x-1/2 -translate-y-1/2',
+            // Un formulaire plus haut que l'écran (téléphone, grille de droits)
+            // défile DANS la boîte : ses boutons restent atteignables.
+            'max-h-[calc(100dvh-2rem)] overflow-y-auto',
             'rounded-panel bg-surface p-6 shadow-lg focus:outline-none',
             className,
           )}

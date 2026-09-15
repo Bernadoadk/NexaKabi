@@ -2,9 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import type { AdminUserDetail } from '@nexakabi/contracts';
-import { formatPhone } from '@nexakabi/utils';
+import { formatPhoneSafe } from '@nexakabi/utils';
 import { Alert, Badge, Stat, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied, ReadOnlyNotice } from '../../access';
 import { AdminShell } from '../../shell';
 import { SuspendActions } from './suspend-actions';
 
@@ -14,6 +15,8 @@ export const metadata: Metadata = { title: 'Compte' };
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const admin = await getAdminUser();
   if (!admin) redirect('/connexion');
+  if (!hasAdminAccess(admin, 'users')) return <AccessDenied user={admin} space="users" />;
+  const canAct = hasAdminAccess(admin, 'users', 'act');
 
   const { id } = await params;
   const result = await adminFetch<AdminUserDetail>(`/users/${id}`);
@@ -44,7 +47,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           </Link>
           <span className="text-text-faint">/</span>
           <span className="text-body font-semibold">
-            {account.fullName || formatPhone(account.phone)}
+            {account.fullName || formatPhoneSafe(account.phone)}
           </span>
           <div className="flex-1" />
           {account.globalRole !== 'USER' ? <Badge tone="ink">{account.globalRole}</Badge> : null}
@@ -64,7 +67,15 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
             <Surface variant="panel" padding="comfortable" className="flex flex-col gap-4">
               <h2 className="text-h3 font-bold">Coordonnées</h2>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Fact label="Téléphone" value={formatPhone(account.phone)} emphasis />
+                <Fact
+                  label="Téléphone"
+                  value={
+                    account.globalRole === 'USER'
+                      ? formatPhoneSafe(account.phone)
+                      : 'Compte de l’équipe · sans numéro'
+                  }
+                  emphasis
+                />
                 <Fact label="E-mail" value={account.email ?? 'Non renseigné'} />
                 <Fact
                   label="Compte créé le"
@@ -112,11 +123,15 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           </div>
 
           <div className="lg:sticky lg:top-[120px] lg:self-start">
-            <SuspendActions
-              userId={account.id}
-              status={account.status}
-              canModerate={account.globalRole === 'USER'}
-            />
+            {canAct ? (
+              <SuspendActions
+                userId={account.id}
+                status={account.status}
+                canModerate={account.globalRole === 'USER'}
+              />
+            ) : (
+              <ReadOnlyNotice what="suspendre ou réactiver un compte" />
+            )}
           </div>
         </div>
       </div>

@@ -4,7 +4,8 @@ import { notFound, redirect } from 'next/navigation';
 import { REPORT_REASON_LABELS, REPORT_STATUS_LABELS } from '@nexakabi/contracts';
 import { formatMoney, formatRelative } from '@nexakabi/utils';
 import { Alert, Badge, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, canMoveMoney, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied, ReadOnlyNotice } from '../../access';
 import { AdminShell } from '../../shell';
 import { CaseActions } from './case-actions';
 
@@ -41,6 +42,9 @@ interface ReportDetail {
 export default async function ReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'reports')) return <AccessDenied user={user} space="reports" />;
+  const canAct = hasAdminAccess(user, 'reports', 'act');
+  const money = canMoveMoney(user);
 
   const { id } = await params;
   const result = await adminFetch<ReportDetail>(`/reports/${id}`);
@@ -165,12 +169,17 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
           </div>
 
           <div className="lg:sticky lg:top-[120px] lg:self-start">
-            <CaseActions
-              reportId={report.id}
-              organizationId={report.organizationId}
-              closed={closed}
-              assigned={report.assignedToUserId !== null}
-            />
+            {canAct ? (
+              <CaseActions
+                reportId={report.id}
+                organizationId={report.organizationId}
+                closed={closed}
+                assigned={report.assignedToUserId !== null}
+                canFreeze={money}
+              />
+            ) : (
+              <ReadOnlyNotice what="instruire ni clore un dossier" />
+            )}
           </div>
         </div>
       </div>

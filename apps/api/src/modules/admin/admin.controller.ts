@@ -1,17 +1,32 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { createZodDto } from 'nestjs-zod';
 import {
   adminLoginSchema,
-  adminTotpSchema,
+  changeAdminPasswordSchema,
+  createAdminStaffSchema,
   createReportSchema,
   freezeFundsSchema,
   recordPayoutSchema,
+  resetAdminStaffPasswordSchema,
   resolveReportSchema,
   reviewEventSchema,
   reviewVerificationSchema,
+  setAdminStaffStatusSchema,
   suspendUserSchema,
   unfreezeFundsSchema,
+  updateAdminStaffSchema,
   type GlobalRole,
   type PayoutStatus,
   type UserStatus,
@@ -25,10 +40,12 @@ import { AdminAuthService } from './admin-auth.service';
 import { AdminOrganizationsService } from './admin-organizations.service';
 import {
   AdminSessionGuard,
-  AllowPendingTotp,
-  MinimumAdminRole,
+  OwnerOnly,
+  RequireAdminAccess,
+  RequireMoney,
   type AdminRequest,
 } from './admin-session.guard';
+import { AdminStaffService } from './admin-staff.service';
 import { AdminUsersService } from './admin-users.service';
 import { PayoutsService } from '../finance/payouts.service';
 import { EventModerationService } from './event-moderation.service';
@@ -36,7 +53,11 @@ import { ModerationService } from './moderation.service';
 import { VerificationsService } from './verifications.service';
 
 class LoginDto extends createZodDto(adminLoginSchema) {}
-class TotpDto extends createZodDto(adminTotpSchema) {}
+class ChangePasswordDto extends createZodDto(changeAdminPasswordSchema) {}
+class CreateStaffDto extends createZodDto(createAdminStaffSchema) {}
+class UpdateStaffDto extends createZodDto(updateAdminStaffSchema) {}
+class ResetStaffPasswordDto extends createZodDto(resetAdminStaffPasswordSchema) {}
+class SetStaffStatusDto extends createZodDto(setAdminStaffStatusSchema) {}
 class ReviewDto extends createZodDto(reviewVerificationSchema) {}
 class ReviewEventDto extends createZodDto(reviewEventSchema) {}
 class ResolveReportDto extends createZodDto(resolveReportSchema) {}
@@ -60,7 +81,7 @@ export class AdminAuthController {
 
   @Public()
   @Post('login')
-  @ApiOperation({ summary: 'Première étape : identifiants' })
+  @ApiOperation({ summary: 'Connexion : identifiant et mot de passe' })
   async login(@Body() body: LoginDto, @Req() request: AdminRequest) {
     return this.auth.login(body, {
       ipAddress: request.ip,
@@ -68,24 +89,8 @@ export class AdminAuthController {
     });
   }
 
-  /**
-   * Seconde étape.
-   *
-   * La seule route qui accepte une session dont le TOTP n'est pas encore validé
-   * — et pour cause : c'est elle qui le valide.
-   */
   @Public()
   @UseGuards(AdminSessionGuard)
-  @AllowPendingTotp()
-  @Post('totp')
-  @ApiOperation({ summary: 'Seconde étape : code à six chiffres' })
-  async verifyTotp(@Body() body: TotpDto, @Req() request: AdminRequest) {
-    return this.auth.verifyTotpCode(request.adminToken, body.code);
-  }
-
-  @Public()
-  @UseGuards(AdminSessionGuard)
-  @AllowPendingTotp()
   @Post('logout')
   @ApiOperation({ summary: 'Fermer la session' })
   async logout(@Req() request: AdminRequest) {
@@ -96,9 +101,81 @@ export class AdminAuthController {
   @Public()
   @UseGuards(AdminSessionGuard)
   @Get('me')
-  @ApiOperation({ summary: 'Session courante' })
+  @ApiOperation({ summary: 'Session courante : identité, rôle et droits' })
   me(@Req() request: AdminRequest) {
     return request.admin;
+  }
+
+  @Public()
+  @UseGuards(AdminSessionGuard)
+  @Post('password')
+  @ApiOperation({ summary: 'Changer son propre mot de passe' })
+  async changePassword(@Body() body: ChangePasswordDto, @Req() request: AdminRequest) {
+    await this.auth.changePassword(request.admin.id, request.adminToken, body);
+    return { ok: true };
+  }
+}
+
+/**
+ * L'équipe — réservée au propriétaire.
+ *
+ * Créer, modifier, suspendre, réinitialiser un mot de passe, supprimer : rien
+ * ici n'est accessible à un employé, quels que soient ses droits. Le garde
+ * l'impose au niveau de la classe, pas route par route, pour qu'une route
+ * ajoutée demain n'y échappe pas par oubli.
+ */
+@ApiTags('Administration · équipe')
+@Public()
+@UseGuards(AdminSessionGuard)
+@OwnerOnly()
+@Controller('admin/staff')
+export class AdminStaffController {
+  constructor(private readonly staff: AdminStaffService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'L’équipe, propriétaire compris' })
+  list() {
+    return this.staff.list();
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Ajouter un employé' })
+  create(@Body() body: CreateStaffDto, @Req() request: AdminRequest) {
+    return this.staff.create(body, request.admin.id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Modifier le nom ou les droits d’un employé' })
+  update(@Param('id') id: string, @Body() body: UpdateStaffDto, @Req() request: AdminRequest) {
+    return this.staff.update(id, body, request.admin.id);
+  }
+
+  @Post(':id/status')
+  @ApiOperation({ summary: 'Suspendre ou réactiver un employé' })
+  setStatus(
+    @Param('id') id: string,
+    @Body() body: SetStaffStatusDto,
+    @Req() request: AdminRequest,
+  ) {
+    return this.staff.setStatus(id, body.status, request.admin.id);
+  }
+
+  @Post(':id/password')
+  @ApiOperation({ summary: 'Donner un nouveau mot de passe à un employé' })
+  async resetPassword(
+    @Param('id') id: string,
+    @Body() body: ResetStaffPasswordDto,
+    @Req() request: AdminRequest,
+  ) {
+    await this.staff.resetPassword(id, body.password, request.admin.id);
+    return { ok: true };
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Retirer un employé de l’équipe' })
+  async remove(@Param('id') id: string, @Req() request: AdminRequest) {
+    await this.staff.remove(id, request.admin.id);
+    return { ok: true };
   }
 }
 
@@ -128,17 +205,22 @@ export class AdminController {
   @Get('dashboard')
   @ApiOperation({ summary: 'Ce qui attend une décision' })
   dashboard() {
+    // Ouvert à toute session : la console masque elle-même les compteurs des
+    // espaces auxquels l'employé n'a pas accès, et chaque lien mène à une
+    // route qui, elle, vérifie.
     return this.verifications.dashboard();
   }
 
   // ── Vérifications ─────────────────────────────────────────────────────────
 
+  @RequireAdminAccess('verifications', 'read')
   @Get('verifications')
   @ApiOperation({ summary: 'Dossiers en attente' })
   listVerifications() {
     return this.verifications.listPending();
   }
 
+  @RequireAdminAccess('verifications', 'read')
   @Get('verifications/:id')
   @ApiOperation({ summary: 'Un dossier de vérification' })
   getVerification(@Param('id') id: string) {
@@ -153,7 +235,7 @@ export class AdminController {
    * schémas différents), mais le nommer explicitement dit ce qu'il fait sans
    * relire le corps de la méthode.
    */
-  @MinimumAdminRole('ADMIN')
+  @RequireAdminAccess('verifications', 'act')
   @Get('verifications/:id/documents/:documentId/url')
   @ApiOperation({ summary: 'Ouvrir une pièce déposée (URL signée, à durée limitée)' })
   getDocumentUrl(
@@ -164,7 +246,7 @@ export class AdminController {
     return this.verifications.getDocumentUrl(id, documentId, request.admin.id);
   }
 
-  @MinimumAdminRole('ADMIN')
+  @RequireAdminAccess('verifications', 'act')
   @Post('verifications/:id/decision')
   @ApiOperation({ summary: 'Statuer sur un dossier' })
   async review(@Param('id') id: string, @Body() body: ReviewDto, @Req() request: AdminRequest) {
@@ -174,19 +256,21 @@ export class AdminController {
 
   // ── Événements en attente de revue ────────────────────────────────────────
 
+  @RequireAdminAccess('events', 'read')
   @Get('events')
   @ApiOperation({ summary: 'Événements en attente de revue' })
   listPendingEvents() {
     return this.events.listPending();
   }
 
+  @RequireAdminAccess('events', 'read')
   @Get('events/:id')
   @ApiOperation({ summary: 'Un événement à examiner' })
   getPendingEvent(@Param('id') id: string) {
     return this.events.getPending(id);
   }
 
-  @MinimumAdminRole('ADMIN')
+  @RequireAdminAccess('events', 'act')
   @Post('events/:id/decision')
   @ApiOperation({ summary: 'Publier ou refuser un événement' })
   async reviewEvent(
@@ -200,18 +284,21 @@ export class AdminController {
 
   // ── Signalements ──────────────────────────────────────────────────────────
 
+  @RequireAdminAccess('reports', 'read')
   @Get('reports')
   @ApiOperation({ summary: 'File des signalements, triée par risque' })
   listReports(@Query('statut') status?: string) {
     return this.moderation.listReports({ status });
   }
 
+  @RequireAdminAccess('reports', 'read')
   @Get('reports/:id')
   @ApiOperation({ summary: 'Un dossier de signalement' })
   getReport(@Param('id') id: string) {
     return this.moderation.getReport(id);
   }
 
+  @RequireAdminAccess('reports', 'act')
   @Patch('reports/:id/assign')
   @ApiOperation({ summary: 'Prendre le dossier en charge' })
   async assign(@Param('id') id: string, @Req() request: AdminRequest) {
@@ -219,6 +306,7 @@ export class AdminController {
     return { ok: true };
   }
 
+  @RequireAdminAccess('reports', 'act')
   @Post('reports/:id/notes')
   @ApiOperation({ summary: 'Ajouter une note interne' })
   async addNote(@Param('id') id: string, @Body() body: NoteDto, @Req() request: AdminRequest) {
@@ -226,7 +314,7 @@ export class AdminController {
     return { ok: true };
   }
 
-  @MinimumAdminRole('ADMIN')
+  @RequireAdminAccess('reports', 'act')
   @Post('reports/:id/resolution')
   @ApiOperation({ summary: 'Clore le dossier' })
   async resolveReport(
@@ -240,6 +328,7 @@ export class AdminController {
 
   // ── Organisations ─────────────────────────────────────────────────────────
 
+  @RequireAdminAccess('organizations', 'read')
   @Get('organizations')
   @ApiOperation({ summary: 'Organisations de la plateforme' })
   listOrganizations(
@@ -254,12 +343,14 @@ export class AdminController {
     });
   }
 
+  @RequireAdminAccess('organizations', 'read')
   @Get('organizations/:id')
   @ApiOperation({ summary: 'Fiche d’une organisation' })
   getOrganization(@Param('id') id: string) {
     return this.organizations.getOne(id);
   }
 
+  @RequireAdminAccess('organizations', 'read')
   @Get('organizations/:id/audit')
   @ApiOperation({ summary: 'Journal d’activité de l’organisation' })
   getOrganizationAudit(@Param('id') id: string) {
@@ -268,6 +359,7 @@ export class AdminController {
 
   // ── Utilisateurs ──────────────────────────────────────────────────────────
 
+  @RequireAdminAccess('users', 'read')
   @Get('users')
   @ApiOperation({ summary: 'Comptes de la plateforme' })
   listUsers(
@@ -278,13 +370,14 @@ export class AdminController {
     return this.users.list({ search, globalRole, status });
   }
 
+  @RequireAdminAccess('users', 'read')
   @Get('users/:id')
   @ApiOperation({ summary: 'Fiche d’un compte' })
   getUser(@Param('id') id: string) {
     return this.users.getOne(id);
   }
 
-  @MinimumAdminRole('SUPERADMIN')
+  @RequireAdminAccess('users', 'act')
   @Post('users/:id/suspend')
   @ApiOperation({ summary: 'Suspendre un compte' })
   async suspendUser(
@@ -296,7 +389,7 @@ export class AdminController {
     return { ok: true };
   }
 
-  @MinimumAdminRole('SUPERADMIN')
+  @RequireAdminAccess('users', 'act')
   @Post('users/:id/reactivate')
   @ApiOperation({ summary: 'Réactiver un compte suspendu' })
   async reactivateUser(@Param('id') id: string, @Req() request: AdminRequest) {
@@ -306,6 +399,7 @@ export class AdminController {
 
   // ── Retraits ──────────────────────────────────────────────────────────────
 
+  @RequireAdminAccess('payouts', 'read')
   @Get('payouts')
   @ApiOperation({ summary: 'Retraits, toutes organisations confondues' })
   listPayouts(@Query('statut') status?: PayoutStatus) {
@@ -321,7 +415,8 @@ export class AdminController {
    * Exposer le déclenchement dans l'espace organisateur reviendrait à lui
    * laisser se payer lui-même.
    */
-  @MinimumAdminRole('SUPERADMIN')
+  @RequireAdminAccess('payouts', 'act')
+  @RequireMoney()
   @Post('payouts/:id/execute')
   @ApiOperation({ summary: 'Verser les recettes chez l’opérateur' })
   executePayout(@Param('id') id: string, @Req() request: AdminRequest) {
@@ -335,7 +430,8 @@ export class AdminController {
    * banque et s'enregistre ici, avec sa référence. Même rang que l'exécution —
    * c'est le même pouvoir, celui de déclarer que l'argent est parti.
    */
-  @MinimumAdminRole('SUPERADMIN')
+  @RequireAdminAccess('payouts', 'act')
+  @RequireMoney()
   @Post('payouts/:id/record')
   @ApiOperation({ summary: 'Enregistrer un versement fait à la main' })
   recordPayout(
@@ -348,14 +444,16 @@ export class AdminController {
 
   // ── Fonds ─────────────────────────────────────────────────────────────────
 
-  @MinimumAdminRole('SUPERADMIN')
+  @RequireAdminAccess('organizations', 'act')
+  @RequireMoney()
   @Post('organizations/:id/freeze')
   @ApiOperation({ summary: 'Geler les fonds disponibles' })
   freeze(@Param('id') id: string, @Body() body: FreezeDto, @Req() request: AdminRequest) {
     return this.moderation.freezeFunds(id, body, request.admin.id);
   }
 
-  @MinimumAdminRole('SUPERADMIN')
+  @RequireAdminAccess('organizations', 'act')
+  @RequireMoney()
   @Post('organizations/:id/unfreeze')
   @ApiOperation({ summary: 'Lever un gel' })
   unfreeze(@Param('id') id: string, @Body() body: UnfreezeDto, @Req() request: AdminRequest) {

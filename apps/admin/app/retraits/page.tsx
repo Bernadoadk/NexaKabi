@@ -9,7 +9,8 @@ import {
 } from '@nexakabi/contracts';
 import { formatEventCaptionWithTime } from '@nexakabi/utils';
 import { Alert, Badge, EmptyState, Money, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, canMoveMoney, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied } from '../access';
 import { AdminShell } from '../shell';
 import { ExecuteButton } from './execute-button';
 import { RecordPayoutForm } from './record-form';
@@ -41,6 +42,9 @@ export default async function PayoutsPage({
 }) {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'payouts')) return <AccessDenied user={user} space="payouts" />;
+  const canAct = hasAdminAccess(user, 'payouts', 'act');
+  const money = canMoveMoney(user);
 
   const params = await searchParams;
   const status = params.statut as PayoutStatus | undefined;
@@ -112,7 +116,7 @@ export default async function PayoutsPage({
 
                   <PayoutBadge status={payout.status} />
 
-                  <PayoutActions payout={payout} />
+                  <PayoutActions payout={payout} allowed={canAct && money} />
                 </li>
               ))}
             </ul>
@@ -132,7 +136,11 @@ export default async function PayoutsPage({
  * l'enregistrer. En cours : l'interrogation conclura d'elle-même, mais un
  * versement que l'opérateur ne conclut jamais doit pouvoir être clos ici.
  */
-function PayoutActions({ payout }: { payout: AdminPayoutSummary }) {
+function PayoutActions({ payout, allowed }: { payout: AdminPayoutSummary; allowed: boolean }) {
+  // Sans le droit « Mouvements d'argent », un retrait se lit, il ne se
+  // déclenche pas : les boutons disparaissent au lieu d'échouer au clic.
+  if (!allowed) return null;
+
   if (payout.status === 'PENDING' && payout.accountType === 'MOBILE_MONEY') {
     return (
       <div className="flex w-full flex-wrap items-start justify-end gap-2 sm:w-auto">

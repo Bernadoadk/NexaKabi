@@ -28,48 +28,236 @@ import { verificationChecksSchema, type VerificationChecks } from './organizatio
 import { payoutSchema } from './finance.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Authentification
+// Espaces et niveaux d'accès
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Ouverture de session : première étape.
+ * Les espaces de la console — un par file de travail.
  *
- * Le mot de passe seul n'ouvre rien. Il produit une session « à moitié
- * authentifiée » qui ne donne accès qu'à l'écran de saisie du code TOTP.
+ * ── Deux rôles, et des cases ────────────────────────────────────────────────
+ * Le PROPRIÉTAIRE voit tout et compose l'équipe. Un EMPLOYÉ n'a que ce que le
+ * propriétaire lui a coché, espace par espace, à l'un de deux niveaux :
+ *   · \`read\` — il consulte, il ne décide pas ;
+ *   · \`act\`  — il décide (valider un dossier, résoudre un signalement…).
+ *
+ * L'ARGENT n'est jamais impliqué par un espace : exécuter ou enregistrer un
+ * retrait, geler ou dégeler des fonds, exigent le droit \`canMoveMoney\`,
+ * accordé explicitement. Un comptable peut ainsi lire les retraits sans
+ * pouvoir en déclencher un ; un modérateur décide sur les événements sans
+ * jamais voir une pièce d'identité.
  */
+export const ADMIN_SPACES = [
+  {
+    key: 'events',
+    label: 'Événements',
+    description: 'Relecture des premiers événements avant leur mise en ligne.',
+  },
+  {
+    key: 'verifications',
+    label: 'Vérifications',
+    description: 'Dossiers d’identité des organisateurs — pièces comprises.',
+  },
+  {
+    key: 'reports',
+    label: 'Signalements',
+    description: 'Contenus et comptes signalés par les participants.',
+  },
+  {
+    key: 'organizations',
+    label: 'Organisations',
+    description: 'Fiches des organisateurs, journal d’activité, gel des recettes.',
+  },
+  {
+    key: 'users',
+    label: 'Utilisateurs',
+    description: 'Comptes de la plateforme, suspension et réactivation.',
+  },
+  {
+    key: 'payouts',
+    label: 'Retraits',
+    description: 'Demandes de retrait des organisateurs et leur exécution.',
+  },
+] as const;
+
+export type AdminSpace = (typeof ADMIN_SPACES)[number]['key'];
+
+export const ADMIN_SPACE_KEYS = ADMIN_SPACES.map((space) => space.key) as [
+  AdminSpace,
+  ...AdminSpace[],
+];
+
+export const adminSpaceSchema = z.enum(ADMIN_SPACE_KEYS);
+
+export const ADMIN_ACCESS_LEVELS = ['read', 'act'] as const;
+export type AdminAccessLevel = (typeof ADMIN_ACCESS_LEVELS)[number];
+export const adminAccessLevelSchema = z.enum(ADMIN_ACCESS_LEVELS);
+
+/** Ce qu'un employé peut faire, espace par espace. Un espace absent : aucun accès. */
+// `partialRecord` : un espace absent signifie « aucun accès », pas une erreur.
+export const adminAccessSchema = z.partialRecord(adminSpaceSchema, adminAccessLevelSchema);
+export type AdminAccess = Partial<Record<AdminSpace, AdminAccessLevel>>;
+
+/** Rôle tel que la console le lit. */
+export const adminRoleSchema = z.enum(['OWNER', 'STAFF']);
+export type AdminRole = z.infer<typeof adminRoleSchema>;
+
+export const ADMIN_ROLE_LABELS: Readonly<Record<AdminRole, string>> = {
+  OWNER: 'Propriétaire',
+  STAFF: 'Employé',
+};
+
+/**
+ * Le droit sur un espace, tel que le garde et l'écran le calculent — le même
+ * calcul des deux côtés, sinon un menu montrerait ce que l'API refuse.
+ */
+export function hasAdminAccess(
+  admin: { role: AdminRole; access: AdminAccess },
+  space: AdminSpace,
+  level: AdminAccessLevel = 'read',
+): boolean {
+  if (admin.role === 'OWNER') return true;
+
+  const held = admin.access[space];
+  if (!held) return false;
+
+  return level === 'read' || held === 'act';
+}
+
+export function canMoveMoney(admin: { role: AdminRole; canMoveMoney: boolean }): boolean {
+  return admin.role === 'OWNER' || admin.canMoveMoney;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identifiants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Format de l'identifiant : \`nom.owner@7k2p\` ou \`nom.staff@7k2p\`.
+ *
+ * Le \`nom\` est choisi à la création — un prénom, un pseudo, en minuscules
+ * sans accent. Le suffixe est tiré au hasard : deux « awa » peuvent coexister,
+ * et l'identifiant complet est ce que l'employé tape pour se connecter.
+ */
+export const ADMIN_HANDLE_PATTERN = /^[a-z][a-z0-9-]{1,23}$/;
+export const ADMIN_SUFFIX_LENGTH = 4;
+export const ADMIN_USERNAME_PATTERN = /^[a-z][a-z0-9-]{1,23}\.(owner|staff)@[a-z0-9]{4}$/;
+
+export const adminHandleSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(
+    ADMIN_HANDLE_PATTERN,
+    'Lettres minuscules, chiffres et tirets seulement, de 2 à 24 caractères, en commençant par une lettre.',
+  );
+
+export function buildAdminUsername(handle: string, role: AdminRole, suffix: string): string {
+  return `${handle}.${role === 'OWNER' ? 'owner' : 'staff'}@${suffix}`;
+}
+
+/** Douze caractères au minimum : un mot de passe court n'est protégé par rien d'autre. */
+export const adminPasswordSchema = z
+  .string()
+  .min(12, 'Douze caractères au minimum.')
+  .max(200, 'Deux cents caractères au maximum.');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Authentification
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Ouverture de session : identifiant et mot de passe, en une étape. */
 export const adminLoginSchema = z.object({
-  email: z.string().email("Cette adresse n'est pas valide."),
+  username: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(1, 'L’identifiant est obligatoire.')
+    .max(60, 'Cet identifiant est trop long.'),
   password: z.string().min(1, 'Le mot de passe est obligatoire.'),
 });
 
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
 
-/** Seconde étape : code à six chiffres, ou code de secours. */
-export const adminTotpSchema = z.object({
-  /** Six chiffres du TOTP, ou un code de secours à usage unique. */
-  code: z.string().trim().min(6, 'Le code compte six chiffres.').max(20, 'Ce code est trop long.'),
+/** L'administrateur connecté, tel que la console le voit. */
+export const adminMeSchema = z.object({
+  id: idSchema,
+  fullName: z.string(),
+  username: z.string(),
+  role: adminRoleSchema,
+  access: adminAccessSchema,
+  canMoveMoney: z.boolean(),
 });
 
-export type AdminTotpInput = z.infer<typeof adminTotpSchema>;
+export type AdminMe = z.infer<typeof adminMeSchema>;
 
 export const adminSessionSchema = z.object({
   token: z.string(),
   expiresAt: z.string(),
-  /**
-   * Faux tant que le TOTP n'est pas validé.
-   *
-   * Le client s'en sert pour afficher l'écran de code plutôt que le tableau de
-   * bord. Le serveur ne s'y fie PAS : chaque route vérifie elle-même.
-   */
-  totpVerified: z.boolean(),
-  user: z.object({
-    id: idSchema,
-    fullName: z.string(),
-    role: z.enum(['ADMIN', 'SUPERADMIN', 'SUPPORT']),
-  }),
+  user: adminMeSchema,
 });
 
 export type AdminSession = z.infer<typeof adminSessionSchema>;
+
+/** Changement de son propre mot de passe. L'ancien est exigé : une session volée ne suffit pas. */
+export const changeAdminPasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Le mot de passe actuel est obligatoire.'),
+    newPassword: adminPasswordSchema,
+  })
+  .refine((value) => value.currentPassword !== value.newPassword, {
+    message: 'Le nouveau mot de passe doit être différent de l’actuel.',
+    path: ['newPassword'],
+  });
+
+export type ChangeAdminPasswordInput = z.infer<typeof changeAdminPasswordSchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Équipe — écran du propriétaire
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const adminStaffMemberSchema = z.object({
+  id: idSchema,
+  fullName: z.string(),
+  username: z.string(),
+  role: adminRoleSchema,
+  status: z.enum(['ACTIVE', 'SUSPENDED']),
+  access: adminAccessSchema,
+  canMoveMoney: z.boolean(),
+  lastLoginAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export type AdminStaffMember = z.infer<typeof adminStaffMemberSchema>;
+
+export const createAdminStaffSchema = z.object({
+  fullName: z.string().trim().min(2, 'Indique le nom.').max(120),
+  handle: adminHandleSchema,
+  password: adminPasswordSchema,
+  access: adminAccessSchema.default({}),
+  canMoveMoney: z.boolean().default(false),
+});
+
+export type CreateAdminStaffInput = z.infer<typeof createAdminStaffSchema>;
+
+export const updateAdminStaffSchema = z.object({
+  fullName: z.string().trim().min(2, 'Indique le nom.').max(120).optional(),
+  access: adminAccessSchema.optional(),
+  canMoveMoney: z.boolean().optional(),
+});
+
+export type UpdateAdminStaffInput = z.infer<typeof updateAdminStaffSchema>;
+
+export const resetAdminStaffPasswordSchema = z.object({
+  password: adminPasswordSchema,
+});
+
+export type ResetAdminStaffPasswordInput = z.infer<typeof resetAdminStaffPasswordSchema>;
+
+export const setAdminStaffStatusSchema = z.object({
+  status: z.enum(['ACTIVE', 'SUSPENDED']),
+});
+
+export type SetAdminStaffStatusInput = z.infer<typeof setAdminStaffStatusSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vérification d'organisation — écran M3

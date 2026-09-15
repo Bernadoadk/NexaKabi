@@ -18,7 +18,15 @@ function makeEnum<const T extends readonly [string, ...string[]]>(values: T) {
 // Identité et accès
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const GLOBAL_ROLES = ['USER', 'SUPPORT', 'ADMIN', 'SUPERADMIN'] as const;
+/**
+ * Rôle global d'un compte.
+ *
+ * `USER` : tout le monde — participant, organisateur, contrôleur. La console
+ * d'administration ne connaît que deux rôles : le PROPRIÉTAIRE, unique, qui
+ * peut tout et compose l'équipe ; et l'EMPLOYÉ, dont les droits sont ceux que
+ * le propriétaire lui a cochés, espace par espace (voir `admin.ts`).
+ */
+export const GLOBAL_ROLES = ['USER', 'OWNER', 'STAFF'] as const;
 export const globalRoleSchema = makeEnum(GLOBAL_ROLES).schema;
 export type GlobalRole = z.infer<typeof globalRoleSchema>;
 

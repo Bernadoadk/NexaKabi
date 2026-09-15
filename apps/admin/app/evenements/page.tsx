@@ -4,7 +4,8 @@ import { CircleCheck } from 'lucide-react';
 import type { PendingEvent } from '@nexakabi/contracts';
 import { formatEventCaptionWithTime, formatMoney } from '@nexakabi/utils';
 import { Alert, Badge, EmptyState, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied, ReadOnlyNotice } from '../access';
 import { AdminShell } from '../shell';
 import { EventDecision } from './event-decision';
 
@@ -26,6 +27,8 @@ export const metadata: Metadata = { title: 'Événements à publier' };
 export default async function PendingEventsPage() {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'events')) return <AccessDenied user={user} space="events" />;
+  const canAct = hasAdminAccess(user, 'events', 'act');
 
   const result = await adminFetch<PendingEvent[]>('/events');
 
@@ -104,7 +107,7 @@ export default async function PendingEventsPage() {
                     </Alert>
                   ) : null}
 
-                  <EventDecision eventId={event.id} />
+                  {canAct ? <EventDecision eventId={event.id} /> : <ReadOnlyNotice what="publier ou refuser" />}
                 </Surface>
               </li>
             ))}

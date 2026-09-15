@@ -73,21 +73,6 @@ const envSchema = z.object({
     .min(32, 'CHECKOUT_TOKEN_SECRET doit faire au moins 32 caractères'),
 
   /**
-   * Clé de chiffrement au repos des secrets TOTP d'administration.
-   *
-   * Le secret TOTP est le second facteur : stocké en clair, une fuite de la
-   * base le livrerait avec le reste, et la double authentification ne
-   * protégerait plus de rien dans le seul scénario qui compte vraiment.
-   *
-   * La perdre rend les secrets illisibles — chaque administrateur devra
-   * réenrôler son application. C'est le bon sens de l'échec : mieux vaut un
-   * réenrôlement qu'un secret déchiffrable par qui lit la base.
-   */
-  ADMIN_ENCRYPTION_KEY: z
-    .string()
-    .min(32, 'ADMIN_ENCRYPTION_KEY doit faire au moins 32 caractères'),
-
-  /**
    * URL publique de l'API, telle que les opérateurs la joignent.
    *
    * Sert à construire l'URL de rappel des webhooks. Elle ne peut pas être
@@ -203,7 +188,6 @@ function assertConsistency(env: Env, addIssue: (path: string, message: string) =
     ['OTP_PEPPER', env.OTP_PEPPER],
     ['TICKET_SIGNING_SECRET', env.TICKET_SIGNING_SECRET],
     ['CHECKOUT_TOKEN_SECRET', env.CHECKOUT_TOKEN_SECRET],
-    ['ADMIN_ENCRYPTION_KEY', env.ADMIN_ENCRYPTION_KEY],
   ];
 
   // Deux usages qui partagent un secret ne font qu'un seul périmètre de

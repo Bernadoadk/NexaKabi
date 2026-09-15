@@ -3,9 +3,10 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { Check } from 'lucide-react';
 import type { ActivityEntry, OrganizationAdminDetail } from '@nexakabi/contracts';
-import { formatMoney, formatPhone, formatRelative } from '@nexakabi/utils';
+import { formatMoney, formatPhoneSafe, formatRelative } from '@nexakabi/utils';
 import { Alert, Badge, Stat, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, canMoveMoney, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied, ReadOnlyNotice } from '../../access';
 import { AdminShell } from '../../shell';
 import { FreezeActions } from './freeze-actions';
 
@@ -19,6 +20,9 @@ export default async function OrganizationDetailPage({
 }) {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'organizations')) return <AccessDenied user={user} space="organizations" />;
+  const canAct = hasAdminAccess(user, 'organizations', 'act');
+  const money = canMoveMoney(user);
 
   const { id } = await params;
 
@@ -79,7 +83,7 @@ export default async function OrganizationDetailPage({
                   value={new Date(org.createdAt).toLocaleDateString('fr-FR')}
                 />
                 <Fact label="Propriétaire" value={org.ownerName} emphasis />
-                <Fact label="Téléphone" value={formatPhone(org.ownerPhone)} emphasis />
+                <Fact label="Téléphone" value={formatPhoneSafe(org.ownerPhone)} emphasis />
                 <Fact label="E-mail" value={org.ownerEmail ?? 'Non renseigné'} />
               </div>
             </Surface>
@@ -124,7 +128,11 @@ export default async function OrganizationDetailPage({
           </div>
 
           <div className="flex flex-col gap-5 lg:sticky lg:top-[120px] lg:self-start">
-            <FreezeActions organizationId={org.id} frozen={org.payoutFrozen} />
+            {canAct && money ? (
+              <FreezeActions organizationId={org.id} frozen={org.payoutFrozen} />
+            ) : (
+              <ReadOnlyNotice what="geler ou dégeler des fonds" />
+            )}
 
             <Surface variant="muted" padding="comfortable" className="flex flex-col gap-1">
               <p className="text-micro text-text-3">Solde en un coup d’œil</p>

@@ -5,7 +5,8 @@ import { Building2, Check } from 'lucide-react';
 import type { OrganizationAdminSummary } from '@nexakabi/contracts';
 import { formatMoney } from '@nexakabi/utils';
 import { Alert, Badge, EmptyState, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied } from '../access';
 import { AdminShell } from '../shell';
 
 export const metadata: Metadata = { title: 'Organisations' };
@@ -33,6 +34,7 @@ export default async function OrganizationsPage({
 }) {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'organizations')) return <AccessDenied user={user} space="organizations" />;
 
   const params = await searchParams;
   const query = new URLSearchParams();

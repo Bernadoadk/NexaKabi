@@ -82,14 +82,20 @@ pnpm db:seed        # référentiels : catégories et villes (idempotent)
 pnpm infra:reset    # réinitialiser les conteneurs Docker (données perdues)
 ```
 
-**Compte d'administration.** La console ne peut pas se créer elle-même : le premier
-superadministrateur s'amorce par script, avec sa double authentification.
+**Compte d'administration.** La console ne peut pas se créer elle-même : le **propriétaire**
+s'amorce par script, avec un identifiant de la forme `nom.owner@xxxx` (suffixe généré) et un
+mot de passe de 12 caractères au minimum. Relancer le script met à jour le propriétaire
+existant (nom, mot de passe) sans changer son suffixe.
 
 ```bash
-ADMIN_PASSWORD='un-mot-de-passe-de-12-caracteres-minimum' pnpm --filter @nexakabi/api exec tsx src/scripts/create-admin.ts admin@exemple.bj SUPERADMIN
-# Scanner le QR affiché dans une application d'authentification, puis :
-pnpm --filter @nexakabi/api exec tsx src/scripts/confirm-admin-totp.ts admin@exemple.bj <code>
+ADMIN_PASSWORD='un-mot-de-passe-de-12-caracteres-minimum' pnpm --filter @nexakabi/api exec tsx src/scripts/create-owner.ts bernado "Bernado"
 ```
+
+Les **employés** se créent ensuite depuis l'écran « Équipe » de la console (`nom.staff@xxxx`),
+avec, pour chaque espace — Événements, Vérifications, Signalements, Organisations, Utilisateurs,
+Retraits — un niveau *consultation* ou *décision*, et un droit à part pour les mouvements
+d'argent. Pas de double authentification : mot de passe seul, blocage après cinq échecs,
+sessions de 8 h révocables, chaque geste tracé dans le journal d'audit.
 
 **Paiements simulés tant qu'aucune clé FedaPay n'est configurée.** Le simulateur prend la place
 des trois opérateurs Mobile Money avec les retours exacts du contrat `PaymentProvider` —
@@ -102,7 +108,7 @@ retrait. Un virement bancaire, lui, se fait à la main et s'enregistre dans la c
 **Aucune donnée de démonstration, aucune suite de tests automatisés.** Le produit se teste en
 réel, par ses propres écrans, en suivant le cahier de recette ; la vérification automatique se
 limite aux types (`pnpm typecheck`), au lint et au build. Pour
-remettre la base à son état de départ — référentiels et superadministrateur uniquement — après
+remettre la base à son état de départ — référentiels et propriétaire uniquement — après
 une sauvegarde `pg_dump` dans `apps/api/storage/backups/` :
 
 ```bash

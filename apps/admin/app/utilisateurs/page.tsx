@@ -3,9 +3,10 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { User } from 'lucide-react';
 import type { AdminUserSummary } from '@nexakabi/contracts';
-import { formatPhone } from '@nexakabi/utils';
+import { formatPhoneSafe } from '@nexakabi/utils';
 import { Alert, Badge, EmptyState, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied } from '../access';
 import { AdminShell } from '../shell';
 
 export const metadata: Metadata = { title: 'Utilisateurs' };
@@ -33,6 +34,7 @@ export default async function UsersPage({
 }) {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'users')) return <AccessDenied user={user} space="users" />;
 
   const params = await searchParams;
   const query = new URLSearchParams();
@@ -97,10 +99,14 @@ export default async function UsersPage({
                   >
                     <div className="min-w-[200px] flex-1">
                       <div className="text-body font-bold">
-                        {account.fullName || formatPhone(account.phone)}
+                        {account.fullName || formatPhoneSafe(account.phone)}
                       </div>
                       <div className="text-micro text-text-3">
-                        {formatPhone(account.phone)}
+                        {/* Un compte d'équipe n'a pas de vrai numéro : son
+                            numéro provisoire n'a rien à faire à l'écran. */}
+                        {account.globalRole === 'USER'
+                          ? formatPhoneSafe(account.phone)
+                          : 'Compte de l’équipe d’administration'}
                         {account.organizationsCount > 0
                           ? ` · ${account.organizationsCount} organisation${account.organizationsCount > 1 ? 's' : ''}`
                           : ''}
@@ -108,7 +114,9 @@ export default async function UsersPage({
                     </div>
 
                     {account.globalRole !== 'USER' ? (
-                      <Badge tone="ink">{account.globalRole}</Badge>
+                      <Badge tone="ink">
+                        {account.globalRole === 'OWNER' ? 'Propriétaire' : 'Équipe admin'}
+                      </Badge>
                     ) : null}
 
                     <Badge tone={account.status === 'ACTIVE' ? 'success' : 'danger'}>

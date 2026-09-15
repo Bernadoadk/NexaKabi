@@ -3,8 +3,14 @@ import { FinanceModule } from '../finance/finance.module';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminOrganizationsService } from './admin-organizations.service';
 import { AdminSessionGuard } from './admin-session.guard';
+import { AdminStaffService } from './admin-staff.service';
 import { AdminUsersService } from './admin-users.service';
-import { AdminAuthController, AdminController, PublicReportsController } from './admin.controller';
+import {
+  AdminAuthController,
+  AdminController,
+  AdminStaffController,
+  PublicReportsController,
+} from './admin.controller';
 import { EventModerationService } from './event-moderation.service';
 import { ModerationService } from './moderation.service';
 import { VerificationsService } from './verifications.service';
@@ -20,11 +26,12 @@ import { VerificationsService } from './verifications.service';
  */
 @Module({
   imports: [FinanceModule],
-  controllers: [AdminAuthController, AdminController, PublicReportsController],
+  controllers: [AdminAuthController, AdminStaffController, AdminController, PublicReportsController],
   providers: [
     AdminAuthService,
     AdminOrganizationsService,
     AdminSessionGuard,
+    AdminStaffService,
     AdminUsersService,
     EventModerationService,
     ModerationService,

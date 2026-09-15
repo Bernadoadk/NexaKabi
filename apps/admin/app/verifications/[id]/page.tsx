@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { formatPhone } from '@nexakabi/utils';
+import { formatPhoneSafe } from '@nexakabi/utils';
 import { Alert, Badge, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied, ReadOnlyNotice } from '../../access';
 import { AdminShell } from '../../shell';
 import { DocumentLink } from './document-link';
 import { ReviewForm } from './review-form';
@@ -63,6 +64,8 @@ export default async function VerificationDetailPage({
 }) {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'verifications')) return <AccessDenied user={user} space="verifications" />;
+  const canAct = hasAdminAccess(user, 'verifications', 'act');
 
   const { id } = await params;
   const result = await adminFetch<VerificationDetail>(`/verifications/${id}`);
@@ -114,11 +117,11 @@ export default async function VerificationDetailPage({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <Fact label="Contact déclaré" value={request.contactName} />
-                <Fact label="Téléphone déclaré" value={formatPhone(request.contactPhone)} />
+                <Fact label="Téléphone déclaré" value={formatPhoneSafe(request.contactPhone)} />
                 <Fact label="Propriétaire du compte" value={organization.owner.fullName} />
                 <Fact
                   label="Téléphone du propriétaire"
-                  value={formatPhone(organization.owner.phone)}
+                  value={formatPhoneSafe(organization.owner.phone)}
                 />
                 <Fact
                   label="Titulaire du compte de retrait"
@@ -177,7 +180,9 @@ export default async function VerificationDetailPage({
                         <Badge tone={document.status === 'ACCEPTED' ? 'ink' : 'neutral'}>
                           {document.status}
                         </Badge>
-                        <DocumentLink requestId={request.id} documentId={document.id} />
+                        {canAct ? (
+                          <DocumentLink requestId={request.id} documentId={document.id} />
+                        ) : null}
                       </div>
                     </li>
                   ))}
@@ -207,7 +212,11 @@ export default async function VerificationDetailPage({
           </div>
 
           <div className="lg:sticky lg:top-[120px] lg:self-start">
-            <ReviewForm requestId={request.id} organizationType={organization.type} />
+            {canAct ? (
+              <ReviewForm requestId={request.id} organizationType={organization.type} />
+            ) : (
+              <ReadOnlyNotice what="statuer sur un dossier ni ouvrir ses pièces" />
+            )}
           </div>
         </div>
       </div>

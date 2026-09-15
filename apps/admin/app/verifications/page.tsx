@@ -5,7 +5,8 @@ import { CircleCheck } from 'lucide-react';
 import type { VerificationSummary } from '@nexakabi/contracts';
 import { formatMoney, formatRelative } from '@nexakabi/utils';
 import { Alert, Badge, EmptyState, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied } from '../access';
 import { AdminShell } from '../shell';
 
 export const metadata: Metadata = { title: 'Vérifications' };
@@ -22,6 +23,7 @@ export const metadata: Metadata = { title: 'Vérifications' };
 export default async function VerificationsPage() {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'verifications')) return <AccessDenied user={user} space="verifications" />;
 
   const result = await adminFetch<VerificationSummary[]>('/verifications');
 

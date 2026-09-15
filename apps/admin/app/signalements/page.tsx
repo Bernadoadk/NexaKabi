@@ -9,7 +9,8 @@ import {
 } from '@nexakabi/contracts';
 import { formatMoney, formatRelative } from '@nexakabi/utils';
 import { Alert, Badge, EmptyState, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
+import { AccessDenied } from '../access';
 import { AdminShell } from '../shell';
 
 export const metadata: Metadata = { title: 'Signalements' };
@@ -30,6 +31,7 @@ export const metadata: Metadata = { title: 'Signalements' };
 export default async function ReportsPage() {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
+  if (!hasAdminAccess(user, 'reports')) return <AccessDenied user={user} space="reports" />;
 
   const result = await adminFetch<ReportSummary[]>('/reports');
 

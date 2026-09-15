@@ -21,11 +21,14 @@ export function CaseActions({
   organizationId,
   closed,
   assigned,
+  canFreeze,
 }: {
   reportId: string;
   organizationId: string | null;
   closed: boolean;
   assigned: boolean;
+  /** Le gel est un mouvement d'argent : il demande le droit dédié. */
+  canFreeze: boolean;
 }) {
   const router = useRouter();
   const [pending, setPending] = React.useState(false);
@@ -116,7 +119,7 @@ export function CaseActions({
         </div>
       </Surface>
 
-      {organizationId ? (
+      {organizationId && canFreeze ? (
         <Surface variant="panel" padding="comfortable" className="flex flex-col gap-3">
           <h2 className="text-h3 font-bold">Mesure conservatoire</h2>
 

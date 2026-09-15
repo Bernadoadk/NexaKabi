@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation';
 import type { AdminDashboard } from '@nexakabi/contracts';
 import { formatMoney } from '@nexakabi/utils';
 import { Alert, Surface } from '@nexakabi/ui';
-import { adminFetch, getAdminUser } from '@/lib/session';
+import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { AdminShell } from './shell';
 
 export const metadata: Metadata = { title: 'Tableau de bord' };
@@ -42,6 +42,47 @@ export default async function AdminHomePage() {
 
   const data = result.data;
 
+  // Un compteur ne s'affiche que si l'espace derrière est ouvert à ce
+  // compte : un chiffre qu'on ne peut pas aller voir n'est qu'une frustration.
+  const tiles = [
+    hasAdminAccess(user, 'events') && (
+      <ActionTile
+        key="events"
+        href="/evenements"
+        label="Événements à publier"
+        value={data.pendingEvents}
+        hint="Chaque jour d’attente coûte des ventes"
+      />
+    ),
+    hasAdminAccess(user, 'verifications') && (
+      <ActionTile
+        key="verifications"
+        href="/verifications"
+        label="Vérifications"
+        value={data.pendingVerifications}
+        hint="Chaque dossier bloque des recettes"
+      />
+    ),
+    hasAdminAccess(user, 'reports') && (
+      <ActionTile
+        key="reports"
+        href="/signalements"
+        label="Signalements"
+        value={data.openReports}
+        hint="Triés par risque financier"
+      />
+    ),
+    hasAdminAccess(user, 'payouts') && (
+      <ActionTile
+        key="payouts"
+        href="/retraits"
+        label="Retraits à traiter"
+        value={data.pendingPayouts}
+        hint={`${formatMoney(data.pendingPayoutAmount)}`}
+      />
+    ),
+  ].filter(Boolean);
+
   return (
     <AdminShell user={user}>
       <div className="flex flex-col gap-8">
@@ -50,32 +91,16 @@ export default async function AdminHomePage() {
             En attente d’une décision
           </h2>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <ActionTile
-              href="/evenements"
-              label="Événements à publier"
-              value={data.pendingEvents}
-              hint="Chaque jour d’attente coûte des ventes"
-            />
-            <ActionTile
-              href="/verifications"
-              label="Vérifications"
-              value={data.pendingVerifications}
-              hint="Chaque dossier bloque des recettes"
-            />
-            <ActionTile
-              href="/signalements"
-              label="Signalements"
-              value={data.openReports}
-              hint="Triés par risque financier"
-            />
-            <ActionTile
-              href="/retraits"
-              label="Retraits à traiter"
-              value={data.pendingPayouts}
-              hint={`${formatMoney(data.pendingPayoutAmount)}`}
-            />
-          </div>
+          {tiles.length > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{tiles}</div>
+          ) : (
+            <Surface variant="muted" padding="comfortable">
+              <p className="text-body-s text-text-2">
+                Aucun espace ne t’est encore ouvert. Le propriétaire peut t’en donner depuis
+                l’écran Équipe.
+              </p>
+            </Surface>
+          )}
         </section>
 
         {/* Bande d'indicateurs de plateforme, sous la file d'action — jamais

@@ -37,9 +37,10 @@ function scryptAsync(
  * documentation qui annonce Argon2id là où tourne scrypt est pire que pas de
  * documentation du tout.
  *
- * ── Ce que ce fichier ne protège pas ──────────────────────────────────────
- * Le mot de passe n'est que la PREMIÈRE étape. Aucun accès n'est ouvert sans le
- * code TOTP qui suit : un mot de passe volé, même en clair, ne donne rien.
+ * ── Ce que ce fichier porte seul ──────────────────────────────────────────
+ * Il n'y a pas de second facteur : le mot de passe est la seule clé. D'où le
+ * minimum de douze caractères imposé par le contrat, le blocage après cinq
+ * échecs et la révocation immédiate des sessions à la moindre alerte.
  */
 
 /**

@@ -3,60 +3,59 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  SetMetadata,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { SetMetadata } from '@nestjs/common';
 import type { Request } from 'express';
+import {
+  ADMIN_SPACES,
+  canMoveMoney,
+  hasAdminAccess,
+  type AdminAccessLevel,
+  type AdminMe,
+  type AdminSpace,
+} from '@nexakabi/contracts';
 import { AdminAuthService } from './admin-auth.service';
 
 /**
- * Marque une route accessible avec une session dont le TOTP n'est pas encore
- * validé.
+ * Ce qu'une route d'administration exige.
  *
- * ── Une seule route devrait porter ce marqueur ─────────────────────────────
- * Celle qui valide justement le code. Toute autre ferait de la double
- * authentification un simple écran de confirmation : un mot de passe volé
- * suffirait à qui sait appeler l'API directement.
+ * ── Pourquoi des espaces et non une hiérarchie ─────────────────────────────
+ * L'ancien modèle était une échelle (support < admin < superadmin). Une
+ * entreprise ne s'organise pas en échelle : le comptable lit les retraits
+ * sans toucher aux signalements, le modérateur décide sur les événements
+ * sans jamais voir une pièce d'identité. Chaque route déclare donc SON espace
+ * et le niveau qu'elle demande — `read` pour consulter, `act` pour décider —
+ * et le propriétaire compose les droits de chacun depuis l'écran Équipe.
+ *
+ * L'argent est un droit à part (`@RequireMoney()`), jamais impliqué par un
+ * espace : accorder « Retraits · décision » ne suffit pas à verser un centime.
+ *
+ * Sans marqueur, une route n'exige qu'une session valide — c'est le cas du
+ * tableau de bord et du profil. Toute route qui lit ou modifie une file doit
+ * porter le sien : un oubli laisserait passer n'importe quel employé.
  */
-export const ALLOW_PENDING_TOTP = 'admin:allowPendingTotp';
-export const AllowPendingTotp = () => SetMetadata(ALLOW_PENDING_TOTP, true);
+export const ADMIN_ACCESS = 'admin:access';
+export const ADMIN_MONEY = 'admin:money';
+export const ADMIN_OWNER = 'admin:owner';
 
-/**
- * Rangs d'administration, du moins au plus étendu.
- *
- * ── Pourquoi une hiérarchie et non une matrice ────────────────────────────
- * Les droits d'ORGANISATION passent par une matrice de permissions, parce
- * qu'un même rôle y combine des capacités sans rapport entre elles — un
- * contrôleur scanne sans rien voir des finances. L'administration, elle, est
- * une échelle : le support lit, l'administrateur décide, le superadministrateur
- * touche à l'argent. Une matrice y ajouterait une table à tenir à jour sans
- * décrire quoi que ce soit de plus.
- */
-export const ADMIN_RANKS = { SUPPORT: 1, ADMIN: 2, SUPERADMIN: 3 } as const;
+export interface AdminAccessRequirement {
+  space: AdminSpace;
+  level: AdminAccessLevel;
+}
 
-export type AdminRole = keyof typeof ADMIN_RANKS;
+export const RequireAdminAccess = (space: AdminSpace, level: AdminAccessLevel = 'read') =>
+  SetMetadata<string, AdminAccessRequirement>(ADMIN_ACCESS, { space, level });
 
-export const MINIMUM_ADMIN_ROLE = 'admin:minimumRole';
+/** Mouvements d'argent : verser, enregistrer un versement, geler ou dégeler. */
+export const RequireMoney = () => SetMetadata(ADMIN_MONEY, true);
 
-/**
- * Rang minimal exigé par une route.
- *
- * ── Ce que son absence laissait passer ────────────────────────────────────
- * Le garde ne vérifiait que la validité de la session, jamais le rôle. Un
- * compte de support — le profil le plus large, celui qu'on confie le plus
- * volontiers à un prestataire — pouvait donc exécuter un versement, geler les
- * recettes d'un organisateur, suspendre un compte et ouvrir les pièces
- * d'identité déposées. Le nécessaire existait pourtant : rien ne le posait.
- *
- * Sans marqueur, une route reste ouverte à tout administrateur connecté, ce
- * qui convient à la lecture. Les décisions et les mouvements d'argent le
- * portent explicitement.
- */
-export const MinimumAdminRole = (role: AdminRole) => SetMetadata(MINIMUM_ADMIN_ROLE, role);
+/** Réservé au propriétaire : composition de l'équipe. */
+export const OwnerOnly = () => SetMetadata(ADMIN_OWNER, true);
 
 export interface AdminRequest extends Request {
-  admin: { id: string; fullName: string; role: string };
+  admin: AdminMe;
   adminToken: string;
 }
 
@@ -65,10 +64,10 @@ export interface AdminRequest extends Request {
  *
  * ── Pourquoi il ne réutilise pas `SessionGuard` ───────────────────────────
  * Les deux authentifications sont volontairement disjointes : cookies
- * différents, durées différentes, exigence de TOTP d'un seul côté. Un garde
- * commun paramétré par un drapeau finirait par laisser passer une session
- * participant sur une route d'administration le jour où le drapeau serait
- * oublié — exactement le genre d'erreur qu'on ne voit qu'après.
+ * différents, durées différentes, révocation immédiate d'un seul côté. Un
+ * garde commun paramétré par un drapeau finirait par laisser passer une
+ * session participant sur une route d'administration le jour où le drapeau
+ * serait oublié — exactement le genre d'erreur qu'on ne voit qu'après.
  */
 @Injectable()
 export class AdminSessionGuard implements CanActivate {
@@ -85,37 +84,35 @@ export class AdminSessionGuard implements CanActivate {
       throw new UnauthorizedException('Connexion requise.');
     }
 
-    const allowPendingTotp =
-      this.reflector.getAllAndOverride<boolean>(ALLOW_PENDING_TOTP, [
-        context.getHandler(),
-        context.getClass(),
-      ]) ?? false;
+    const admin = await this.auth.requireSession(token);
+    const targets = [context.getHandler(), context.getClass()];
 
-    const session = await this.auth.requireSession(token, {
-      allowUnverified: allowPendingTotp,
-    });
-
-    const required = this.reflector.getAllAndOverride<AdminRole>(MINIMUM_ADMIN_ROLE, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-
-    if (required) {
-      const held = ADMIN_RANKS[session.user.globalRole as AdminRole] ?? 0;
-
-      if (held < ADMIN_RANKS[required]) {
-        throw new ForbiddenException(
-          'Cette action demande des droits que ton compte n’a pas. ' +
-            'Demande à un administrateur de niveau supérieur.',
-        );
-      }
+    if (this.reflector.getAllAndOverride<boolean>(ADMIN_OWNER, targets) && admin.role !== 'OWNER') {
+      throw new ForbiddenException('Seul le propriétaire peut faire ceci.');
     }
 
-    request.admin = {
-      id: session.user.id,
-      fullName: session.user.fullName,
-      role: session.user.globalRole,
-    };
+    const requirement = this.reflector.getAllAndOverride<AdminAccessRequirement | undefined>(
+      ADMIN_ACCESS,
+      targets,
+    );
+
+    if (requirement && !hasAdminAccess(admin, requirement.space, requirement.level)) {
+      const label = ADMIN_SPACES.find((space) => space.key === requirement.space)?.label;
+
+      throw new ForbiddenException(
+        requirement.level === 'act' && hasAdminAccess(admin, requirement.space, 'read')
+          ? `Tu peux consulter « ${label} », pas y décider. Demande ce droit au propriétaire.`
+          : `Ton compte n’a pas accès à « ${label} ». Demande ce droit au propriétaire.`,
+      );
+    }
+
+    if (this.reflector.getAllAndOverride<boolean>(ADMIN_MONEY, targets) && !canMoveMoney(admin)) {
+      throw new ForbiddenException(
+        'Les mouvements d’argent demandent un droit explicite, accordé par le propriétaire.',
+      );
+    }
+
+    request.admin = admin;
     request.adminToken = token;
 
     return true;
@@ -137,6 +134,5 @@ function extractToken(request: Request): string | null {
   }
 
   const cookies = request.cookies as Record<string, string> | undefined;
-
   return cookies?.nk_admin ?? null;
 }

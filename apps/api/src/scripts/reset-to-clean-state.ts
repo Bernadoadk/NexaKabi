@@ -4,8 +4,8 @@
  * ── Ce qui est conservé ───────────────────────────────────────────────────
  *   · les catégories et les villes — référentiels du cahier des charges
  *     (§6 et §57), sans lesquels aucun événement ne peut être créé ;
- *   · les comptes SUPERADMIN, avec leurs identifiants et leur double
- *     authentification, pour que la console reste accessible ;
+ *   · le compte PROPRIÉTAIRE, avec son identifiant et son mot de passe,
+ *     pour que la console reste accessible ;
  *   · l'historique des migrations.
  *
  * ── Ce qui est effacé ─────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   const toTruncate = tables.map((row) => row.table_name).filter((name) => !KEPT_TABLES.has(name));
 
   const superadmins = await prisma.user.findMany({
-    where: { globalRole: 'SUPERADMIN', deletedAt: null },
+    where: { globalRole: 'OWNER', deletedAt: null },
     select: { id: true, email: true },
   });
 
@@ -89,13 +89,13 @@ async function main(): Promise<void> {
   console.log('');
   console.log(`${otherUsers} compte(s) utilisateur seront supprimés.`);
   console.log(
-    `${superadmins.length} superadministrateur(s) conservé(s) : ${superadmins.map((user) => user.email).join(', ')}`,
+    `${superadmins.length} propriétaire(s) conservé(s) : ${superadmins.map((user) => user.email ?? user.id).join(', ')}`,
   );
   console.log('Catégories et villes conservées.');
   console.log('');
 
   if (superadmins.length === 0) {
-    console.error('Aucun SUPERADMIN en base : la console deviendrait inaccessible. Abandon.');
+    console.error('Aucun propriétaire en base : la console deviendrait inaccessible. Abandon.');
     process.exit(1);
   }
 

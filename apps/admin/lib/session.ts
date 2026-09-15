@@ -1,6 +1,7 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import type { NextResponse } from 'next/server';
+import { canMoveMoney, hasAdminAccess, type AdminMe } from '@nexakabi/contracts';
 
 /**
  * Session d'administration.
@@ -42,11 +43,16 @@ export async function readAdminToken(): Promise<string | undefined> {
   return store.get(ADMIN_COOKIE)?.value;
 }
 
-export interface AdminUser {
-  id: string;
-  fullName: string;
-  role: string;
-}
+/**
+ * L'administrateur connecté : identité, rôle et droits calculés par l'API.
+ *
+ * Les droits servent ici à AFFICHER — masquer une entrée de menu, un bouton
+ * de décision. La décision réelle appartient au garde de l'API, qui refait le
+ * même calcul ; la console ne fait que ne pas montrer ce qui serait refusé.
+ */
+export type AdminUser = AdminMe;
+
+export { canMoveMoney, hasAdminAccess };
 
 /**
  * Récupère l'administrateur courant, ou `null`.

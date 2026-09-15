@@ -4,4 +4,3 @@ export * from './date.js';
 export * from './slug.js';
 export * from './reference.js';
 export * from './qr.js';
-export * from './totp.js';

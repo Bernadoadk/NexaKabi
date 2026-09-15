@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { CalendarPlus, LogIn, Search, UserRound } from 'lucide-react';
-import { Avatar, Button, ThemeToggle } from '@nexakabi/ui';
+import { Avatar, Button, ThemeToggle, cn } from '@nexakabi/ui';
 import { getCurrentUser } from '@/lib/session';
 import { fetchCities } from '@/lib/events';
 import { fetchNotifications } from '@/lib/notifications';
@@ -11,9 +11,13 @@ import { VilleSelect } from './ville-select';
  * Cadre de l'espace public.
  *
  * ── Desktop ─────────────────────────────────────────────────────────────────
- * En-tête de 70 px : logo · Découvrir · Carte · Catégories · Ce week-end ·
- * Gratuit, puis recherche, thème, sélecteur de ville, aide, lien
- * professionnel et connexion — conforme à la navigation du prototype.
+ * Un en-tête n'a pas le droit de passer à la ligne : chaque élément est
+ * `shrink-0` + `whitespace-nowrap`, et c'est le palier qui décide ce qui
+ * s'affiche — l'essentiel dès 768 px (Découvrir · Carte · Catégories · ville
+ * · compte), le confort à 1024 (Ce week-end · thème · Aide · Organiser), le
+ * complet à 1440 (Gratuit · recherche · libellé long). Conforme à la
+ * navigation du prototype : logo · Découvrir · Catégories · Aide | recherche
+ * | Organiser un événement · Connexion.
  *
  * ── Mobile ──────────────────────────────────────────────────────────────────
  * « Le mobile n'est pas une réduction du desktop. » L'en-tête ne garde que
@@ -32,9 +36,17 @@ export default async function PublicLayout({ children }: { children: React.React
 
   return (
     <div className="flex min-h-dvh flex-col">
+      {/* ── En-tête ──────────────────────────────────────────────────────────
+          Rien ne passe à la ligne, jamais : chaque élément est \`shrink-0\` et
+          \`whitespace-nowrap\`, et c'est le PALIER qui décide ce qui s'affiche.
+            · md  (768)  logo · Découvrir · Carte · Catégories · ville · compte
+            · lg  (1024) + Ce week-end · thème · Aide · Organiser (icône)
+            · xl  (1440) + Gratuit · recherche · « Organiser mon événement »
+          En dessous de md : logo · ville · compte, le reste vit dans la barre
+          basse. */}
       <header className="sticky top-0 z-40 border-b border-border-subtle bg-surface pt-[env(safe-area-inset-top)]">
-        <div className="mx-auto flex h-[58px] max-w-[1440px] items-center gap-3 px-4 md:h-[70px] md:gap-4 md:px-5">
-          <Link href="/" className="flex shrink-0 items-center gap-2">
+        <div className="mx-auto flex h-[58px] max-w-[1440px] items-center gap-2.5 px-4 md:h-[66px] md:gap-3 md:px-5 lg:gap-4">
+          <Link href="/" className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <span className="flex size-6 items-center justify-center rounded-[8px] bg-coral font-display text-[14px] font-extrabold text-ink">
               N
             </span>
@@ -43,78 +55,81 @@ export default async function PublicLayout({ children }: { children: React.React
             </span>
           </Link>
 
-          <nav className="hidden gap-5 text-body font-semibold md:flex" aria-label="Découverte">
-            <Link href="/evenements" className="text-text-strong hover:text-coral">
+          <nav
+            className="ml-1 hidden shrink-0 items-center gap-4 text-body font-semibold md:flex lg:gap-5"
+            aria-label="Découverte"
+          >
+            <HeaderLink href="/evenements" strong>
               Découvrir
-            </Link>
-            <Link href="/carte" className="text-text-2 hover:text-text-strong">
-              Carte
-            </Link>
-            <Link href="/evenements#categorie" className="text-text-2 hover:text-text-strong">
-              Catégories
-            </Link>
-            <Link
-              href="/evenements?date=this_weekend"
-              className="text-text-2 hover:text-text-strong"
-            >
+            </HeaderLink>
+            <HeaderLink href="/carte">Carte</HeaderLink>
+            <HeaderLink href="/evenements#categorie">Catégories</HeaderLink>
+            <HeaderLink href="/evenements?date=this_weekend" className="hidden lg:inline-flex">
               Ce week-end
-            </Link>
-            <Link href="/evenements?prix=gratuit" className="text-text-2 hover:text-text-strong">
+            </HeaderLink>
+            <HeaderLink href="/evenements?prix=gratuit" className="hidden xl:inline-flex">
               Gratuit
-            </Link>
+            </HeaderLink>
           </nav>
 
-          <form action="/evenements" className="relative hidden w-[220px] shrink-0 xl:block">
+          <div className="flex-1" />
+
+          <form action="/evenements" className="relative hidden w-[200px] shrink-0 xl:block">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-3" />
             <input
               type="search"
               name="q"
               placeholder="Rechercher…"
               aria-label="Rechercher un événement"
-              className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-paper pl-9 pr-3.5 text-body-s"
+              className="min-h-[40px] w-full rounded-field border border-border-field bg-paper pl-9 pr-3 text-body-s"
             />
           </form>
 
-          <div className="flex-1" />
+          <ThemeToggle className="hidden shrink-0 lg:inline-flex" />
 
-          {/* Mobile : la ville, compacte, juste avant le compte. */}
-          <div className="md:hidden">
-            <VilleSelect cities={cities} compact />
-          </div>
+          {/* La ville : même pastille compacte à toutes les tailles — une
+              épingle, le nom, un chevron ; le \`<select>\` natif est dessous. */}
+          <VilleSelect cities={cities} compact />
 
-          <div className="hidden items-center gap-3 md:flex">
-            <ThemeToggle />
-            <VilleSelect cities={cities} />
+          <Link
+            href="/aide"
+            className="hidden shrink-0 whitespace-nowrap text-body-s font-semibold text-text-2 hover:text-text-strong lg:inline-flex"
+          >
+            Aide
+          </Link>
+
+          {/* Point d'entrée unique pour un visiteur : « Connexion ». Organiser
+              n'a de sens qu'une fois participant — le bouton de droite bascule
+              lui-même entre Connexion et Mon compte. Entre lg et xl, le lien
+              vers l'espace organisateur n'est qu'une icône : le libellé
+              complet ne tient qu'à partir de 1440 px. */}
+          {user ? (
             <Link
-              href="/aide"
-              className="text-body-s font-semibold text-text-2 hover:text-text-strong"
+              href="/pro"
+              aria-label="Organiser mon événement"
+              title="Organiser mon événement"
+              className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border-field text-body-s font-semibold text-text-strong transition hover:bg-surface-alt lg:inline-flex lg:size-[40px] lg:justify-center xl:h-[40px] xl:w-auto xl:px-3.5"
             >
-              Aide
+              <CalendarPlus className="size-4" />
+              <span className="hidden xl:inline">Organiser mon événement</span>
             </Link>
-            {/* Point d'entrée unique pour un visiteur : « Connexion ». Organiser
-                n'a de sens qu'une fois participant — voir le bouton de droite,
-                qui bascule lui-même entre Connexion et Mon compte. */}
-            {user ? (
-              <Link
-                href="/pro"
-                className="inline-flex items-center gap-1.5 text-body-s font-semibold text-text-strong hover:text-coral"
-              >
-                <CalendarPlus className="size-4" />
-                Organiser mon événement
-              </Link>
-            ) : null}
-          </div>
+          ) : null}
 
           {user ? (
             <>
               <Link
                 href="/mon-compte"
                 aria-label="Mon compte"
-                className="flex size-[var(--tap-min)] items-center justify-center rounded-full md:hidden"
+                className="flex size-[var(--tap-min)] shrink-0 items-center justify-center rounded-full md:hidden"
               >
                 <Avatar name={user.fullName} src={user.avatarUrl} size="compact" />
               </Link>
-              <Button asChild variant="secondary" size="compact" className="hidden md:inline-flex">
+              <Button
+                asChild
+                variant="secondary"
+                size="compact"
+                className="hidden shrink-0 whitespace-nowrap md:inline-flex"
+              >
                 <Link href="/mon-compte">
                   <UserRound className="size-4" />
                   Mon compte
@@ -122,7 +137,7 @@ export default async function PublicLayout({ children }: { children: React.React
               </Button>
             </>
           ) : (
-            <Button asChild variant="ink" size="compact">
+            <Button asChild variant="ink" size="compact" className="shrink-0 whitespace-nowrap">
               <Link href="/connexion">
                 <LogIn className="size-4" />
                 Connexion
@@ -161,5 +176,31 @@ export default async function PublicLayout({ children }: { children: React.React
         <PublicBottomNav signedIn={Boolean(user)} unreadCount={feed?.unreadCount ?? 0} />
       </div>
     </div>
+  );
+}
+
+/** Lien de l'en-tête : jamais de retour à la ligne, actif en fort. */
+function HeaderLink({
+  href,
+  strong = false,
+  className,
+  children,
+}: {
+  href: string;
+  strong?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        'inline-flex shrink-0 items-center whitespace-nowrap transition-colors',
+        strong ? 'text-text-strong hover:text-coral' : 'text-text-2 hover:text-text-strong',
+        className,
+      )}
+    >
+      {children}
+    </Link>
   );
 }

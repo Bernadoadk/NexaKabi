@@ -101,7 +101,7 @@ User ──< Order ──< OrderItem ──────────────�
 | `emailVerifiedAt`                     | DateTime?    |                                |                                                                      |
 | `fullName`                            | String       | non nul                        | Le prototype demande un seul champ « Nom complet », pas prénom + nom |
 | `avatarUrl`                           | String?      |                                |                                                                      |
-| `globalRole`                          | `GlobalRole` | défaut `USER`                  | `USER`, `SUPPORT`, `ADMIN`, `SUPERADMIN`                             |
+| `globalRole`                          | `GlobalRole` | défaut `USER`                  | `USER`, `OWNER` (propriétaire, unique), `STAFF` (employé)               |
 | `status`                              | `UserStatus` | défaut `UNVERIFIED`            | `UNVERIFIED`, `ACTIVE`, `SUSPENDED`, `DELETED`                       |
 | `locale`                              | String       | défaut `fr-BJ`                 | Prépare l'extension régionale                                        |
 | `defaultCityId`                       | String?      | FK → `City`                    | Sélecteur de ville de l'en-tête                                      |
@@ -155,17 +155,19 @@ Purge automatique des enregistrements expirés (job quotidien).
 
 ## 3.4 `AdminCredential`
 
-Séparé de `User` : les administrateurs plateforme ont un mot de passe et une 2FA, contrairement à
-tous les autres utilisateurs.
+Séparé de `User` : l'équipe d'administration a un identifiant et un mot de passe, contrairement
+à tous les autres utilisateurs, qui se connectent par téléphone.
 
-| Champ                  | Type      | Note                             |
-| ---------------------- | --------- | -------------------------------- |
-| `userId`               | String    | FK → `User`, UNIQUE              |
-| `passwordHash`         | String    | Argon2id                         |
-| `totpSecret`           | String    | Chiffré au repos                 |
-| `totpEnabledAt`        | DateTime? | **Obligatoire** avant tout accès |
-| `recoveryCodes`        | String[]  | Hachés                           |
-| `lastPasswordChangeAt` | DateTime  |                                  |
+| Champ                  | Type      | Note                                                                 |
+| ---------------------- | --------- | -------------------------------------------------------------------- |
+| `userId`               | String    | FK → `User`, UNIQUE                                                  |
+| `username`             | String    | UNIQUE — `nom.owner@xxxx` ou `nom.staff@xxxx`, suffixe généré        |
+| `passwordHash`         | String    | scrypt (paramètres OWASP)                                            |
+| `permissions`          | String[]  | `<espace>:read` / `<espace>:act` + `money` ; vide pour le propriétaire |
+| `lastPasswordChangeAt` | DateTime  |                                                                      |
+| `lastLoginAt`          | DateTime? |                                                                      |
+| `failedAttempts`       | Int       | Blocage 15 min à partir de 5                                         |
+| `lockedUntil`          | DateTime? |                                                                      |
 
 ---
 

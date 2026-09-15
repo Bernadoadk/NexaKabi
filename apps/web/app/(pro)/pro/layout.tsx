@@ -113,12 +113,18 @@ export default async function ProLayout({ children }: { children: React.ReactNod
                 n'affichait son nom nulle part dans le chrome. On le montre en
                 texte simple dans ce cas : le cas le plus courant ne doit pas
                 être celui qui perd l'identité de l'organisation. */}
+            {/* Comme l'en-tête public : rien ne passe à la ligne, le palier
+                décide. Nom de l'organisation et thème à partir de lg, prénom
+                à partir de xl ; « Espace participant » n'est qu'une icône
+                avant xl. */}
             {organizations.length > 1 ? (
-              <OrganizationSwitcher organizations={organizations} activeId={active.id} />
+              <div className="hidden lg:block">
+                <OrganizationSwitcher organizations={organizations} activeId={active.id} />
+              </div>
             ) : (
-              <span className="flex items-center gap-2 text-body-s font-semibold text-text-strong">
+              <span className="hidden max-w-[220px] items-center gap-2 whitespace-nowrap text-body-s font-semibold text-text-strong lg:flex">
                 <Avatar name={active.name} src={active.logoUrl} size="compact" />
-                {active.name}
+                <span className="truncate">{active.name}</span>
               </span>
             )}
 
@@ -128,24 +134,26 @@ export default async function ProLayout({ children }: { children: React.ReactNod
                 profil complet. */}
             <Link
               href="/mon-compte"
-              className="flex items-center gap-1.5 rounded-full border border-border-field px-3 py-1.5 text-body-s font-semibold text-text-strong transition hover:bg-surface-alt"
+              aria-label="Espace participant"
+              title="Espace participant"
+              className="flex h-[36px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-border-field text-body-s font-semibold text-text-strong transition hover:bg-surface-alt w-[36px] xl:w-auto xl:px-3"
             >
               <UserRound className="size-4" />
-              Espace participant
+              <span className="hidden xl:inline">Espace participant</span>
             </Link>
 
-            <ThemeToggle />
+            <ThemeToggle className="hidden lg:inline-flex" />
 
             {alertsLink}
 
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <Avatar name={user.fullName} src={user.avatarUrl} size="compact" />
-              <span className="text-body-s font-semibold text-text-strong">
+              <span className="hidden whitespace-nowrap text-body-s font-semibold text-text-strong xl:inline">
                 {user.fullName.split(' ')[0]}
               </span>
             </div>
 
-            <ProLogoutButton />
+            <ProLogoutButton className="shrink-0 whitespace-nowrap" />
           </>
         }
         mobileHeaderEnd={alertsLink}

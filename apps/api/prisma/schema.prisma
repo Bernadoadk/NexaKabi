@@ -76,11 +76,13 @@ model AuditLog {
 /// Rôle sur la plateforme. À ne pas confondre avec le rôle dans une
 /// organisation : « organisateur » n'est pas un rôle global, c'est la
 /// conséquence d'appartenir à au moins une organisation.
+/// Rôle global. `OWNER` : le propriétaire de la plateforme, unique, qui compose
+/// l'équipe d'administration. `STAFF` : un employé, dont les droits sont ceux
+/// cochés par le propriétaire (`AdminCredential.permissions`).
 enum GlobalRole {
   USER
-  SUPPORT
-  ADMIN
-  SUPERADMIN
+  OWNER
+  STAFF
 }
 
 enum UserStatus {
@@ -239,23 +241,24 @@ model AdminCredential {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  /// Identifiant de connexion : `nom.owner@7k2p` ou `nom.staff@7k2p`.
+  /// Le suffixe est tiré au hasard à la création — deux « awa » peuvent
+  /// coexister — et l'identifiant complet est ce que l'employé tape.
+  username String @unique
+
   /// scrypt (paramètres OWASP), pas Argon2id : ce dernier exige une dépendance
   /// native compilée par plateforme, pour quelques comptes d'administration.
   /// Voir `apps/api/src/modules/admin/password.ts`.
   passwordHash String
 
-  /// Chiffré au repos en AES-256-GCM, format `enc.v1.<iv>.<tag>.<données>`.
-  /// La clé vit dans ADMIN_ENCRYPTION_KEY, jamais dans cette base : une copie
-  /// du contenu ne livre donc pas les graines TOTP des administrateurs.
-  /// Voir `apps/api/src/modules/admin/secret-box.ts`.
-  /// Obligatoire avant tout accès à l'administration.
-  totpSecret    String?
-  totpEnabledAt DateTime?
+  /// Droits d'un employé, sous la forme `<espace>:<niveau>` (`events:read`,
+  /// `payouts:act`…) plus `money` pour les mouvements d'argent. Vide pour le
+  /// propriétaire, qui a tout par construction. La liste des espaces et le
+  /// calcul du droit vivent dans `@nexakabi/contracts` (`admin.ts`).
+  permissions String[] @default([])
 
-  /// Codes de secours, hachés.
-  recoveryCodes String[] @default([])
-
-  lastPasswordChangeAt DateTime @default(now())
+  lastPasswordChangeAt DateTime  @default(now())
+  lastLoginAt          DateTime?
 
   /// Échecs de connexion consécutifs, et blocage temporaire.
   ///
@@ -269,16 +272,6 @@ model AdminCredential {
   /// quand ils cessent de l'être, c'est justement qu'il faut compter.
   failedAttempts Int       @default(0)
   lockedUntil    DateTime?
-
-  /// Dernier pas TOTP accepté, pour refuser le rejeu d'un code intercepté
-  /// pendant sa fenêtre de validité.
-  ///
-  /// En base pour la même raison que le compteur ci-dessus : gardé en mémoire,
-  /// la protection tombait à chaque redémarrage et ne couvrait qu'une instance.
-  /// L'attaque suppose d'intercepter un code ET de le rejouer en moins de
-  /// quatre-vingt-dix secondes — mais c'est justement le genre de fenêtre qu'un
-  /// déploiement multi-instance rouvre sans que personne ne s'en aperçoive.
-  lastTotpStep Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1880,10 +1873,6 @@ model AdminSession {
 
   /// SHA-256 du jeton. Jamais le jeton lui-même.
   tokenHash String @unique
-
-  /// Vrai seulement après validation du code TOTP. Une session qui a passé le
-  /// mot de passe mais pas la seconde étape n'ouvre AUCUNE porte.
-  totpVerifiedAt DateTime?
 
   ipAddress String?
   userAgent String?

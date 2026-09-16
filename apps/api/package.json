@@ -35,6 +35,7 @@
     "@prisma/client-runtime-utils": "catalog:",
     "cloudinary": "catalog:",
     "cookie-parser": "catalog:",
+    "dotenv": "catalog:",
     "helmet": "catalog:",
     "multer": "catalog:",
     "nestjs-pino": "catalog:",
@@ -44,6 +45,7 @@
     "pg": "catalog:",
     "pino": "catalog:",
     "pino-http": "catalog:",
+    "prisma": "catalog:",
     "qrcode": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
@@ -63,10 +65,8 @@
     "@types/pdfkit": "catalog:",
     "@types/pg": "catalog:",
     "@types/qrcode": "catalog:",
-    "dotenv": "catalog:",
     "eslint": "catalog:",
     "pino-pretty": "catalog:",
-    "prisma": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:"
   }

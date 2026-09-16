@@ -9,6 +9,16 @@
       "inputs": ["$TURBO_DEFAULT$", "prisma/schema.prisma"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
+    "@nexakabi/web#build": {
+      "dependsOn": ["^build"],
+      "env": ["API_URL", "SITE_URL", "NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY"],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
+    "@nexakabi/admin#build": {
+      "dependsOn": ["^build"],
+      "env": ["API_URL"],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
     "dev": {
       "cache": false,
       "persistent": true

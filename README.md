@@ -93,7 +93,7 @@ ADMIN_PASSWORD='un-mot-de-passe-de-12-caracteres-minimum' pnpm --filter @nexakab
 
 Les **employés** se créent ensuite depuis l'écran « Équipe » de la console (`nom.staff@xxxx`),
 avec, pour chaque espace — Événements, Vérifications, Signalements, Organisations, Utilisateurs,
-Retraits — un niveau *consultation* ou *décision*, et un droit à part pour les mouvements
+Retraits — un niveau _consultation_ ou _décision_, et un droit à part pour les mouvements
 d'argent. Pas de double authentification : mot de passe seul, blocage après cinq échecs,
 sessions de 8 h révocables, chaque geste tracé dans le journal d'audit.
 
@@ -174,13 +174,14 @@ changements de rôle, publication ou annulation d'événement, accès à une pi�
 
 ## Documentation
 
-| Document                                                           | Contenu                                              |
-| ------------------------------------------------------------------ | ---------------------------------------------------- |
-| [`docs/cahier-des-charge.md`](docs/cahier-des-charge.md)           | Cahier des charges fonctionnel                       |
-| [`docs/PROJECT_ANALYSIS.md`](docs/PROJECT_ANALYSIS.md)             | Produit, rôles, design, écrans, parcours, ambiguïtés |
-| [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md) | Stack, modules, auth, paiements, QR, PWA, risques    |
-| [`docs/DATABASE_PROPOSAL.md`](docs/DATABASE_PROPOSAL.md)           | Entités, relations, contraintes, machines à états    |
-| [`docs/DEVELOPMENT_ROADMAP.md`](docs/DEVELOPMENT_ROADMAP.md)       | Plan par phases et piste parallèle                   |
+| Document                                                           | Contenu                                               |
+| ------------------------------------------------------------------ | ----------------------------------------------------- |
+| [`docs/cahier-des-charge.md`](docs/cahier-des-charge.md)           | Cahier des charges fonctionnel                        |
+| [`docs/PROJECT_ANALYSIS.md`](docs/PROJECT_ANALYSIS.md)             | Produit, rôles, design, écrans, parcours, ambiguïtés  |
+| [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md) | Stack, modules, auth, paiements, QR, PWA, risques     |
+| [`docs/DATABASE_PROPOSAL.md`](docs/DATABASE_PROPOSAL.md)           | Entités, relations, contraintes, machines à états     |
+| [`docs/DEVELOPMENT_ROADMAP.md`](docs/DEVELOPMENT_ROADMAP.md)       | Plan par phases et piste parallèle                    |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)                         | Mise en ligne : Vercel (api, web, admin), Neon, crons |
 
 ---
 

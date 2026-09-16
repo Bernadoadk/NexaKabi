@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nestjs",
+  "installCommand": "pnpm install --prod=false",
+  "buildCommand": "turbo run build && pnpm exec prisma migrate deploy",
+  "outputDirectory": "dist",
+  "regions": ["fra1"]
+}

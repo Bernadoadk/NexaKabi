@@ -19,6 +19,6 @@ import { StatsService } from './stats.service';
   imports: [TicketsModule, forwardRef(() => PaymentsModule)],
   controllers: [FinanceController],
   providers: [LedgerService, PayoutsService, PayoutsScheduler, StatsService, RefundsService],
-  exports: [LedgerService, PayoutsService, StatsService, RefundsService],
+  exports: [LedgerService, PayoutsService, StatsService, RefundsService, PayoutsScheduler],
 })
 export class FinanceModule {}

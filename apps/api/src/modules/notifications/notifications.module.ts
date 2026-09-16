@@ -64,6 +64,7 @@ import type { Env } from '../../config/env';
     EventNotifierService,
     RemindersService,
     OutboundService,
+    NotificationsScheduler,
   ],
 })
 export class NotificationsModule {}

@@ -19,8 +19,23 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { CheckInModule } from './modules/checkin/checkin.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { CronModule } from './modules/cron/cron.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { PlacesModule } from './modules/places/places.module';
+
+/**
+ * Journaux lisibles (pino-pretty) ou JSON.
+ *
+ * `LOG_PRETTY` tranche ; sans elle, lisible en développement, JSON ailleurs.
+ * Lu dans `process.env` et non via `ConfigService` : `LoggerModule.forRoot()`
+ * s'évalue dans le tableau d'imports ci-dessous, juste après
+ * `ConfigModule.forRoot()` qui vient de charger `.env` — mais avant que le
+ * conteneur d'injection n'existe.
+ */
+function prettyLogs(): boolean {
+  const explicit = process.env.LOG_PRETTY;
+  return explicit === undefined ? process.env.NODE_ENV === 'development' : explicit === 'true';
+}
 
 @Module({
   imports: [
@@ -33,7 +48,7 @@ import { PlacesModule } from './modules/places/places.module';
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL ?? 'info',
-        transport: process.env.NODE_ENV === 'development' ? { target: 'pino-pretty' } : undefined,
+        transport: prettyLogs() ? { target: 'pino-pretty' } : undefined,
         // Ne jamais journaliser de secret ni de donnée personnelle en clair.
         redact: {
           paths: [
@@ -76,6 +91,7 @@ import { PlacesModule } from './modules/places/places.module';
     FinanceModule,
     PlacesModule,
     AdminModule,
+    CronModule,
     HealthModule,
   ],
   providers: [

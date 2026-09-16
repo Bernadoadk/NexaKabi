@@ -12,8 +12,22 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
 
-  /** URL PostgreSQL complète, y compris le schéma. */
+  /**
+   * URL PostgreSQL complète, y compris le schéma.
+   *
+   * Chez Neon, c'est l'URL du POOLER (hôte en `-pooler`) : chaque instance
+   * serverless ouvre son propre pool, et seul le pooler absorbe cette
+   * multiplication de connexions sans atteindre la limite du compute.
+   */
   DATABASE_URL: z.string().url(),
+
+  /**
+   * URL de connexion DIRECTE, sans pooler. Lue par le CLI Prisma uniquement
+   * (`prisma migrate deploy`, voir prisma.config.ts) : les migrations tiennent
+   * des verrous et des transactions longues que PgBouncer ne relaie pas.
+   * Absente, le CLI retombe sur `DATABASE_URL` — le cas d'une base locale.
+   */
+  DATABASE_URL_UNPOOLED: z.string().url().optional(),
 
   /** Origines autorisées pour CORS, séparées par des virgules. */
   CORS_ORIGINS: z
@@ -30,6 +44,20 @@ const envSchema = z.object({
   API_PREFIX: z.string().default('api'),
 
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+
+  /**
+   * Journaux lisibles (pino-pretty) plutôt que JSON.
+   *
+   * Par défaut, suit `NODE_ENV` : lisible en développement, JSON ailleurs. À
+   * forcer à `false` sur une plateforme serverless qui tourne en mode
+   * développement : le transport pino-pretty vit dans un fil d'exécution à
+   * part, qu'un bundle de fonction n'embarque pas — et la plateforme sait de
+   * toute façon afficher le JSON.
+   */
+  LOG_PRETTY: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
 
   /**
    * Secret de signature des jetons d'accès.
@@ -148,6 +176,30 @@ const envSchema = z.object({
   CLOUDINARY_API_KEY: z.string().default(''),
   CLOUDINARY_API_SECRET: z.string().default(''),
 
+  /**
+   * Qui déclenche les tâches périodiques.
+   *
+   * `in-process` : le processus les lance lui-même (`@Cron`), comme sur un
+   * serveur qui tourne en continu — poste de développement, conteneur, VPS.
+   *
+   * `http` : le processus n'a pas de durée de vie garantie (fonction
+   * serverless), donc aucune minuterie n'est armée. Un planificateur externe
+   * — cron-job.org, Vercel Cron… — appelle `GET /internal/cron/<tâche>` au
+   * rythme voulu, avec `CRON_SECRET` en jeton Bearer. Les tâches elles-mêmes
+   * ne changent pas : seul le déclencheur change.
+   */
+  SCHEDULER_MODE: z.enum(['in-process', 'http']).default('in-process'),
+
+  /**
+   * Secret attendu sur les appels à `/internal/cron/*`.
+   *
+   * Attendu en en-tête `Authorization: Bearer …` — à saisir dans le
+   * planificateur externe. Obligatoire en mode `http` : sans lui,
+   * n'importe qui pourrait déclencher une réconciliation ou une relance à
+   * volonté. Vide, les endpoints répondent 403.
+   */
+  CRON_SECRET: z.string().default(''),
+
   /** Expose la documentation OpenAPI. Toujours désactivée en production. */
   SWAGGER_ENABLED: z
     .string()
@@ -217,6 +269,21 @@ function assertConsistency(env: Env, addIssue: (path: string, message: string) =
       'FEDAPAY_WEBHOOK_SECRET est obligatoire dès que FEDAPAY_SECRET_KEY est renseignée : ' +
         'sans lui, la signature des webhooks est calculée avec une clé vide, donc forgeable.',
     );
+  }
+
+  // En mode `http`, les tâches ne tournent QUE si quelqu'un les appelle — et
+  // sans secret, le garde ferme les endpoints. Rien ne tournerait, sans un
+  // seul message : commandes jamais expirées, paiements jamais rattrapés.
+  // Refuser de démarrer est la seule façon de le voir tout de suite.
+  if (env.SCHEDULER_MODE === 'http' && env.CRON_SECRET.length < 32) {
+    addIssue(
+      'CRON_SECRET',
+      'SCHEDULER_MODE=http exige CRON_SECRET (32 caractères minimum). Générer : openssl rand -base64 48.',
+    );
+  }
+
+  if (isProduction && env.CRON_SECRET && looksLikePlaceholder(env.CRON_SECRET)) {
+    addIssue('CRON_SECRET', 'CRON_SECRET est resté à sa valeur d’exemple.');
   }
 
   if (env.EMAIL_PROVIDER === 'smtp' && (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASSWORD)) {

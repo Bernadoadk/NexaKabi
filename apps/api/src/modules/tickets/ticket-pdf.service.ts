@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
+import './pdf-standard-fonts';
 import QRCode from 'qrcode';
 import type { Ticket } from '@nexakabi/contracts';
 import { formatEventRange, formatTimeSpaced } from '@nexakabi/utils';

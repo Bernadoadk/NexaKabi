@@ -123,17 +123,17 @@ design system partagé entre `web` et `admin` rendent le monorepo nettement sup�
 
 ## 2.4 Infrastructure
 
-| Composant            | Proposition MVP                                                                            | Évolution                                     |
-| -------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| Hébergement web      | Vercel (Next.js natif, ISR, edge) — ou Coolify/VPS si la souveraineté des données l'impose | CDN avec point de présence africain           |
-| Hébergement API      | Conteneur Docker sur VPS européen ou Railway/Render                                        | Kubernetes seulement si la charge le justifie |
-| Base de données      | PostgreSQL managé avec sauvegardes automatiques et PITR                                    | Réplique en lecture pour les statistiques     |
-| Redis                | Instance managée                                                                           | —                                             |
-| Stockage de fichiers | **Cloudflare R2** (pas de frais de sortie, compatible S3)                                  | —                                             |
-| Images               | Transformation à l'upload avec `sharp` + `next/image`                                      | Cloudflare Images si le volume l'exige        |
-| SMS / OTP            | Agrégateur régional à sélectionner (voir risques)                                          | WhatsApp Business API en second canal         |
-| Emails               | Resend ou Postmark                                                                         | —                                             |
-| Surveillance         | Sentry (erreurs) + logs structurés + Uptime Kuma                                           | OpenTelemetry                                 |
+| Composant            | Proposition MVP                                                                                  | Évolution                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| Hébergement web      | Vercel (Next.js natif, ISR, edge) — ou Coolify/VPS si la souveraineté des données l'impose       | CDN avec point de présence africain                          |
+| Hébergement API      | Vercel Functions (Fluid compute), tâches périodiques via Vercel Cron — voir `docs/DEPLOYMENT.md` | Conteneur sur VPS si la charge ou la souveraineté l'impose   |
+| Base de données      | Neon (PostgreSQL managé, pooler intégré, sauvegardes et PITR)                                    | Réplique en lecture pour les statistiques                    |
+| Redis                | Instance managée                                                                                 | —                                                            |
+| Stockage de fichiers | Cloudinary (visuels transformés à la volée, documents privés en URL signée)                      | Cloudflare R2 si le volume ou les coûts de sortie l'imposent |
+| Images               | Transformation à l'upload avec `sharp` + `next/image`                                            | Cloudflare Images si le volume l'exige                       |
+| SMS / OTP            | Agrégateur régional à sélectionner (voir risques)                                                | WhatsApp Business API en second canal                        |
+| Emails               | Resend ou Postmark                                                                               | —                                                            |
+| Surveillance         | Sentry (erreurs) + logs structurés + Uptime Kuma                                                 | OpenTelemetry                                                |
 
 **Point de vigilance** : la latence depuis Cotonou vers un hébergement européen est de l'ordre de
 120–180 ms. Acceptable, mais elle impose une conception « peu d'allers-retours » : agrégation des
@@ -481,7 +481,7 @@ coupées à la suspension, à la suppression et à tout changement de mot de pas
 exhaustive.
 
 Les droits d'un employé sont **par espace** (Événements, Vérifications, Signalements,
-Organisations, Utilisateurs, Retraits), à deux niveaux — *consultation* ou *décision* — plus un
+Organisations, Utilisateurs, Retraits), à deux niveaux — _consultation_ ou _décision_ — plus un
 droit distinct **Mouvements d'argent** (exécuter ou enregistrer un retrait, geler ou dégeler des
 fonds), jamais impliqué par un espace. Le calcul vit dans `@nexakabi/contracts`
 (`hasAdminAccess`, `canMoveMoney`) et sert des deux côtés : la console masque, l'API refuse.

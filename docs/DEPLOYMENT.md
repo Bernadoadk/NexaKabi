@@ -50,6 +50,16 @@ Trois mécanismes méritent d'être compris avant de toucher à quoi que ce soit
 `turbo run build` lancé depuis `apps/<app>` se limite automatiquement à cette application et à
 ses dépendances internes (`packages/utils`, `packages/contracts`) ; `turbo` est fourni par Vercel.
 
+**Modules ES et chargeur de Vercel.** NestJS 12 est publié en modules ES, et l'API est compilée en
+CommonJS : elle fait donc `require()` de modules ES. Node 22.12+ l'accepte nativement, mais le
+chargeur maison de Vercel le refuse par défaut — d'où la variable `NODE_OPTIONS=--experimental-require-module`
+(§4). Ce chargeur a une seconde particularité : les `import` d'un module ES atteint par `require()`
+sont résolus avec la condition `require` des paquets (fichiers `.cjs`), alors que le traçage du
+build ne les avait pas embarqués. C'est pourquoi `packages/utils` et `packages/contracts` sont
+publiés en **double sortie** : `dist/` (ES, pour web et admin) et `dist/cjs/` (CommonJS, pour
+l'API, via la condition `require` de leur `exports`). L'API ne charge ainsi plus aucun module ES
+en dehors de NestJS lui-même.
+
 ---
 
 ## 2. Prérequis
@@ -99,28 +109,29 @@ Les deux front-ends ont besoin de l'URL de l'API ; elle vient donc en premier.
    et Install Command **sans override** — `vercel.json` s'en charge.
 5. **Environment Variables** (environnement _Production_) :
 
-| Variable                       | Valeur                                                                            |
-| ------------------------------ | --------------------------------------------------------------------------------- |
-| `ENABLE_EXPERIMENTAL_COREPACK` | `1` — Vercel utilise alors la version de pnpm déclarée dans `package.json` (11.x) |
-| `NODE_ENV`                     | `development` — **voir §8 avant de mettre autre chose**                           |
-| `LOG_PRETTY`                   | `false`                                                                           |
-| `LOG_LEVEL`                    | `info`                                                                            |
-| `SWAGGER_ENABLED`              | `false`                                                                           |
-| `SCHEDULER_MODE`               | `http`                                                                            |
-| `CRON_SECRET`                  | secret généré                                                                     |
-| `DATABASE_URL`                 | URL **pooler** de Neon                                                            |
-| `DATABASE_URL_UNPOOLED`        | URL **directe** de Neon                                                           |
-| `JWT_SECRET`                   | secret généré                                                                     |
-| `OTP_PEPPER`                   | secret généré                                                                     |
-| `TICKET_SIGNING_SECRET`        | secret généré — **ne jamais le changer ensuite** : tous les QR émis seraient nuls |
-| `CHECKOUT_TOKEN_SECRET`        | secret généré                                                                     |
-| `CLOUDINARY_CLOUD_NAME`        | tableau de bord Cloudinary                                                        |
-| `CLOUDINARY_API_KEY`           | idem                                                                              |
-| `CLOUDINARY_API_SECRET`        | idem                                                                              |
-| `PUBLIC_API_URL`               | `https://nexakabi-api.vercel.app/api` (à ajuster si Vercel a suffixé le nom)      |
-| `CORS_ORIGINS`                 | laisser vide pour l'instant, complété au §7                                       |
-| `GOOGLE_MAPS_SERVER_KEY`       | facultatif — clé serveur (Places + Geocoding)                                     |
-| `EMAIL_PROVIDER`, `SMTP_*`     | facultatif — `smtp` + réglages Gmail pour envoyer les billets par e-mail          |
+| Variable                       | Valeur                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------ |
+| `ENABLE_EXPERIMENTAL_COREPACK` | `1` — Vercel utilise alors la version de pnpm déclarée dans `package.json` (11.x)    |
+| `NODE_OPTIONS`                 | `--experimental-require-module` — **sans elle, l'API plante au démarrage** (voir §1) |
+| `NODE_ENV`                     | `development` — **voir §8 avant de mettre autre chose**                              |
+| `LOG_PRETTY`                   | `false`                                                                              |
+| `LOG_LEVEL`                    | `info`                                                                               |
+| `SWAGGER_ENABLED`              | `false`                                                                              |
+| `SCHEDULER_MODE`               | `http`                                                                               |
+| `CRON_SECRET`                  | secret généré                                                                        |
+| `DATABASE_URL`                 | URL **pooler** de Neon                                                               |
+| `DATABASE_URL_UNPOOLED`        | URL **directe** de Neon                                                              |
+| `JWT_SECRET`                   | secret généré                                                                        |
+| `OTP_PEPPER`                   | secret généré                                                                        |
+| `TICKET_SIGNING_SECRET`        | secret généré — **ne jamais le changer ensuite** : tous les QR émis seraient nuls    |
+| `CHECKOUT_TOKEN_SECRET`        | secret généré                                                                        |
+| `CLOUDINARY_CLOUD_NAME`        | tableau de bord Cloudinary                                                           |
+| `CLOUDINARY_API_KEY`           | idem                                                                                 |
+| `CLOUDINARY_API_SECRET`        | idem                                                                                 |
+| `PUBLIC_API_URL`               | `https://nexakabi-api.vercel.app/api` (à ajuster si Vercel a suffixé le nom)         |
+| `CORS_ORIGINS`                 | laisser vide pour l'instant, complété au §7                                          |
+| `GOOGLE_MAPS_SERVER_KEY`       | facultatif — clé serveur (Places + Geocoding)                                        |
+| `EMAIL_PROVIDER`, `SMTP_*`     | facultatif — `smtp` + réglages Gmail pour envoyer les billets par e-mail             |
 
 Ne **pas** définir `PORT` ni `API_PREFIX`.
 

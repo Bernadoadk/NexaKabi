@@ -9,12 +9,13 @@ import {
   Param,
   Patch,
   Post,
-  UploadedFile,
-  UseInterceptors,
+  Query,
+  Req,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { SINGLE_FILE_UPLOAD } from '../media/upload.constraints';
 import { ApiConsumes, ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
+import { MediaIntakeService } from '../media/media-intake.service';
+import { UPLOAD_CONTENT_TYPE } from '../media/upload.constraints';
 import {
   createOrganizationSchema,
   createPayoutAccountSchema,
@@ -47,13 +48,6 @@ import {
   UploadVerificationDocumentDto,
 } from './dto/organizations.dto';
 
-interface UploadedFileLike {
-  buffer: Buffer;
-  mimetype: string;
-  originalname: string;
-  size: number;
-}
-
 /**
  * Organisations et équipes.
  *
@@ -68,7 +62,10 @@ interface UploadedFileLike {
 })
 @Controller('organizer/organizations')
 export class OrganizationsController {
-  constructor(private readonly organizations: OrganizationsService) {}
+  constructor(
+    private readonly organizations: OrganizationsService,
+    private readonly intake: MediaIntakeService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Mes organisations' })
@@ -221,26 +218,33 @@ export class OrganizationsController {
     );
   }
 
+  /**
+   * Le corps est le fichier — ou sa référence de transit (voir
+   * `MediaIntakeService`) : le type de pièce, seule autre donnée, voyage donc
+   * en paramètre d'URL.
+   */
   @Post('current/verification/documents')
   @RequirePermission('organization:update')
-  @UseInterceptors(FileInterceptor('file', SINGLE_FILE_UPLOAD))
-  @ApiConsumes('multipart/form-data')
+  @ApiConsumes('application/json', UPLOAD_CONTENT_TYPE)
   @ApiOperation({
     summary: 'Déposer une pièce à l’appui du dossier',
     description:
-      'JPG, PNG, WebP ou PDF, 8 Mo au maximum. Stockage privé : jamais accessible par une ' +
+      'JPG, PNG, WebP ou PDF, 10 Mo au maximum. Stockage privé : jamais accessible par une ' +
       'URL directe, seulement par une URL signée générée à la lecture, côté administration.',
   })
   async uploadVerificationDocument(
     @CurrentOrg() context: OrgContext,
-    @Body() body: UploadVerificationDocumentDto,
-    @UploadedFile() file: UploadedFileLike | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: UploadVerificationDocumentDto,
+    @Req() request: Request,
   ): Promise<VerificationRequestDetail> {
+    const file = await this.intake.receive(request, user.id);
+
     if (!file) {
       throw new BadRequestException('Aucun fichier reçu.');
     }
 
-    const { type } = uploadVerificationDocumentSchema.parse(body);
+    const { type } = uploadVerificationDocumentSchema.parse(query);
 
     return this.organizations.addVerificationDocument(context, type, {
       buffer: file.buffer,

@@ -181,15 +181,15 @@ qu'il faut (cookies `secure`, HSTS, CSP stricte).
 
 ## 6. Planificateur des tâches — cron-job.org
 
-L'API a six tâches de fond (`@Cron()` dans le code) : libération des réservations expirées,
-rattrapage des paiements en attente, réconciliation des versements, reprise des envois en échec,
-rappels, balayage nocturne. Sans elles, les places restent bloquées par des commandes abandonnées
+L'API a sept tâches de fond (`@Cron()` dans le code, plus la purge du transit) : libération des
+réservations expirées, rattrapage des paiements en attente, réconciliation des versements, reprise
+des envois en échec, rappels, balayage nocturne, purge des dépôts non conclus. Sans elles, les places restent bloquées par des commandes abandonnées
 et un paiement confirmé en différé ne l'est jamais. Sur Vercel, personne ne les lance : c'est
 cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-tête secret.
 
 1. Créer un compte sur [cron-job.org](https://cron-job.org). Fuseau horaire du compte :
    `Africa/Porto-Novo` (seul le balayage nocturne y est sensible).
-2. Pour chacune des six tâches, **Create cronjob** :
+2. Pour chacune des sept tâches, **Create cronjob** :
    - **Title** : le nom de la tâche.
    - **URL** : `https://nexakabi-api.vercel.app/api/internal/cron/<tâche>`.
    - **Schedule** : selon le tableau ci-dessous.
@@ -203,6 +203,7 @@ cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-tête 
 | `poll-pending-payments`  | chaque minute                | interroge l'opérateur sur les paiements en attente   |
 | `reconcile-payouts`      | chaque minute                | conclut les versements Mobile Money en cours         |
 | `retry-outbound`         | toutes les 10 minutes        | réessaie les e-mails et SMS en échec                 |
+| `purge-staged-uploads`   | tous les jours à 4 h 30      | supprime les dépôts directs jamais conclus (transit) |
 | `send-reminders`         | chaque heure, à la 7ᵉ minute | rappels avant événement                              |
 | `nightly-sweep`          | tous les jours à 3 h         | reprise des webhooks orphelins                       |
 
@@ -217,9 +218,9 @@ tout double traitement si deux appels se chevauchent. Un échec est visible dans
 et notifié par e-mail ; l'appel suivant repart normalement.
 
 > **Le jour du plan Pro**, Vercel Cron peut reprendre l'horloge : remettre dans
-> `apps/api/vercel.json` un bloc `"crons"` avec les six entrées
+> `apps/api/vercel.json` un bloc `"crons"` avec les sept entrées
 > (`{ "path": "/api/internal/cron/<tâche>", "schedule": "* * * * *" }`, schedules `* * * * *`,
-> `*/10 * * * *`, `7 * * * *`, `0 3 * * *`) et supprimer les jobs cron-job.org. Vercel envoie
+> `*/10 * * * *`, `7 * * * *`, `0 3 * * *`, `30 4 * * *`) et supprimer les jobs cron-job.org. Vercel envoie
 > alors `CRON_SECRET` de lui-même. Rien d'autre ne change.
 
 ---
@@ -281,11 +282,18 @@ le build.
 
 ## 9. Limites connues de la plateforme
 
-- **Corps de requête : 4,5 Mo maximum** par fonction Vercel (413 au-delà, avant même d'atteindre le
-  code). L'application accepte des fichiers jusqu'à 8 Mo (`UPLOAD_MAX_BYTES`, textes « 8 Mo au
-  maximum » côté web) : une photo de téléphone au-delà de 4,5 Mo échouera sans message applicatif.
-  Deux issues : abaisser la limite à 4 Mo (API + textes), ou déposer directement chez Cloudinary
-  depuis le navigateur (upload signé).
+- **Les fichiers ne transitent pas par les fonctions.** Chaque fonction Vercel plafonne le corps
+  d'une requête à 4,5 Mo (413 au-delà, avant même d'atteindre le code) ; la bordure du projet API
+  (preset NestJS) répond en outre 503 `SERVICE_UNAVAILABLE` à toute requête `multipart/form-data`
+  de plus de ~1 Mo, avant d'invoquer la fonction — aucun log côté API (mesuré le 17 sept. 2026, le
+  projet web n'est pas concerné). Les dépôts se font donc **directement du navigateur vers
+  Cloudinary** avec un ticket signé par l'API (`POST /api/media/upload-ticket`), dans un espace de
+  transit privé (`incoming/`) ; l'API ne reçoit qu'une référence, reprend le fichier, le contrôle,
+  le ré-encode et supprime le transit. Limite : **10 Mo** (`UPLOAD_MAX_BYTES` dans
+  `@nexakabi/contracts`), qui est aussi le plafond par fichier du plan gratuit Cloudinary. La CSP du
+  web autorise `https://api.cloudinary.com` en `connect-src` pour cela. Sans Cloudinary configuré
+  (développement), le fichier passe par l'API en corps brut `application/octet-stream` — jamais en
+  multipart. Voir `apps/web/lib/upload-client.ts` et `apps/api/src/modules/media/media-intake.service.ts`.
 - **Démarrage à froid** : quelques secondes à la première requête après une période d'inactivité
   (Nest + connexion Neon). Fluid compute garde ensuite l'instance chaude. Neon suspend aussi son
   compute après cinq minutes d'inactivité sur les petits plans — première requête plus lente.

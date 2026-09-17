@@ -220,7 +220,7 @@ export const submitVerificationSchema = z.object({
 
 export type SubmitVerificationInput = z.infer<typeof submitVerificationSchema>;
 
-/** Accompagne le fichier envoyé en `multipart/form-data`. */
+/** Paramètres d'URL du dépôt d'une pièce — le corps de la requête est le fichier lui-même. */
 export const uploadVerificationDocumentSchema = z.object({
   type: documentTypeSchema,
 });

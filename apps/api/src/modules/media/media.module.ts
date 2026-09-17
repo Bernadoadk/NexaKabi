@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CloudinaryStorageProvider } from './cloudinary-storage.provider';
+import { MediaIntakeService } from './media-intake.service';
 import { MediaController } from './media.controller';
 import { MediaService } from './media.service';
 import { LocalStorageProvider, StorageProvider } from './storage.provider';
@@ -11,6 +12,7 @@ import type { Env } from '../../config/env';
   controllers: [MediaController],
   providers: [
     MediaService,
+    MediaIntakeService,
     {
       provide: StorageProvider,
       inject: [ConfigService],
@@ -19,10 +21,12 @@ import type { Env } from '../../config/env';
         // `assertConsistency` refuse un sous-ensemble) ; sinon, stockage local
         // de développement, interdit en production par son propre constructeur.
         const configured = config.get('CLOUDINARY_CLOUD_NAME', { infer: true }).length > 0;
-        return configured ? new CloudinaryStorageProvider(config) : new LocalStorageProvider(config);
+        return configured
+          ? new CloudinaryStorageProvider(config)
+          : new LocalStorageProvider(config);
       },
     },
   ],
-  exports: [MediaService, StorageProvider],
+  exports: [MediaService, MediaIntakeService, StorageProvider],
 })
 export class MediaModule {}

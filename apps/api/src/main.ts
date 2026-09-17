@@ -13,6 +13,7 @@ import { AppModule } from './app.module';
 import { ApiExceptionFilter } from './common/filters/http-exception.filter';
 import { toApiError } from './common/errors/to-api-error';
 import type { Env } from './config/env';
+import { UPLOAD_CONTENT_TYPE, UPLOAD_MAX_BYTES } from './modules/media/upload.constraints';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -65,6 +66,13 @@ async function bootstrap(): Promise<void> {
     }),
   );
   app.use(cookieParser());
+
+  /**
+   * Dépôts de fichiers : le fichier est le corps de la requête, octet pour
+   * octet. Pourquoi pas `multipart/form-data`, et pourquoi la limite est
+   * appliquée ici : voir `modules/media/upload.constraints.ts`.
+   */
+  app.useBodyParser('raw', { type: UPLOAD_CONTENT_TYPE, limit: UPLOAD_MAX_BYTES, inflate: false });
 
   /**
    * Fichiers déposés en développement.

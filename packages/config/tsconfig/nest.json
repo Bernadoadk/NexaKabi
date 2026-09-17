@@ -3,9 +3,8 @@
   "display": "Nexa-Kabi — application NestJS",
   "extends": "./base.json",
   "compilerOptions": {
-    "ignoreDeprecations": "5.0",
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "target": "ES2023",
     "lib": ["ES2023"],
     "outDir": "dist",

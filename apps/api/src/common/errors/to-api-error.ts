@@ -47,6 +47,18 @@ export function toApiError(exception: unknown, requestId?: string): ApiError {
     };
   }
 
+  if (isEntityTooLarge(exception)) {
+    return {
+      statusCode: HttpStatus.PAYLOAD_TOO_LARGE,
+      code: 'PAYLOAD_TOO_LARGE',
+      message:
+        typeof exception.limit === 'number'
+          ? `Envoi trop volumineux. ${formatBytes(exception.limit)} au maximum.`
+          : 'Envoi trop volumineux.',
+      requestId,
+    };
+  }
+
   return {
     statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
     code: 'INTERNAL_ERROR',
@@ -67,4 +79,23 @@ function httpStatusCode(status: number): string {
     429: 'TOO_MANY_REQUESTS',
   };
   return known[status] ?? 'ERROR';
+}
+
+/**
+ * Corps refusé par un parseur Express (`limit` dépassé). Ce n'est pas une
+ * `HttpException` de Nest : sans cette traduction, un fichier de 9 Mo
+ * ressortirait en 500 « erreur inattendue » alors que la cause est connue.
+ */
+function isEntityTooLarge(exception: unknown): exception is { limit?: number } {
+  return (
+    typeof exception === 'object' &&
+    exception !== null &&
+    (exception as { type?: unknown }).type === 'entity.too.large'
+  );
+}
+
+function formatBytes(bytes: number): string {
+  return bytes >= 1024 * 1024
+    ? `${Math.round(bytes / 1024 / 1024)} Mo`
+    : `${Math.round(bytes / 1024)} Ko`;
 }

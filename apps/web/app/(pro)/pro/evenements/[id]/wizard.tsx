@@ -25,6 +25,7 @@ import {
   Textarea,
 } from '@nexakabi/ui';
 import type { Category, City } from '@/lib/events';
+import { uploadFile } from '@/lib/upload-client';
 import { LocationPicker } from '@/components/location-picker';
 import type { LatLngLiteral } from '@/components/google-maps';
 import { EventPageView } from '@/components/event-page-view';
@@ -951,27 +952,17 @@ function MediaStep({
             setUploading(true);
             setUploadError(null);
 
-            const body = new FormData();
-            body.append('file', file);
-
-            const response = await fetch(`/api/media/event-cover?eventId=${event.id}`, {
-              method: 'POST',
-              body,
-            });
+            const result = await uploadFile(file, `/api/media/event-cover?eventId=${event.id}`);
 
             setUploading(false);
 
-            if (!response.ok) {
-              const payload: unknown = await response.json().catch(() => null);
-              setUploadError(
-                (payload as { message?: string } | null)?.message ?? 'Dépôt impossible.',
-              );
+            if (!result.ok) {
+              setUploadError(result.message);
               return;
             }
 
-            const { url } = (await response.json()) as { url: string };
-            setPreview(url);
-            await onSave({ coverImageUrl: url });
+            setPreview(result.data.url);
+            await onSave({ coverImageUrl: result.data.url });
           }}
         />
         <span className="rounded-button border border-border-field bg-surface px-3.5 py-2 text-body-s font-semibold">
@@ -1074,7 +1065,7 @@ function FloorPlans({
               {plans.length === 0 ? 'Ajouter un plan' : 'Ajouter un autre plan'}
             </span>
             <span className="block text-[12px] text-text-2">
-              JPG, PNG ou WebP · 8 Mo au plus · {5 - plans.length} restant
+              JPG, PNG ou WebP · 10 Mo au plus · {5 - plans.length} restant
               {5 - plans.length > 1 ? 's' : ''}
             </span>
           </span>
@@ -1090,25 +1081,20 @@ function FloorPlans({
               setUploading(true);
               setError(null);
 
-              const body = new FormData();
-              body.append('file', file);
-
-              const response = await fetch(`/api/media/event-floor-plan?eventId=${event.id}`, {
-                method: 'POST',
-                body,
-              });
+              const result = await uploadFile(
+                file,
+                `/api/media/event-floor-plan?eventId=${event.id}`,
+              );
 
               setUploading(false);
               changeEvent.target.value = '';
 
-              if (!response.ok) {
-                const payload: unknown = await response.json().catch(() => null);
-                setError((payload as { message?: string } | null)?.message ?? 'Dépôt impossible.');
+              if (!result.ok) {
+                setError(result.message);
                 return;
               }
 
-              const { url } = (await response.json()) as { url: string };
-              await persist([...plans, url]);
+              await persist([...plans, result.data.url]);
             }}
           />
           <span className="rounded-button border border-border-field bg-surface px-3.5 py-2 text-body-s font-semibold">

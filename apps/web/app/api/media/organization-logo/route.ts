@@ -1,30 +1,7 @@
-import { NextResponse, type NextRequest } from 'next/server';
-import { API_URL } from '@/lib/api';
-import { readAccessToken } from '@/lib/session';
-import { resolveActiveOrganizationId } from '@/lib/organizations';
+import type { NextRequest } from 'next/server';
+import { relayOrganizationUpload } from '@/lib/upload-relay';
 
-/** Relais du dépôt de logo — même geste que `media/event-cover`. */
-export async function POST(request: NextRequest) {
-  const [accessToken, organizationId] = await Promise.all([
-    readAccessToken(),
-    resolveActiveOrganizationId(),
-  ]);
-
-  if (!accessToken || !organizationId) {
-    return NextResponse.json(
-      { statusCode: 401, code: 'UNAUTHENTICATED', message: 'Connecte-toi pour continuer.' },
-      { status: 401 },
-    );
-  }
-
-  const body = await request.formData();
-
-  const response = await fetch(`${API_URL}/media/organization-logo`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'X-Organization-Id': organizationId },
-    body,
-  });
-
-  const payload: unknown = await response.json().catch(() => null);
-  return NextResponse.json(payload, { status: response.status });
+/** Relais du dépôt de logo — voir `lib/upload-relay`. */
+export function POST(request: NextRequest) {
+  return relayOrganizationUpload(request, '/media/organization-logo');
 }

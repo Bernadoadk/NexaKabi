@@ -94,7 +94,7 @@ export default async function VerificationPage() {
 
       {active.type !== 'INDIVIDUAL' ? (
         request ? (
-          <DocumentsSection organizationId={active.id} documents={request.documents} />
+          <DocumentsSection documents={request.documents} />
         ) : (
           <p className="text-body-s text-text-2">
             Renseigne d’abord tes coordonnées ci-dessus : le dépôt des pièces s’ouvre juste après.

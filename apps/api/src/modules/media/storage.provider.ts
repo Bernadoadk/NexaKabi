@@ -3,6 +3,7 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { DirectUploadTicket, StagedUpload } from '@nexakabi/contracts';
 import type { Env } from '../../config/env';
 
 export interface StoredFile {
@@ -27,11 +28,25 @@ export interface PutObjectInput {
   readonly visibility: 'public' | 'private';
 }
 
+/** Fichier repris du transit, prêt pour les contrôles du `MediaService`. */
+export interface StagedFile {
+  readonly buffer: Buffer;
+  readonly sizeBytes: number;
+}
+
 /**
  * Stockage de fichiers.
  *
  * Abstraction volontairement étroite : le passage à Cloudflare R2 consiste à
  * fournir une autre implémentation, sans toucher aux modules métier.
+ *
+ * ── Le transit ──────────────────────────────────────────────────────────────
+ * Le navigateur dépose le fichier directement chez le fournisseur (voir
+ * `@nexakabi/contracts`, `media.ts`), dans un espace privé et provisoire :
+ * `createUploadTicket()` signe ce dépôt, `takeStaged()` en reprend les octets
+ * et supprime l'objet, `purgeStaged()` évacue ce qu'un navigateur a déposé
+ * sans jamais conclure. Un fournisseur qui ne sait pas faire (le stockage
+ * local) rend `null` : le fichier transite alors par l'API.
  */
 export abstract class StorageProvider {
   abstract readonly code: string;
@@ -39,6 +54,12 @@ export abstract class StorageProvider {
   abstract remove(key: string): Promise<void>;
   /** URL de lecture d'un objet privé, valable un temps limité. */
   abstract signedUrl(key: string, expiresInSeconds?: number): Promise<string>;
+  /** `null` : pas de dépôt direct, le fichier doit passer par l'API. */
+  abstract createUploadTicket(ownerId: string): Promise<DirectUploadTicket | null>;
+  /** Reprend un fichier du transit, vérifie qu'il appartient à `ownerId`, puis le supprime. */
+  abstract takeStaged(reference: StagedUpload, ownerId: string): Promise<StagedFile>;
+  /** Supprime les fichiers en transit plus vieux que `olderThan`. Rend le nombre supprimé. */
+  abstract purgeStaged(olderThan: Date): Promise<number>;
 }
 
 /**
@@ -100,6 +121,19 @@ export class LocalStorageProvider extends StorageProvider {
     // Le stockage local ne signe rien : c'est acceptable en développement, et
     // c'est une raison de plus pour l'interdire en production.
     return Promise.resolve(`${this.baseUrl}/${key}`);
+  }
+
+  // Pas de transit sur un disque local : le fichier passe par l'API.
+  async createUploadTicket(): Promise<null> {
+    return Promise.resolve(null);
+  }
+
+  async takeStaged(): Promise<StagedFile> {
+    return Promise.reject(new Error('Le stockage local ne connaît pas de transit.'));
+  }
+
+  async purgeStaged(): Promise<number> {
+    return Promise.resolve(0);
   }
 }
 

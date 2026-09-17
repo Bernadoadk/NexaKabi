@@ -12,3 +12,4 @@ export * from './finance.js';
 export * from './notifications.js';
 export * from './admin.js';
 export * from './places.js';
+export * from './media.js';

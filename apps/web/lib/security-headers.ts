@@ -91,7 +91,8 @@ function buildPolicy({ nonce, isDevelopment, strict = false }: PolicyOptions): s
      * route handlers de cette application. `'self'` suffit donc, et toute
      * tentative d'exfiltration vers un autre hôte est refusée par le navigateur.
      *
-     * Deux exceptions nommées. Le SDK de la carte, sur le site public seulement.
+     * Trois exceptions nommées. Le SDK de la carte, sur le site public
+     * seulement. Le stockage des fichiers, pour le dépôt direct.
      * Et en développement, le rechargement à chaud de Next, qui passe par un
      * WebSocket — un schéma que `'self'` ne couvre pas : sans ces entrées, le
      * développeur perd le rechargement automatique, et une CSP qui gêne le
@@ -102,9 +103,16 @@ function buildPolicy({ nonce, isDevelopment, strict = false }: PolicyOptions): s
       [
         "'self'",
         // Tuiles, géométries et polices de la carte : le SDK les demande
-        // lui-même, depuis la page. C'est le seul hôte tiers que le site
-        // public autorise à joindre.
-        ...(strict ? [] : ['https://maps.googleapis.com', 'https://maps.gstatic.com']),
+        // lui-même, depuis la page. Et le dépôt direct des fichiers chez le
+        // stockage (voir `lib/upload-client.ts`) : le navigateur y envoie le
+        // fichier avec un ticket signé par l'API, jamais une clé secrète.
+        ...(strict
+          ? []
+          : [
+              'https://maps.googleapis.com',
+              'https://maps.gstatic.com',
+              'https://api.cloudinary.com',
+            ]),
         ...(isDevelopment ? ['ws://localhost:*', 'wss://localhost:*', 'http://localhost:*'] : []),
       ],
     ],

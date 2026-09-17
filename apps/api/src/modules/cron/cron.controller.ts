@@ -5,6 +5,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { PayoutsScheduler } from '../finance/payouts.scheduler';
 import { NotificationsScheduler } from '../notifications/notifications.scheduler';
 import { ReconciliationService } from '../payments/reconciliation.service';
+import { StorageProvider } from '../media/storage.provider';
 import { CronSecretGuard } from './cron-secret.guard';
 
 /**
@@ -23,6 +24,7 @@ export const CRON_JOBS = [
   'reconcile-payouts',
   'send-reminders',
   'retry-outbound',
+  'purge-staged-uploads',
 ] as const;
 
 export type CronJobName = (typeof CRON_JOBS)[number];
@@ -58,6 +60,7 @@ export class CronController {
     reconciliation: ReconciliationService,
     payouts: PayoutsScheduler,
     notifications: NotificationsScheduler,
+    storage: StorageProvider,
   ) {
     this.jobs = {
       'release-expired-orders': () => reconciliation.releaseExpiredOrders(),
@@ -66,6 +69,12 @@ export class CronController {
       'reconcile-payouts': () => payouts.reconcileProcessing(),
       'send-reminders': () => notifications.hourly(),
       'retry-outbound': () => notifications.retryOutbound(),
+      // Dépôts directs jamais conclus (voir `StorageProvider.purgeStaged`) :
+      // un ticket vaut une heure, on laisse une journée entière par prudence.
+      'purge-staged-uploads': async () => {
+        const purged = await storage.purgeStaged(new Date(Date.now() - 24 * 60 * 60 * 1000));
+        if (purged > 0) this.logger.log(`Transit purgé : ${purged} fichier(s)`);
+      },
     };
   }
 

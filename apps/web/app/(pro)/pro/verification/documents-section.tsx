@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import type { VerificationRequestDetail } from '@nexakabi/contracts';
 import { Alert, Badge, Button, Field, Surface, SurfaceHeader, SurfaceTitle } from '@nexakabi/ui';
-import { uploadVerificationDocumentAction } from '../actions';
+import { uploadFile } from '@/lib/upload-client';
 
 /**
  * Les types du schéma, nommés comme au Bénin — même liste que côté admin.
@@ -21,10 +21,8 @@ const DOCUMENT_LABELS: Readonly<Record<string, string>> = {
 };
 
 export function DocumentsSection({
-  organizationId,
   documents,
 }: {
-  organizationId: string;
   documents: VerificationRequestDetail['documents'];
 }) {
   const router = useRouter();
@@ -81,10 +79,19 @@ export function DocumentsSection({
         ref={formRef}
         className="flex flex-col gap-3.5 border-t border-border-subtle px-5 py-4"
         action={async (formData) => {
+          const file = formData.get('file');
+          const type = String(formData.get('type') ?? '');
+          if (!(file instanceof File)) return;
+
           setPending(true);
           setError(null);
 
-          const result = await uploadVerificationDocumentAction(organizationId, formData);
+          // Le fichier part directement au stockage, puis sa référence à
+          // l'API — voir `lib/upload-client`. Rien ne transite par l'action.
+          const result = await uploadFile(
+            file,
+            `/api/media/verification-document?type=${encodeURIComponent(type)}`,
+          );
           setPending(false);
 
           if (!result.ok) {
@@ -120,7 +127,7 @@ export function DocumentsSection({
             </select>
           </Field>
 
-          <Field label="Fichier" help="JPG, PNG, WebP ou PDF · 8 Mo au maximum" htmlFor="file">
+          <Field label="Fichier" help="JPG, PNG, WebP ou PDF · 10 Mo au maximum" htmlFor="file">
             <input
               id="file"
               name="file"

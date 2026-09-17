@@ -282,28 +282,6 @@ export async function submitVerificationAction(
   return { ok: true, data: result.data };
 }
 
-/**
- * Dépose une pièce. Le `FormData` porte déjà le fichier — il traverse
- * l'action telle quelle, `fetch` pose lui-même l'en-tête `multipart/form-data`
- * avec sa frontière : lui superposer `Content-Type: application/json`
- * casserait l'envoi.
- */
-export async function uploadVerificationDocumentAction(
-  organizationId: string,
-  formData: FormData,
-): Promise<ActionResult<VerificationRequestDetail>> {
-  const result = await orgFetch<VerificationRequestDetail>(
-    organizationId,
-    '/organizer/organizations/current/verification/documents',
-    { method: 'POST', body: formData },
-  );
-
-  if (!result.ok) return toFailure(result.error);
-
-  revalidatePath('/pro/verification');
-  return { ok: true, data: result.data };
-}
-
 function emptyToUndefined(value: FormDataEntryValue | null): string | undefined {
   const text = String(value ?? '').trim();
   return text === '' ? undefined : text;

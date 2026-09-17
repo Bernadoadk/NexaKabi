@@ -2,14 +2,16 @@
 
 import * as React from 'react';
 import { Alert } from '@nexakabi/ui';
+import { uploadFile } from '@/lib/upload-client';
 
 /**
  * Dépôt d'un visuel — logo, bannière ou photo de profil.
  *
  * Généralise le geste déjà éprouvé dans l'assistant d'événement (couverture,
- * plan du lieu) : on choisit un fichier, il part immédiatement vers l'API
- * (`uploadUrl`), l'aperçu se met à jour dès la réponse — pas de bouton
- * « Enregistrer » séparé à retrouver plus bas dans un formulaire.
+ * plan du lieu) : on choisit un fichier, il part immédiatement (voir
+ * `lib/upload-client` : stockage d'abord, puis référence à `uploadUrl`),
+ * l'aperçu se met à jour dès la réponse — pas de bouton « Enregistrer »
+ * séparé à retrouver plus bas dans un formulaire.
  *
  * `shape` choisit seulement l'APERÇU (rond pour un visage, rectangle 16:9
  * pour une bannière) : le recadrage réel est fait côté API, par le même
@@ -64,7 +66,9 @@ export function ImageUploader({
             <img
               src={preview}
               alt=""
-              className={shape === 'square' ? 'size-full object-cover' : 'aspect-video w-full object-cover'}
+              className={
+                shape === 'square' ? 'size-full object-cover' : 'aspect-video w-full object-cover'
+              }
             />
           </div>
         ) : null}
@@ -97,23 +101,16 @@ export function ImageUploader({
                 setUploading(true);
                 setError(null);
 
-                const body = new FormData();
-                body.append('file', file);
-
                 try {
-                  const response = await fetch(uploadUrl, { method: 'POST', body });
+                  const result = await uploadFile(file, uploadUrl);
 
-                  if (!response.ok) {
-                    const payload: unknown = await response.json().catch(() => null);
-                    setError((payload as { message?: string } | null)?.message ?? 'Dépôt impossible.');
+                  if (!result.ok) {
+                    setError(result.message);
                     return;
                   }
 
-                  const { url } = (await response.json()) as { url: string };
-                  setPreview(url);
-                  await onChange(url);
-                } catch {
-                  setError('L’API n’est pas joignable.');
+                  setPreview(result.data.url);
+                  await onChange(result.data.url);
                 } finally {
                   setUploading(false);
                 }

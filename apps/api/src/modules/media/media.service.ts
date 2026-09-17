@@ -8,11 +8,12 @@ import { UPLOAD_MAX_BYTES } from './upload.constraints';
 const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
 
 /**
- * 8 Mo en entrée : la conversion réduira fortement le poids servi.
+ * 10 Mo en entrée : la conversion réduira fortement le poids servi.
  *
- * La même valeur borne le flux au niveau de multer (`upload.constraints.ts`) :
- * ce contrôle-ci ne voit que des tampons déjà bornés, il reste néanmoins pour
- * les appels qui ne passent pas par une requête HTTP.
+ * La même valeur borne le dépôt en amont — ticket de dépôt direct, ou parseur
+ * du relais (`upload.constraints.ts`) : ce contrôle-ci ne voit que des tampons
+ * déjà bornés, il reste néanmoins pour les appels qui ne passent pas par une
+ * requête HTTP.
  */
 const MAX_UPLOAD_BYTES = UPLOAD_MAX_BYTES;
 
@@ -261,7 +262,7 @@ export class MediaService {
     }
 
     if (buffer.byteLength > MAX_UPLOAD_BYTES) {
-      throw new BadRequestException('Fichier trop lourd. 8 Mo au maximum.');
+      throw new BadRequestException('Fichier trop lourd. 10 Mo au maximum.');
     }
 
     /**
@@ -315,7 +316,7 @@ export class MediaService {
     }
 
     if (buffer.byteLength > MAX_UPLOAD_BYTES) {
-      throw new BadRequestException('Image trop lourde. 8 Mo au maximum.');
+      throw new BadRequestException('Image trop lourde. 10 Mo au maximum.');
     }
 
     const actual = sniffFileType(buffer);

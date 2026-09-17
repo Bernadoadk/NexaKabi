@@ -1,6 +1,5 @@
-import { NextResponse, type NextRequest } from 'next/server';
-import { API_URL } from '@/lib/api';
-import { readAccessToken } from '@/lib/session';
+import type { NextRequest } from 'next/server';
+import { relayAccountUpload } from '@/lib/upload-relay';
 
 /**
  * Relais du dépôt de photo de profil.
@@ -10,24 +9,6 @@ import { readAccessToken } from '@/lib/session';
  * la déposer tout autant qu'un organisateur (voir `SelfPlacesController` côté
  * API pour le même raisonnement, appliqué à la recherche de lieux).
  */
-export async function POST(request: NextRequest) {
-  const accessToken = await readAccessToken();
-
-  if (!accessToken) {
-    return NextResponse.json(
-      { statusCode: 401, code: 'UNAUTHENTICATED', message: 'Connecte-toi pour continuer.' },
-      { status: 401 },
-    );
-  }
-
-  const body = await request.formData();
-
-  const response = await fetch(`${API_URL}/media/avatar`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}` },
-    body,
-  });
-
-  const payload: unknown = await response.json().catch(() => null);
-  return NextResponse.json(payload, { status: response.status });
+export function POST(request: NextRequest) {
+  return relayAccountUpload(request, '/media/avatar');
 }

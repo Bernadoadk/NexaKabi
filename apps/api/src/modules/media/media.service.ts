@@ -254,8 +254,16 @@ export class MediaService {
     buffer: Buffer,
     mimeType: string,
     originalName?: string,
+    options?: { allowPdf?: boolean },
   ): Promise<StoredFile> {
-    const accepted = new Set<string>([...ACCEPTED_IMAGE_TYPES, 'application/pdf']);
+    // Un selfie ou une pièce d'identité se photographie : le PDF n'y a rien à
+    // faire, et l'exclure retire d'un coup toute une famille de contenus
+    // qu'il faudrait autrement se fier à ne pas ouvrir.
+    const accepted = new Set<string>(
+      options?.allowPdf === false
+        ? [...ACCEPTED_IMAGE_TYPES]
+        : [...ACCEPTED_IMAGE_TYPES, 'application/pdf'],
+    );
 
     if (buffer.byteLength === 0) {
       throw new BadRequestException('Fichier vide.');
@@ -277,7 +285,11 @@ export class MediaService {
     const actual = sniffFileType(buffer);
 
     if (!actual || !accepted.has(actual)) {
-      throw new BadRequestException('Formats acceptés : JPG, PNG, WebP, AVIF ou PDF.');
+      throw new BadRequestException(
+        accepted.has('application/pdf')
+          ? 'Formats acceptés : JPG, PNG, WebP, AVIF ou PDF.'
+          : 'Cette pièce se photographie : JPG, PNG, WebP ou AVIF.',
+      );
     }
 
     if (actual !== mimeType) {
@@ -298,6 +310,29 @@ export class MediaService {
       folder: 'verification',
       visibility: 'private',
     });
+  }
+
+  /**
+   * Détruit un fichier sans faire échouer l'appelant.
+   *
+   * ── Pourquoi « quietly » ────────────────────────────────────────────────
+   * Cette méthode sert à effacer ce qui ne doit plus exister : la pièce
+   * d'identité d'un dossier tranché, le selfie flou qu'on vient de reprendre.
+   * Si le stockage ne répond pas, faire échouer l'opération appelante ferait
+   * pire — la décision de vérification serait perdue, et le fichier resterait
+   * quand même. On note, on continue, et la ligne en base garde sa date de
+   * purge : c'est elle qui dit quoi reprendre.
+   */
+  async removeQuietly(key: string): Promise<boolean> {
+    try {
+      await this.storage.remove(key);
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Fichier « ${key} » non détruit : ${error instanceof Error ? error.message : 'cause inconnue'}`,
+      );
+      return false;
+    }
   }
 
   /**

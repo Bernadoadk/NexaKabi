@@ -2,8 +2,15 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { allChecksPass, type VerificationChecks } from '@nexakabi/contracts';
-import { Alert, Button, Surface, Textarea, cn } from '@nexakabi/ui';
+import { Lock, ScanFace } from 'lucide-react';
+import {
+  allChecksPass,
+  requestableDocuments,
+  type DocumentType,
+  type OrganizationType,
+  type VerificationChecks,
+} from '@nexakabi/contracts';
+import { Alert, Button, Dialog, Surface, Textarea, cn, startRouteProgress } from '@nexakabi/ui';
 
 /**
  * Décision sur un dossier de vérification.
@@ -43,10 +50,15 @@ export function ReviewForm({
   const [note, setNote] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
+  const [asking, setAsking] = React.useState(false);
+  const [wanted, setWanted] = React.useState<DocumentType[]>([]);
 
   const canApprove = allChecksPass(checks, { requiresDocument });
 
-  async function submit(decision: 'APPROVE' | 'REJECT' | 'REQUEST_MORE') {
+  async function submit(
+    decision: 'APPROVE' | 'REJECT' | 'REQUEST_MORE',
+    requestedDocuments?: DocumentType[],
+  ) {
     setPending(true);
     setError(null);
 
@@ -54,7 +66,12 @@ export function ReviewForm({
       const response = await fetch(`/api/admin/verifications/${requestId}/decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ checks, decision, note: note.trim() || undefined }),
+        body: JSON.stringify({
+          checks,
+          decision,
+          note: note.trim() || undefined,
+          requestedDocuments,
+        }),
       });
 
       const payload = (await response.json()) as { message?: string };
@@ -64,6 +81,10 @@ export function ReviewForm({
         return;
       }
 
+      // `finally` va relâcher `pending` juste après : sans le filet, le
+      // modérateur retrouve un formulaire réactivé sur un dossier déjà tranché
+      // et peut le trancher une seconde fois.
+      startRouteProgress();
       router.push('/verifications');
       router.refresh();
     } catch {
@@ -158,7 +179,7 @@ export function ReviewForm({
             variant="secondary"
             size="default"
             disabled={pending}
-            onClick={() => void submit('REQUEST_MORE')}
+            onClick={() => setAsking(true)}
           >
             Demander une pièce
           </Button>
@@ -179,7 +200,149 @@ export function ReviewForm({
           {error}
         </Alert>
       ) : null}
+
+      <RequestDocumentsDialog
+        open={asking}
+        onOpenChange={setAsking}
+        organizationType={organizationType as OrganizationType}
+        selected={wanted}
+        onSelectedChange={setWanted}
+        note={note}
+        pending={pending}
+        onConfirm={() => {
+          setAsking(false);
+          void submit('REQUEST_MORE', wanted);
+        }}
+      />
     </Surface>
+  );
+}
+
+/**
+ * Le choix des pièces à réclamer.
+ *
+ * ── Pourquoi une boîte de dialogue, et pas trois cases de plus dans le
+ *    formulaire ────────────────────────────────────────────────────────────
+ * Parce que réclamer une pièce d'identité n'est pas un geste ordinaire. C'est
+ * la seule action de cette console qui fasse entrer des données personnelles
+ * dans le système, et le Code du numérique béninois ne l'autorise que si elle
+ * est nécessaire à une finalité déterminée. Une liste toujours visible,
+ * cochée machinalement en même temps que le reste, banalise exactement ce
+ * qu'il ne faut pas banaliser. S'arrêter, choisir, justifier : c'est le but.
+ *
+ * ── Pourquoi la liste dépend du statut ───────────────────────────────────
+ * Un RCCM n'existe pas pour une personne physique, et les statuts d'une
+ * association ne sont demandables par personne — ils révéleraient son objet,
+ * donc peut-être une orientation religieuse ou politique. Le catalogue partagé
+ * (`requestableDocuments`) tranche, et l'API applique la même règle : ce que
+ * cette liste n'affiche pas, elle le refuse aussi.
+ */
+function RequestDocumentsDialog({
+  open,
+  onOpenChange,
+  organizationType,
+  selected,
+  onSelectedChange,
+  note,
+  pending,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  organizationType: OrganizationType;
+  selected: DocumentType[];
+  onSelectedChange: (next: DocumentType[]) => void;
+  note: string;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const options = React.useMemo(
+    () => requestableDocuments(organizationType),
+    [organizationType],
+  );
+
+  const noteTooShort = note.trim().length < 10;
+
+  function toggle(type: DocumentType) {
+    onSelectedChange(
+      selected.includes(type) ? selected.filter((value) => value !== type) : [...selected, type],
+    );
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Demander une pièce"
+      description="L’organisateur ne pourra déposer que ce qui est coché ici. Tout le reste lui sera refusé."
+    >
+      <ul className="flex flex-col gap-2">
+        {options.map((spec) => {
+          const checked = selected.includes(spec.type);
+
+          return (
+            <li key={spec.type}>
+              <label
+                className={cn(
+                  'flex cursor-pointer items-start gap-3 rounded-panel border p-3 transition',
+                  checked ? 'border-text-strong bg-surface-alt' : 'border-border hover:border-text-3',
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(spec.type)}
+                  className="mt-0.5 size-4 shrink-0 accent-coral"
+                />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex items-center gap-1.5 text-body-s font-semibold leading-snug">
+                    {spec.label}
+                    {spec.capture === 'selfie' ? (
+                      <ScanFace size={13} className="shrink-0 text-coral" aria-hidden />
+                    ) : spec.personal ? (
+                      <Lock size={12} className="shrink-0 text-text-3" aria-hidden />
+                    ) : null}
+                  </span>
+                  <span className="text-micro leading-snug text-text-3">{spec.purpose}</span>
+                </span>
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+
+      {selected.some((type) => options.find((spec) => spec.type === type)?.personal) ? (
+        <Alert tone="info" title="Pièce personnelle">
+          Ces fichiers sont détruits automatiquement dès que tu approuves ou refuses le dossier.
+          Chacune de tes consultations est enregistrée à ton nom.
+        </Alert>
+      ) : null}
+
+      {noteTooShort ? (
+        <Alert tone="warning" title="Le motif manque">
+          Ferme cette fenêtre et explique en une phrase ce qui pose problème. C’est le seul texte
+          que l’organisateur verra — et c’est aussi ce qui justifie la demande.
+        </Alert>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-2">
+        <Button type="button" variant="secondary" size="default" onClick={() => onOpenChange(false)}>
+          Annuler
+        </Button>
+        <Button
+          type="button"
+          variant="ink"
+          size="default"
+          loading={pending}
+          disabled={selected.length === 0 || noteTooShort}
+          onClick={onConfirm}
+        >
+          {selected.length === 0
+            ? 'Choisis une pièce'
+            : `Demander ${selected.length} pièce${selected.length > 1 ? 's' : ''}`}
+        </Button>
+      </div>
+    </Dialog>
   );
 }
 

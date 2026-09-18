@@ -4,7 +4,15 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';
 import { EVENT_TITLE_MAX_LENGTH, EVENT_WIZARD_STEPS } from '@nexakabi/contracts';
-import { Alert, Button, Dialog, Field, Input, type ButtonProps } from '@nexakabi/ui';
+import {
+  Alert,
+  Button,
+  Dialog,
+  Field,
+  Input,
+  startRouteProgress,
+  type ButtonProps,
+} from '@nexakabi/ui';
 import { createEventAction } from '../actions';
 
 /**
@@ -72,7 +80,10 @@ export function CreateEventButton({
 
             // On laisse `pending` levé : le bouton reste occupé jusqu'à ce
             // que l'assistant ait pris la main. Le relâcher ici ferait
-            // clignoter un formulaire prêt à créer un doublon.
+            // clignoter un formulaire prêt à créer un doublon. Le filet, lui,
+            // dit que l'assistant arrive — le bouton occupé au fond d'un
+            // dialogue ne se voit pas toujours.
+            startRouteProgress();
             router.push(`/pro/evenements/${result.data.id}`);
           }}
         >

@@ -3,15 +3,21 @@
 import * as React from 'react';
 import {
   AffixField,
+  BusyOverlay,
   Button,
   Field,
   Input,
+  LoadingPanel,
   MoneyInput,
   OtpInput,
   Pagination,
   PhoneInput,
+  ProgressRing,
+  Spinner,
   Surface,
   Textarea,
+  TopProgressBar,
+  UploadDropzone,
 } from '@nexakabi/ui';
 
 /**
@@ -120,4 +126,168 @@ export function FormsSection() {
 export function PaginationDemo() {
   const [page, setPage] = React.useState(1);
   return <Pagination page={page} totalPages={2} onPageChange={setPage} />;
+}
+
+/**
+ * Les attentes, en état de marche.
+ *
+ * Une galerie qui montrerait ces composants figés ne prouverait rien : tout
+ * leur intérêt est dans le mouvement, et c'est là qu'ils se cassent. On les
+ * fait donc tourner pour de bon — la barre avance, l'anneau se remplit, le
+ * voile bloque vraiment les clics.
+ */
+export function WaitingSection() {
+  const [uploading, setUploading] = React.useState(false);
+  const [progress, setProgress] = React.useState(0);
+  const [busy, setBusy] = React.useState(false);
+  const [navigating, setNavigating] = React.useState(false);
+
+  // Envoi simulé : c'est une galerie, il n'y a pas de fichier à déposer.
+  React.useEffect(() => {
+    if (!uploading) return;
+
+    const timer = window.setInterval(() => {
+      setProgress((current) => {
+        if (current >= 1) {
+          setUploading(false);
+          return 1;
+        }
+        return Math.min(1, current + 0.07);
+      });
+    }, 160);
+
+    return () => window.clearInterval(timer);
+  }, [uploading]);
+
+  return (
+    <Surface variant="panel" padding="comfortable" className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 className="font-display text-[20px] font-bold tracking-[-0.02em]">Attentes</h2>
+        <p className="max-w-[520px] text-body-s text-text-2">
+          Le squelette reste la règle pour du contenu dont on connaît la forme. Ces trois-là
+          servent aux attentes qui n’en ont pas : la navigation, l’envoi d’un fichier, l’action en
+          cours.
+        </p>
+      </div>
+
+      <div className="grid gap-5 md:grid-cols-2">
+        <div className="flex flex-col gap-3">
+          <p className="eyebrow text-text-3">Filet de navigation</p>
+          <p className="text-body-s text-text-2">
+            Il n’atteint jamais la fin tout seul : il ralentit à l’approche des quatre-vingt-dix
+            pour cent et ne franchit le bout qu’à l’arrivée de la page.
+          </p>
+          <div className="relative h-10 overflow-hidden rounded-field border border-border-subtle">
+            <TopProgressBar active={navigating} className="absolute" />
+          </div>
+          <Button
+            variant="secondary"
+            size="compact"
+            className="self-start"
+            onClick={() => {
+              setNavigating(true);
+              window.setTimeout(() => setNavigating(false), 2600);
+            }}
+          >
+            Lancer une navigation
+          </Button>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <p className="eyebrow text-text-3">Dépôt d’un fichier</p>
+          <p className="text-body-s text-text-2">
+            L’anneau entoure l’icône que l’utilisateur vient de toucher, et porte un pourcentage
+            réel — pas un point qui tourne sans fin.
+          </p>
+          <UploadDropzone
+            label="Déposer une pièce"
+            help="JPG, PNG, WebP ou PDF · 10 Mo au maximum"
+            accept={['image/jpeg', 'image/png', 'application/pdf']}
+            phase={uploading ? 'uploading' : progress >= 1 ? 'done' : 'idle'}
+            progress={progress}
+            fileName="rccm-yele-productions.pdf"
+            onSelect={() => undefined}
+          />
+          <Button
+            variant="secondary"
+            size="compact"
+            className="self-start"
+            onClick={() => {
+              setProgress(0);
+              setUploading(true);
+            }}
+          >
+            Simuler un envoi
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <p className="eyebrow text-text-3">Voile d’action</p>
+        <p className="text-body-s text-text-2">
+          Il ne remplace pas l’état d’attente du bouton : il empêche de cliquer le bouton D’À CÔTÉ
+          pendant qu’une action part.
+        </p>
+        <BusyOverlay busy={busy} label="Publication…">
+          <div className="flex flex-wrap gap-2 rounded-card border border-border-subtle p-4">
+            <Button variant="primary" size="default" onClick={() => setBusy(true)}>
+              Publier
+            </Button>
+            <Button variant="secondary" size="default">
+              Modifier
+            </Button>
+            <Button variant="destructive" size="default">
+              Supprimer
+            </Button>
+          </div>
+        </BusyOverlay>
+        <div className="flex items-center gap-3">
+          <Button variant="tertiary" size="compact" onClick={() => setBusy((value) => !value)}>
+            {busy ? 'Libérer la zone' : 'Occuper la zone'}
+          </Button>
+          <span className="flex items-center gap-2 text-body-s text-text-2">
+            <Spinner size={14} tone="coral" />
+            <Spinner size={14} tone="ink" />
+            <Spinner size={14} tone="muted" />
+            Trois teintes de spinner
+          </span>
+        </div>
+      </div>
+
+      <div className="grid gap-5 border-t border-border-subtle pt-5 md:grid-cols-2">
+        <div className="flex flex-col gap-3">
+          <p className="eyebrow text-text-3">Anneau seul</p>
+          <p className="text-body-s text-text-2">
+            Avec une valeur, il dit où on en est. Sans valeur, il tourne — c’est la forme honnête
+            quand l’attente dépend de quelqu’un d’autre : l’acheteur devant son téléphone,
+            l’opérateur Mobile Money.
+          </p>
+          <div className="flex items-center gap-5 rounded-card border border-border-subtle p-4">
+            <ProgressRing value={progress} label="Envoi">
+              <span className="tabular text-micro font-bold">{Math.round(progress * 100)}%</span>
+            </ProgressRing>
+            <ProgressRing label="Paiement en cours de validation" />
+            <ProgressRing value={1} tone="ink">
+              <span className="text-body-s font-bold">✓</span>
+            </ProgressRing>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <p className="eyebrow text-text-3">Attente centrée</p>
+          <p className="text-body-s text-text-2">
+            Réservée aux zones SANS géométrie connue — une carte qui charge son SDK. Une liste, un
+            tableau, une grille de cartes ont une forme prévisible : ils méritent un squelette, et
+            un point qui tourne y serait un aveu de paresse.
+          </p>
+          <div className="rounded-card border border-border-subtle bg-paper">
+            <LoadingPanel
+              title="Chargement de la carte…"
+              description="Les épingles apparaîtront dès que la carte est prête."
+            />
+          </div>
+        </div>
+      </div>
+    </Surface>
+  );
 }

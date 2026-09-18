@@ -23,6 +23,7 @@ import {
   Surface,
   SuccessDialog,
   Textarea,
+  startRouteProgress,
 } from '@nexakabi/ui';
 import type { Category, City } from '@/lib/events';
 import { uploadFile } from '@/lib/upload-client';
@@ -307,7 +308,10 @@ export function EventWizard({
           variant="primary"
           size="mobile"
           block
-          onClick={() => router.push('/pro/evenements')}
+          onClick={() => {
+            startRouteProgress();
+            router.push('/pro/evenements');
+          }}
         >
           Voir mes événements →
         </Button>
@@ -1776,6 +1780,10 @@ function CancelEventZone({
               }
 
               setOpen(false);
+              // Le dialogue se referme sur l'assistant d'un événement qu'on
+              // vient d'annuler : sans le filet, l'organisateur se retrouve
+              // face à l'écran qu'il pensait avoir quitté.
+              startRouteProgress();
               router.push('/pro/evenements');
               router.refresh();
             }}

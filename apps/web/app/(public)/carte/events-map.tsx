@@ -7,7 +7,17 @@ import { useRouter } from 'next/navigation';
 import { ArrowRight, Clock, LocateFixed, MapPin } from 'lucide-react';
 import type { EventMapPin } from '@nexakabi/contracts';
 import { formatEventCaption, formatMoney, formatTimeCompact } from '@nexakabi/utils';
-import { Alert, Badge, CategoryIcon, CategoryMark, CoverImage, cn, useTheme } from '@nexakabi/ui';
+import {
+  Alert,
+  Badge,
+  CategoryIcon,
+  CategoryMark,
+  CoverImage,
+  LoadingPanel,
+  cn,
+  startRouteProgress,
+  useTheme,
+} from '@nexakabi/ui';
 import {
   BENIN_CENTER,
   COUNTRY_ZOOM,
@@ -456,9 +466,18 @@ export function EventsMap({
           className="h-[58dvh] min-h-[380px] w-full sm:h-[62vh] sm:min-h-[440px]"
         />
 
+        {/* Le SDK Google Maps pèse plusieurs centaines de kilo-octets et met
+            plusieurs secondes à s'installer sur une connexion béninoise. Une
+            phrase immobile pendant ce temps-là ne se distingue pas d'une carte
+            qui a échoué — et l'écran voisin, `carte/loading.tsx`, montre déjà
+            un point qui tourne : sans lui ici, l'attente semblait repartir de
+            zéro à l'arrivée des données. */}
         {!mapReady && sdkState.status !== 'error' ? (
-          <div className="absolute inset-0 grid place-items-center bg-paper text-body-s text-text-2">
-            Chargement de la carte…
+          <div className="absolute inset-0 grid place-items-center bg-paper">
+            <LoadingPanel
+              title="Chargement de la carte…"
+              description="Les épingles apparaîtront dès que la carte est prête."
+            />
           </div>
         ) : null}
 
@@ -511,6 +530,10 @@ export function EventsMap({
                       active={isOpen}
                       onActivate={() => {
                         if (hoverCapable) {
+                          // Sur la carte, le clic ne change rien à l'écran :
+                          // l'épingle reste une épingle pendant que la page
+                          // événement se charge. Le filet est le seul signe.
+                          startRouteProgress();
                           router.push(`/e/${pin.slug}`);
                         } else if (isOpen && opened?.pinned) {
                           setOpened(null);

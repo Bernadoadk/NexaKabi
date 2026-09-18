@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { LogOut } from 'lucide-react';
-import { Button } from '@nexakabi/ui';
+import { Button, startRouteProgress } from '@nexakabi/ui';
 
 export function LogoutButton() {
   const router = useRouter();
@@ -17,6 +17,10 @@ export function LogoutButton() {
       onClick={async () => {
         setPending(true);
         await fetch('/api/auth/logout', { method: 'POST' });
+
+        // Le bouton a porté l'attente jusqu'ici ; le filet prend le relais
+        // pour le retour à l'accueil, qui recharge tout l'espace public.
+        startRouteProgress();
         router.replace('/');
         router.refresh();
       }}

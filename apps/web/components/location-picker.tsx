@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { MapPin, Move } from 'lucide-react';
-import { cn, useTheme } from '@nexakabi/ui';
+import { LoadingPanel, cn, useTheme } from '@nexakabi/ui';
 import {
   COTONOU_CENTER,
   DARK_MAP_STYLE,
@@ -204,8 +204,15 @@ export function LocationPicker({
             {sdkState.message}
           </div>
         ) : !ready ? (
-          <div className="absolute inset-0 grid place-items-center bg-paper text-body-s text-text-2">
-            Chargement de la carte…
+          // Même traitement que la carte publique : le SDK met plusieurs
+          // secondes à s'installer, et l'organisateur est au milieu de la
+          // création de son événement. Un texte figé le laisse croire que le
+          // sélecteur est cassé et qu'il doit recommencer l'étape.
+          <div className="absolute inset-0 grid place-items-center bg-paper">
+            <LoadingPanel
+              title="Chargement de la carte…"
+              description="Tu pourras ensuite déplacer l’épingle sur le lieu exact."
+            />
           </div>
         ) : null}
 

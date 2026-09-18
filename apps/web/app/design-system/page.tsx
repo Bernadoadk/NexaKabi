@@ -30,7 +30,7 @@ import {
   TableRow,
   type EventCardData,
 } from '@nexakabi/ui';
-import { FormsSection, PaginationDemo } from './client-parts';
+import { FormsSection, PaginationDemo, WaitingSection } from './client-parts';
 
 export const metadata: Metadata = {
   title: 'Design system',
@@ -107,6 +107,7 @@ export default function DesignSystemPage() {
         <EventCards />
         <DataTable />
         <States />
+        <WaitingSection />
         <Feedback />
       </div>
     </main>

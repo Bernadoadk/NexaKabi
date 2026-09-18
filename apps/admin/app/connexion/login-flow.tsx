@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button, Field, Input, Surface } from '@nexakabi/ui';
+import { Alert, Button, Field, Input, Surface, startRouteProgress } from '@nexakabi/ui';
 
 /**
  * Connexion : identifiant et mot de passe, en une étape.
@@ -41,6 +41,9 @@ export function LoginFlow() {
         return;
       }
 
+      // Le tableau de bord recharge la session et tous ses chiffres : le
+      // bouton se libère avant que l'écran change.
+      startRouteProgress();
       router.replace('/');
       router.refresh();
     } catch {

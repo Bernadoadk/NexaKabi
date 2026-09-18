@@ -13,7 +13,18 @@ import {
   type PaymentProviderCode,
 } from '@nexakabi/contracts';
 import { formatShortCountdown } from '@nexakabi/utils';
-import { Alert, Badge, Button, Field, Money, PhoneInput, Surface, cn } from '@nexakabi/ui';
+import {
+  Alert,
+  Badge,
+  Button,
+  Field,
+  Money,
+  PhoneInput,
+  ProgressRing,
+  Surface,
+  cn,
+  startRouteProgress,
+} from '@nexakabi/ui';
 
 /**
  * Paiement — écrans A3, A4 et A6.
@@ -83,6 +94,11 @@ export function PaymentFlow({
 
         if (next.status === 'SUCCEEDED') {
           window.clearInterval(timer);
+          // L'acheteur n'a rien cliqué : c'est l'opérateur qui vient de
+          // répondre. Sans le filet, l'écran d'attente resterait identique à
+          // lui-même pendant que la confirmation se charge — juste au moment
+          // où l'argent vient de partir.
+          startRouteProgress();
           router.push(`/commandes/${order.reference}/confirmation`);
         }
       })();
@@ -118,6 +134,7 @@ export function PaymentFlow({
     setPayment(state);
 
     if (state.status === 'SUCCEEDED') {
+      startRouteProgress();
       router.push(`/commandes/${order.reference}/confirmation`);
     }
   }
@@ -355,7 +372,10 @@ function WaitingState({
   return (
     <div className="flex flex-col gap-5">
       <Surface variant="panel" className="flex flex-col items-center gap-4 py-8 text-center">
-        <ProgressRing />
+        {/* Sans `value` : l'anneau tourne au lieu d'afficher un pourcentage.
+            Chiffrer une progression mentirait — personne ne sait quand
+            l'acheteur composera son code sur son téléphone. */}
+        <ProgressRing size={64} thickness={4} label="Paiement en cours de validation" />
 
         <div className="flex flex-col gap-1">
           <h2 className="text-h3 font-bold">Valide le paiement sur ton téléphone</h2>
@@ -403,45 +423,6 @@ function WaitingState({
         </Button>
       </div>
     </div>
-  );
-}
-
-/**
- * Anneau de progression.
- *
- * Rotation continue, sans pourcentage : afficher une progression chiffrée
- * mentirait, puisque personne ne sait quand l'acheteur composera son code.
- */
-function ProgressRing() {
-  return (
-    <span
-      role="status"
-      aria-label="Paiement en cours de validation"
-      className="relative grid size-16 place-items-center"
-    >
-      <svg viewBox="0 0 48 48" className="size-16 animate-spin [animation-duration:1.6s]">
-        <circle
-          cx="24"
-          cy="24"
-          r="20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="4"
-          className="text-border"
-        />
-        <circle
-          cx="24"
-          cy="24"
-          r="20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="4"
-          strokeLinecap="round"
-          strokeDasharray="34 92"
-          className="text-coral"
-        />
-      </svg>
-    </span>
   );
 }
 

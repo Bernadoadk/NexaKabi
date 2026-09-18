@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import type { ApiError, Order } from '@nexakabi/contracts';
-import { Alert, Button, Field, Input, PhoneInput } from '@nexakabi/ui';
+import { Alert, Button, Field, Input, PhoneInput, startRouteProgress } from '@nexakabi/ui';
 
 /**
  * Coordonnées de l'acheteur.
@@ -73,6 +73,10 @@ export function BuyerForm({
       return;
     }
 
+    // `pending` reste vrai : le bouton ne doit pas redevenir cliquable entre
+    // l'enregistrement et l'étape suivante. Le filet, lui, dit que l'étape
+    // suivante est en route — l'acheteur qui ne voit rien bouger recommence.
+    startRouteProgress();
     router.push(`/checkout/${order.reference}/recapitulatif`);
   }
 

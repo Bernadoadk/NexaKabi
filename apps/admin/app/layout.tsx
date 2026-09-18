@@ -1,6 +1,6 @@
 import { headers } from 'next/headers';
 import type { Metadata, Viewport } from 'next';
-import { ThemeProvider, ThemeScript } from '@nexakabi/ui';
+import { RouteProgress, ThemeProvider, ThemeScript } from '@nexakabi/ui';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -55,7 +55,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           cette console ne réagirait au mode sombre. */}
       <body className="min-h-dvh bg-paper text-text antialiased" suppressHydrationWarning>
         <ThemeScript nonce={nonce} />
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          {/* Voir `apps/web/app/layout.tsx` : monté à la racine pour survivre
+              au changement de page qu'il annonce. */}
+          <RouteProgress />
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

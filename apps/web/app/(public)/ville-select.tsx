@@ -2,7 +2,7 @@
 
 import { ChevronDown, MapPin } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { cn } from '@nexakabi/ui';
+import { cn, startRouteProgress } from '@nexakabi/ui';
 import type { City } from '@/lib/events';
 
 /**
@@ -28,6 +28,10 @@ export function VilleSelect({ cities, compact = false }: { cities: City[]; compa
       aria-label="Choisir une ville"
       value={current}
       onChange={(event) => {
+        // La roue système se referme sur un écran qui n'a pas encore changé :
+        // sans le filet, choisir une ville ne produit aucun signe pendant une
+        // à deux secondes, et l'utilisateur rouvre la roue pour réessayer.
+        startRouteProgress();
         router.push(
           event.target.value ? `/evenements?ville=${event.target.value}` : '/evenements',
         );

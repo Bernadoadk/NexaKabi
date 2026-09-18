@@ -104,6 +104,14 @@ export const AUDIT_ACTIONS = {
   adminStaffPasswordReset: 'admin.staff.password_reset',
   adminStaffDeleted: 'admin.staff.deleted',
   adminVerificationReviewed: 'admin.verification.reviewed',
+  /**
+   * Destruction des pièces d'identité après décision.
+   *
+   * Tracé comme le reste : « ces fichiers ont existé, ils ont été détruits ce
+   * jour-là, sur cette décision ». C'est ce qui permet de répondre à une
+   * demande d'accès d'un organisateur des mois plus tard.
+   */
+  adminVerificationDocumentsPurged: 'admin.verification.documents_purged',
   /** Revue du premier événement d'une organisation, avant publication. */
   adminEventReviewed: 'admin.event.reviewed',
   adminReportResolved: 'admin.report.resolved',

@@ -9,6 +9,10 @@ import {
 import {
   INVITATION_TTL_DAYS,
   ORG_ROLE_DEFINITIONS,
+  IDENTITY_CONSENT,
+  canRequestDocument,
+  documentSpec,
+  isPersonalDocument,
   type CreateOrganizationInput,
   type CreatePayoutAccountInput,
   type DocumentType,
@@ -665,11 +669,19 @@ export class OrganizationsService {
    */
   async addVerificationDocument(
     context: OrgContext,
-    type: DocumentType,
+    input: { type: DocumentType; consent?: number },
     file: { buffer: Buffer; mimeType: string; originalName?: string },
   ): Promise<VerificationRequestDetail> {
+    const { type, consent } = input;
+
+    const organization = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: context.organizationId },
+      select: { type: true },
+    });
+
     const request = await this.prisma.verificationRequest.findUnique({
       where: { organizationId: context.organizationId },
+      include: { documents: { where: { purgedAt: null }, select: { id: true, type: true, fileKey: true } } },
     });
 
     if (!request) {
@@ -678,22 +690,76 @@ export class OrganizationsService {
       );
     }
 
+    // ── Trois portes, dans cet ordre ────────────────────────────────────────
+
+    if (!canRequestDocument(type, organization.type)) {
+      throw new BadRequestException(
+        'Cette pièce ne correspond pas au statut déclaré par ton organisation.',
+      );
+    }
+
+    // Une pièce PERSONNELLE ne peut arriver que sur demande écrite d'un
+    // modérateur. C'est la ligne que trace le Code du numérique béninois : une
+    // carte d'identité reçue sans avoir été réclamée est une collecte que rien
+    // ne justifie. Un document d'ENTITÉ — RCCM, IFU, récépissé, acte de
+    // création — n'est pas une donnée personnelle et vient de registres
+    // publics : l'organisateur le dépose quand il veut, et l'en empêcher
+    // obligerait un modérateur à réclamer formellement, dossier après dossier,
+    // ce que l'organisateur lui aurait donné de lui-même.
+    if (isPersonalDocument(type) && !request.requestedDocuments.includes(type)) {
+      throw new BadRequestException(
+        `Cette pièce n’a pas été demandée (${documentSpec(type).short}). ` +
+          'Une pièce d’identité ne se dépose que si un modérateur l’a réclamée.',
+      );
+    }
+
+    // Le consentement exprès, pour l'image d'un visage, n'est pas une case de
+    // confort : c'est ce qui rend le traitement licite. Il est exigé ici, au
+    // plus près de l'écriture, et pas seulement dans l'interface.
+    if (isPersonalDocument(type) && consent !== IDENTITY_CONSENT.version) {
+      throw new BadRequestException(
+        'Le consentement à la vérification d’identité n’a pas été recueilli.',
+      );
+    }
+
     const stored = await this.media.uploadVerificationDocument(
       file.buffer,
       file.mimeType,
       file.originalName,
+      { allowPdf: documentSpec(type).accept.includes('application/pdf') },
     );
 
-    await this.prisma.verificationDocument.create({
-      data: {
-        requestId: request.id,
-        type,
-        fileKey: stored.key,
-        fileName: file.originalName,
-        mimeType: stored.mimeType,
-        sizeBytes: stored.sizeBytes,
-      },
+    // Une pièce reprise remplace la précédente. Empiler trois selfies parce
+    // que les deux premiers étaient flous ne sert personne, et chaque copie
+    // qui traîne est une copie à protéger.
+    const previous = request.documents.filter((document) => document.type === type);
+
+    await this.prisma.$transaction(async (tx) => {
+      if (previous.length > 0) {
+        await tx.verificationDocument.deleteMany({
+          where: { id: { in: previous.map((document) => document.id) } },
+        });
+      }
+
+      await tx.verificationDocument.create({
+        data: {
+          requestId: request.id,
+          type,
+          fileKey: stored.key,
+          fileName: file.originalName,
+          mimeType: stored.mimeType,
+          sizeBytes: stored.sizeBytes,
+          consentVersion: consent ?? null,
+          consentAt: consent ? new Date() : null,
+        },
+      });
     });
+
+    for (const document of previous) {
+      await this.media.removeQuietly(document.fileKey);
+    }
+
+    await this.closeRequestWhenComplete(request.id, type, context.organizationId);
 
     const updated = await this.prisma.verificationRequest.findUniqueOrThrow({
       where: { id: request.id },
@@ -701,6 +767,60 @@ export class OrganizationsService {
     });
 
     return toVerificationRequestDetail(updated);
+  }
+
+  /**
+   * Quand la dernière pièce réclamée arrive, le dossier repart tout seul.
+   *
+   * ── Pourquoi automatiquement ────────────────────────────────────────────
+   * Parce que sinon il ne repart pas. Un organisateur qui vient de déposer ce
+   * qu'on lui demandait considère avoir fini — il ne cherche pas un second
+   * bouton « soumettre à nouveau », et son dossier dort jusqu'à ce qu'il
+   * s'inquiète de ne pas avoir de réponse. La liste des pièces demandées est
+   * vidée dans le même geste : ce qui a été fourni n'est plus dû.
+   */
+  private async closeRequestWhenComplete(
+    requestId: string,
+    justAdded: DocumentType,
+    organizationId: string,
+  ): Promise<void> {
+    const request = await this.prisma.verificationRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      select: {
+        requestedDocuments: true,
+        documents: { where: { purgedAt: null }, select: { type: true } },
+      },
+    });
+
+    const present = new Set<string>([...request.documents.map((d) => d.type), justAdded]);
+    const missing = request.requestedDocuments.filter((type) => !present.has(type));
+
+    if (missing.length > 0) return;
+
+    await this.prisma.$transaction([
+      this.prisma.verificationRequest.update({
+        where: { id: requestId },
+        data: {
+          requestedDocuments: [],
+          status: 'PENDING',
+          submittedAt: new Date(),
+          reviewedAt: null,
+          decisionNote: null,
+        },
+      }),
+      this.prisma.organization.update({
+        where: { id: organizationId },
+        data: { verificationStatus: 'PENDING' },
+      }),
+    ]);
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.verificationSubmitted,
+      entityType: 'VerificationRequest',
+      entityId: requestId,
+      organizationId,
+      changes: { reason: 'Toutes les pièces demandées ont été fournies.' },
+    });
   }
 
   // ── Utilitaires ───────────────────────────────────────────────────────────
@@ -764,15 +884,14 @@ interface VerificationRequestRow {
   reviewedAt: Date | null;
   decisionNote: string | null;
   checks: unknown;
+  requestedDocuments: PrismaDocumentType[];
   documents: {
     id: string;
-    // Le type Postgres, pas le contrat : il garde CIP/PASSPORT à titre
-    // historique (voir le cast dans `toVerificationRequestDetail`), la ligne
-    // qui atteint cette fonction vient TOUJOURS d'une requête Prisma brute.
     type: PrismaDocumentType;
     fileName: string | null;
     status: VerificationRequestDetail['documents'][number]['status'];
     rejectionReason: string | null;
+    purgedAt: Date | null;
     createdAt: Date;
   }[];
 }
@@ -788,18 +907,16 @@ function toVerificationRequestDetail(request: VerificationRequestRow): Verificat
     reviewedAt: request.reviewedAt?.toISOString() ?? null,
     decisionNote: request.decisionNote,
     checks: (request.checks as VerificationRequestDetail['checks'] | null) ?? null,
+    requestedDocuments: request.requestedDocuments,
     documents: request.documents.map((document) => ({
       id: document.id,
-      // `DocumentType` (Prisma) garde CIP/PASSPORT à titre historique — voir
-      // `enums.ts` : la colonne n'a jamais été migrée pour ne pas recréer le
-      // type Postgres pour un bénéfice nul, mais plus aucun flux applicatif
-      // ne peut plus ÉCRIRE ces deux valeurs (`documentTypeSchema.parse` les
-      // refuse avant que la requête n'atteigne Prisma). Cast assumé ici pour
-      // la LECTURE d'un dossier existant, jamais pour une nouvelle écriture.
-      type: document.type as VerificationRequestDetail['documents'][number]['type'],
+      type: document.type,
       fileName: document.fileName,
       status: document.status,
       rejectionReason: document.rejectionReason,
+      // Le fichier a été détruit après décision : la ligne reste, pour que le
+      // dossier continue de dire ce qui avait été fourni.
+      available: document.purgedAt === null,
       createdAt: document.createdAt.toISOString(),
     })),
   };

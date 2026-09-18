@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Map as MapIcon, SlidersHorizontal, X } from 'lucide-react';
-import { BottomSheet, Button, CategoryIcon, cn } from '@nexakabi/ui';
+import { BottomSheet, Button, CategoryIcon, cn, startRouteProgress } from '@nexakabi/ui';
 import type { Category, City } from '@/lib/events';
 import { DATE_FILTERS, buildDiscoverHref, type DiscoverParams } from './discover-shared';
 
@@ -56,7 +56,18 @@ export function DiscoverFilters({
 
   function apply() {
     setOpen(false);
-    router.push(buildDiscoverHref({ ...params, ...draft, page: undefined }));
+
+    const href = buildDiscoverHref({ ...params, ...draft, page: undefined });
+
+    // La feuille se referme sur la grille précédente, inchangée le temps que
+    // le serveur réponde. Le filet dit que les nouveaux résultats arrivent —
+    // sauf si rien n'a bougé : une validation sans changement ne navigue nulle
+    // part, et le filet resterait allumé en promettant une page déjà là.
+    if (href !== `${window.location.pathname}${window.location.search}`) {
+      startRouteProgress();
+    }
+
+    router.push(href);
   }
 
   const activeChips: Array<{ key: FilterKey; label: string }> = [];

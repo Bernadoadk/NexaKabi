@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button, Surface, Textarea } from '@nexakabi/ui';
+import { Alert, BusyOverlay, Button, Surface, Textarea } from '@nexakabi/ui';
 
 /**
  * Actions sur un dossier de signalement.
@@ -15,6 +15,15 @@ import { Alert, Button, Surface, Textarea } from '@nexakabi/ui';
  *
  * Le motif est donc obligatoire ET affiché à l'organisateur : écrire pourquoi
  * on gèle oblige à savoir pourquoi on gèle.
+ *
+ * ── Pourquoi un voile sur les trois panneaux à la fois ───────────────────
+ * Un seul `pending` gouverne quatre gestes très différents — prendre le
+ * dossier, noter, geler des fonds, clore — répartis sur trois panneaux qui
+ * tiennent dans le même écran. Le grisage laissait l'instruction muette : on
+ * ne savait ni lequel était parti, ni qu'il fallait attendre. Pire, geler et
+ * clore sont à quelques centimètres l'un de l'autre, et le second annule
+ * l'intérêt du premier. Le voile couvre les trois panneaux ensemble et nomme
+ * le geste en cours.
  */
 export function CaseActions({
   reportId,
@@ -31,14 +40,22 @@ export function CaseActions({
   canFreeze: boolean;
 }) {
   const router = useRouter();
-  const [pending, setPending] = React.useState(false);
+  /** Le libellé du geste en cours, ou `null` au repos. */
+  const [running, setRunning] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [note, setNote] = React.useState('');
   const [freezeReason, setFreezeReason] = React.useState('');
   const [confirmingFreeze, setConfirmingFreeze] = React.useState(false);
 
-  async function call(path: string, body: unknown, method: 'POST' | 'PATCH' = 'POST') {
-    setPending(true);
+  const pending = running !== null;
+
+  async function call(
+    label: string,
+    path: string,
+    body: unknown,
+    method: 'POST' | 'PATCH' = 'POST',
+  ) {
+    setRunning(label);
     setError(null);
 
     try {
@@ -61,7 +78,7 @@ export function CaseActions({
       setError('L’API n’est pas joignable.');
       return false;
     } finally {
-      setPending(false);
+      setRunning(null);
     }
   }
 
@@ -77,7 +94,11 @@ export function CaseActions({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <BusyOverlay busy={pending} label={running ?? undefined}>
+      {/* La pile reste dans un conteneur à elle : `BusyOverlay` enveloppe déjà
+          ses enfants dans un `<div>`, une mise en page posée sur lui ne les
+          atteindrait pas. */}
+      <div className="flex flex-col gap-4">
       <Surface variant="panel" padding="comfortable" className="flex flex-col gap-4">
         <h2 className="text-h3 font-bold">Instruction</h2>
 
@@ -87,8 +108,9 @@ export function CaseActions({
             variant="secondary"
             size="default"
             block
-            disabled={pending}
-            onClick={() => void call(`/reports/${reportId}/assign`, {}, 'PATCH')}
+            onClick={() =>
+              void call('Prise en charge…', `/reports/${reportId}/assign`, {}, 'PATCH')
+            }
           >
             Prendre ce dossier en charge
           </Button>
@@ -109,9 +131,11 @@ export function CaseActions({
             type="button"
             variant="secondary"
             size="default"
-            disabled={pending || note.trim().length === 0}
+            disabled={note.trim().length === 0}
             onClick={async () => {
-              if (await call(`/reports/${reportId}/notes`, { body: note })) setNote('');
+              if (await call('Enregistrement de la note…', `/reports/${reportId}/notes`, { body: note })) {
+                setNote('');
+              }
             }}
           >
             Enregistrer la note
@@ -158,7 +182,6 @@ export function CaseActions({
                   type="button"
                   variant="secondary"
                   size="default"
-                  disabled={pending}
                   onClick={() => {
                     setConfirmingFreeze(false);
                     setFreezeReason('');
@@ -170,12 +193,13 @@ export function CaseActions({
                   type="button"
                   variant="primary"
                   size="default"
-                  disabled={pending || freezeReason.trim().length < 10}
+                  disabled={freezeReason.trim().length < 10}
                   onClick={async () => {
-                    const done = await call(`/organizations/${organizationId}/freeze`, {
-                      reason: freezeReason.trim(),
-                      reportId,
-                    });
+                    const done = await call(
+                      'Gel des fonds…',
+                      `/organizations/${organizationId}/freeze`,
+                      { reason: freezeReason.trim(), reportId },
+                    );
 
                     if (done) {
                       setConfirmingFreeze(false);
@@ -192,9 +216,12 @@ export function CaseActions({
       ) : null}
 
       <ResolutionForm
-        pending={pending}
         onResolve={(decision, resolutionNote) =>
-          call(`/reports/${reportId}/resolution`, { decision, note: resolutionNote })
+          call(
+            decision === 'RESOLVED' ? 'Clôture du dossier…' : 'Classement sans suite…',
+            `/reports/${reportId}/resolution`,
+            { decision, note: resolutionNote },
+          )
         }
       />
 
@@ -203,7 +230,8 @@ export function CaseActions({
           {error}
         </Alert>
       ) : null}
-    </div>
+      </div>
+    </BusyOverlay>
   );
 }
 
@@ -213,12 +241,13 @@ export function CaseActions({
  * Les deux issues sont côte à côte et de même poids visuel : « traité » et
  * « classé sans suite » sont deux décisions légitimes, et présenter l'une
  * comme le choix par défaut orienterait la modération.
+ *
+ * Le blocage pendant l'envoi vient du voile qui couvre tout l'écran
+ * d'instruction : ce formulaire n'a plus à connaître l'état des autres gestes.
  */
 function ResolutionForm({
-  pending,
   onResolve,
 }: {
-  pending: boolean;
   onResolve: (decision: 'RESOLVED' | 'DISMISSED', note: string) => Promise<boolean>;
 }) {
   const [note, setNote] = React.useState('');
@@ -243,7 +272,7 @@ function ResolutionForm({
           type="button"
           variant="secondary"
           size="default"
-          disabled={pending || tooShort}
+          disabled={tooShort}
           onClick={() => void onResolve('DISMISSED', note.trim())}
         >
           Classer sans suite
@@ -252,7 +281,7 @@ function ResolutionForm({
           type="button"
           variant="secondary"
           size="default"
-          disabled={pending || tooShort}
+          disabled={tooShort}
           onClick={() => void onResolve('RESOLVED', note.trim())}
         >
           Marquer traité

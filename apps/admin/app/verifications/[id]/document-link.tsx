@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { ExternalLink } from 'lucide-react';
+import { Spinner } from '@nexakabi/ui';
 
 /**
  * Ouvre une pièce déposée dans un nouvel onglet, via une URL signée.
@@ -50,8 +51,17 @@ export function DocumentLink({ requestId, documentId }: { requestId: string; doc
         }}
         className="inline-flex items-center gap-1.5 text-body-s font-semibold text-text-strong underline underline-offset-2 hover:text-coral disabled:cursor-progress disabled:opacity-60"
       >
-        {pending ? 'Ouverture…' : 'Ouvrir'}
-        {!pending ? <ExternalLink className="size-3.5" /> : null}
+        {pending ? (
+          <>
+            <Spinner size={12} tone="muted" />
+            Ouverture…
+          </>
+        ) : (
+          <>
+            Ouvrir
+            <ExternalLink className="size-3.5" />
+          </>
+        )}
       </button>
     </div>
   );

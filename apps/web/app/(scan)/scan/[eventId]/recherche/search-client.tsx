@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { searchManifest, type ManifestEntry } from '@nexakabi/contracts';
-import { cn } from '@nexakabi/ui';
+import { Spinner, cn } from '@nexakabi/ui';
 import {
   enqueueScan,
   isLocallyScanned,
@@ -117,7 +117,19 @@ export function ManualSearch({ eventId }: { eventId: string }) {
         className="min-h-[var(--tap-primary)] w-full rounded-field border border-white/20 bg-white/[0.07] px-4 text-[16px] text-white placeholder:text-white/35 focus:border-white/50 focus:outline-none"
       />
 
-      {!ready ? <p className="text-body-s text-white/50">Chargement du carnet…</p> : null}
+      {/* Le carnet se lit depuis la base locale : c'est court, mais pas
+          instantané sur un téléphone d'entrée de gamme avec dix mille entrées.
+          Une phrase immobile ne dit pas si ça avance ou si c'est bloqué — et
+          le contrôleur a quelqu'un devant lui. */}
+      {!ready ? (
+        <p
+          role="status"
+          className="flex items-center gap-2.5 text-body-s font-semibold text-white/60"
+        >
+          <Spinner size={15} tone="on-ink" />
+          Chargement du carnet…
+        </p>
+      ) : null}
 
       {ready && !storedRef.current ? (
         <p className="rounded-panel border border-white/12 p-5 text-body-s text-white/70">

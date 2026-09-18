@@ -6,6 +6,7 @@ import { getCurrentUser } from '@/lib/session';
 import { orgFetch, resolveActiveOrganization } from '@/lib/organizations';
 import { ContactForm } from './contact-form';
 import { DocumentsSection } from './documents-section';
+import { VerificationDocuments } from './verification-documents';
 
 export const metadata: Metadata = { title: 'Vérification d’identité' };
 
@@ -53,13 +54,21 @@ export default async function VerificationPage() {
       <p className="text-body-l text-text-2">
         {active.type === 'INDIVIDUAL'
           ? 'Deux contrôles suffisent : le nom que tu as déclaré correspond au titulaire du compte ' +
-            'de retrait, et ton numéro est confirmé — aucune pièce d’identité n’est jamais demandée. ' +
-            'Tu peux publier et vendre sans être vérifié — c’est le retrait de tes fonds qui reste ' +
-            'bloqué jusque-là.'
+            'de retrait, et ton numéro est confirmé. Tu peux publier et vendre sans être vérifié — ' +
+            'c’est le retrait de tes fonds qui reste bloqué jusque-là.'
           : 'Trois contrôles suffisent : le nom déclaré correspond au titulaire du compte de ' +
-            'retrait, ton numéro est confirmé, et le document légal de l’organisation (jamais une ' +
-            'pièce d’identité personnelle) est fourni. Tu peux publier et vendre sans être vérifié — ' +
-            'c’est le retrait de tes fonds qui reste bloqué jusque-là.'}
+            'retrait, ton numéro est confirmé, et l’organisation existe légalement. Tu peux ' +
+            'publier et vendre sans être vérifié — c’est le retrait de tes fonds qui reste bloqué ' +
+            'jusque-là.'}
+      </p>
+
+      {/* Dit d'emblée, et pas seulement au moment où une pièce est réclamée :
+          savoir qu'on ne demandera rien sans raison est ce qui rend acceptable
+          qu'on demande, le jour où c'est nécessaire. */}
+      <p className="text-body-s text-text-3">
+        Aucune pièce d’identité n’est demandée par défaut. Si un doute précis apparaît sur ton
+        dossier, un modérateur te dira lequel et quelle pièce il lui faut — elle sera détruite dès
+        la décision rendue.
       </p>
 
       {request?.status === 'REJECTED' && request.decisionNote ? (
@@ -72,6 +81,13 @@ export default async function VerificationPage() {
         <Alert tone="warning" title="Il manque quelque chose">
           {request.decisionNote}
         </Alert>
+      ) : null}
+
+      {/* Deux régimes : une pièce personnelle sur demande motivée seulement,
+          un document d'entité librement. Le composant se rend vide quand ni
+          l'un ni l'autre n'a lieu d'être — voir sa documentation. */}
+      {request ? (
+        <VerificationDocuments request={request} organizationType={active.type} />
       ) : null}
 
       {request?.status === 'PENDING' ? (
@@ -92,15 +108,7 @@ export default async function VerificationPage() {
         />
       </Surface>
 
-      {active.type !== 'INDIVIDUAL' ? (
-        request ? (
-          <DocumentsSection documents={request.documents} />
-        ) : (
-          <p className="text-body-s text-text-2">
-            Renseigne d’abord tes coordonnées ci-dessus : le dépôt des pièces s’ouvre juste après.
-          </p>
-        )
-      ) : null}
+      {request ? <DocumentsSection documents={request.documents} /> : null}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
+import { documentSpec, type DocumentType } from '@nexakabi/contracts';
 import { formatPhoneSafe } from '@nexakabi/utils';
 import { Alert, Badge, Surface } from '@nexakabi/ui';
 import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
@@ -34,14 +35,17 @@ interface VerificationDetail {
     }[];
     _count: { events: number };
   };
+  requestedDocuments: DocumentType[];
   documents: {
     id: string;
-    type: string;
+    type: DocumentType;
     fileName: string | null;
     mimeType: string | null;
     sizeBytes: number | null;
     status: string;
     rejectionReason: string | null;
+    consentAt: string | null;
+    purgedAt: string | null;
   }[];
 }
 
@@ -151,41 +155,60 @@ export default async function VerificationDetailPage({
             <Surface variant="panel" padding="comfortable" className="flex flex-col gap-3">
               <h2 className="text-h3 font-bold">Pièces fournies ({request.documents.length})</h2>
 
+              {/* Ce qui a été réclamé et n'est pas encore arrivé. Sans ce
+                  rappel, le modérateur suivant ne sait pas si le dossier
+                  attend l'organisateur ou une décision. */}
+              {request.requestedDocuments.length > 0 ? (
+                <Alert tone="info" title="En attente de l’organisateur">
+                  {request.requestedDocuments
+                    .map((type) => documentSpec(type)?.label ?? type)
+                    .join(' · ')}
+                </Alert>
+              ) : null}
+
               {request.documents.length === 0 ? (
                 <p className="text-body-s text-text-2">
-                  {organization.type === 'INDIVIDUAL'
-                    ? 'Personne physique : aucune pièce n’est jamais demandée, ce contrôle est sans objet.'
-                    : 'Aucune pièce déposée. Le troisième contrôle ne peut pas être validé.'}
+                  Aucune pièce déposée. Par défaut, aucune n’est demandée : le rapprochement avec
+                  le titulaire du compte de retrait suffit. Utilise « Demander une pièce » si un
+                  doute précis l’exige.
                 </p>
               ) : (
                 <ul className="flex flex-col gap-2">
-                  {request.documents.map((document) => (
-                    <li
-                      key={document.id}
-                      className="flex items-center justify-between gap-3 border-b border-border-subtle pb-2 last:border-0"
-                    >
-                      <div className="flex min-w-0 flex-col gap-0.5">
-                        <span className="truncate text-body-s font-semibold">
-                          {DOCUMENT_LABELS[document.type] ?? document.type}
-                        </span>
-                        <span className="text-micro text-text-3">
-                          {document.fileName ?? 'Sans nom'}
-                          {document.sizeBytes
-                            ? ` · ${Math.round(document.sizeBytes / 1024)} Ko`
-                            : ''}
-                        </span>
-                      </div>
+                  {request.documents.map((document) => {
+                    const spec = documentSpec(document.type);
+                    const purgedAt = document.purgedAt;
 
-                      <div className="flex shrink-0 items-center gap-3">
-                        <Badge tone={document.status === 'ACCEPTED' ? 'ink' : 'neutral'}>
-                          {document.status}
-                        </Badge>
-                        {canAct ? (
-                          <DocumentLink requestId={request.id} documentId={document.id} />
-                        ) : null}
-                      </div>
-                    </li>
-                  ))}
+                    return (
+                      <li
+                        key={document.id}
+                        className="flex items-center justify-between gap-3 border-b border-border-subtle pb-2 last:border-0"
+                      >
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span className="truncate text-body-s font-semibold">
+                            {spec?.label ?? document.type}
+                          </span>
+                          <span className="text-micro text-text-3">
+                            {purgedAt
+                              ? `Détruite le ${new Date(purgedAt).toLocaleDateString('fr-FR')} — pièce personnelle, après décision`
+                              : (document.fileName ?? 'Sans nom')}
+                            {!purgedAt && document.sizeBytes
+                              ? ` · ${Math.round(document.sizeBytes / 1024)} Ko`
+                              : ''}
+                            {!purgedAt && document.consentAt ? ' · consentement recueilli' : ''}
+                          </span>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-3">
+                          <Badge tone={document.status === 'ACCEPTED' ? 'ink' : 'neutral'}>
+                            {document.status}
+                          </Badge>
+                          {canAct && !purgedAt ? (
+                            <DocumentLink requestId={request.id} documentId={document.id} />
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
 
@@ -193,7 +216,9 @@ export default async function VerificationDetailPage({
                   par une URL signée, à durée limitée, tracée individuellement
                   ci-dessus au moment du clic — jamais préchargée. */}
               <p className="text-micro text-text-3">
-                Chaque ouverture d’une pièce est consignée dans le journal d’audit.
+                Chaque ouverture d’une pièce est consignée dans le journal d’audit, à ton nom. Les
+                pièces personnelles — photo du visage, carte d’identité, passeport — sont détruites
+                automatiquement dès que tu approuves ou refuses le dossier.
               </p>
             </Surface>
 
@@ -248,11 +273,3 @@ function Fact({
     </div>
   );
 }
-
-/** Les types du schéma, nommés comme au Bénin — jamais de pièce d'identité personnelle. */
-const DOCUMENT_LABELS: Readonly<Record<string, string>> = {
-  RCCM: 'Registre du commerce (RCCM)',
-  IFU: 'Identifiant fiscal unique (IFU)',
-  ASSOCIATION_STATUTES: 'Statuts de l’association',
-  OTHER: 'Autre document de l’organisation',
-};

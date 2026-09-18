@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import type { Manifest } from '@nexakabi/contracts';
-import { Badge, Button } from '@nexakabi/ui';
+import { Badge, Button, startRouteProgress } from '@nexakabi/ui';
 import { loadManifest, saveManifest, pendingCount } from '@/lib/scan/db';
 
 type State =
@@ -94,7 +94,13 @@ export function ManifestStatus({ eventId, eventTitle }: { eventId: string; event
           block
           disabled={state.kind === 'checking' || state.kind === 'absent'}
           loading={state.kind === 'downloading'}
-          onClick={() => router.push(`/scan/${eventId}`)}
+          onClick={() => {
+            // La coque du scanner pèse lourd et s'installe au premier
+            // passage : c'est l'une des navigations les plus longues du
+            // produit, et le contrôleur l'ouvre avec la file devant lui.
+            startRouteProgress();
+            router.push(`/scan/${eventId}`);
+          }}
         >
           Ouvrir le scanner
         </Button>

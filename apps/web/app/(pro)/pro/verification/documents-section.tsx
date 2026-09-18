@@ -1,34 +1,29 @@
-'use client';
-
-import * as React from 'react';
-import { useRouter } from 'next/navigation';
-import type { VerificationRequestDetail } from '@nexakabi/contracts';
-import { Alert, Badge, Button, Field, Surface, SurfaceHeader, SurfaceTitle } from '@nexakabi/ui';
-import { uploadFile } from '@/lib/upload-client';
+import { FileCheck2, Lock } from 'lucide-react';
+import { documentSpec, type VerificationRequestDetail } from '@nexakabi/contracts';
+import { Badge, Surface, SurfaceHeader, SurfaceTitle } from '@nexakabi/ui';
 
 /**
- * Les types du schéma, nommés comme au Bénin — même liste que côté admin.
+ * Ce qui a été déposé — en lecture seule.
  *
- * Jamais de pièce d'identité personnelle ici : cette section n'apparaît même
- * plus pour une personne physique (voir `verification/page.tsx`) — seule une
- * organisation qui a une existence légale distincte a un document à fournir.
+ * ── Ce que cette section ne fait plus ─────────────────────────────────────
+ * Elle portait le formulaire de dépôt : une liste déroulante de types et un
+ * champ fichier, ouverts en permanence à toute organisation qui n'était pas
+ * une personne physique. Le dépôt vit désormais dans `RequestedDocuments`, et
+ * n'existe que lorsqu'un modérateur a réclamé quelque chose de précis. Ici, on
+ * se contente de rendre compte.
+ *
+ * ── Pourquoi les pièces détruites restent affichées ───────────────────────
+ * Parce qu'un organisateur qui a envoyé sa carte d'identité a le droit de
+ * savoir ce qu'elle est devenue. « Détruite après décision » est une réponse ;
+ * une ligne qui disparaît sans explication n'en est pas une, et c'est celle-là
+ * qui produit les appels au support.
  */
-const DOCUMENT_LABELS: Readonly<Record<string, string>> = {
-  RCCM: 'Registre du commerce (RCCM)',
-  IFU: 'Identifiant fiscal unique (IFU)',
-  ASSOCIATION_STATUTES: 'Statuts de l’association',
-  OTHER: 'Autre document de l’organisation',
-};
-
 export function DocumentsSection({
   documents,
 }: {
   documents: VerificationRequestDetail['documents'];
 }) {
-  const router = useRouter();
-  const [pending, setPending] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const formRef = React.useRef<HTMLFormElement>(null);
+  if (documents.length === 0) return null;
 
   return (
     <Surface variant="panel" padding="none" className="overflow-hidden">
@@ -36,18 +31,29 @@ export function DocumentsSection({
         <SurfaceTitle>Pièces déposées ({documents.length})</SurfaceTitle>
       </SurfaceHeader>
 
-      {documents.length > 0 ? (
-        <ul>
-          {documents.map((document) => (
+      <ul>
+        {documents.map((document) => {
+          const spec = documentSpec(document.type);
+
+          return (
             <li
               key={document.id}
               className="flex flex-wrap items-center gap-3 border-b border-border-subtle px-5 py-3.5 last:border-b-0"
             >
+              <span
+                aria-hidden
+                className="flex size-9 shrink-0 items-center justify-center rounded-field bg-surface-alt text-text-3"
+              >
+                {document.available ? <FileCheck2 size={17} /> : <Lock size={16} />}
+              </span>
+
               <div className="min-w-0 flex-1">
-                <div className="text-body-s font-semibold">
-                  {DOCUMENT_LABELS[document.type] ?? document.type}
+                <div className="text-body-s font-semibold">{spec?.label ?? document.type}</div>
+                <div className="text-micro text-text-3">
+                  {document.available
+                    ? (document.fileName ?? 'Sans nom')
+                    : 'Fichier détruit après décision — la trace du dépôt est conservée.'}
                 </div>
-                <div className="text-micro text-text-3">{document.fileName ?? 'Sans nom'}</div>
                 {document.status === 'REJECTED' && document.rejectionReason ? (
                   <div className="mt-0.5 text-micro text-red-700">{document.rejectionReason}</div>
                 ) : null}
@@ -69,87 +75,9 @@ export function DocumentsSection({
                     : 'Refusée'}
               </Badge>
             </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="px-5 py-4 text-body-s text-text-2">Aucune pièce déposée pour l’instant.</p>
-      )}
-
-      <form
-        ref={formRef}
-        className="flex flex-col gap-3.5 border-t border-border-subtle px-5 py-4"
-        action={async (formData) => {
-          const file = formData.get('file');
-          const type = String(formData.get('type') ?? '');
-          if (!(file instanceof File)) return;
-
-          setPending(true);
-          setError(null);
-
-          // Le fichier part directement au stockage, puis sa référence à
-          // l'API — voir `lib/upload-client`. Rien ne transite par l'action.
-          const result = await uploadFile(
-            file,
-            `/api/media/verification-document?type=${encodeURIComponent(type)}`,
           );
-          setPending(false);
-
-          if (!result.ok) {
-            setError(result.message);
-            return;
-          }
-
-          formRef.current?.reset();
-          router.refresh();
-        }}
-      >
-        <p className="eyebrow text-text-3">Déposer une pièce</p>
-
-        {error ? (
-          <Alert tone="danger" title="Dépôt impossible">
-            {error}
-          </Alert>
-        ) : null}
-
-        <div className="grid gap-3.5 sm:grid-cols-2">
-          <Field label="Type de pièce" htmlFor="type">
-            <select
-              id="type"
-              name="type"
-              defaultValue="RCCM"
-              className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 text-body"
-            >
-              {Object.entries(DOCUMENT_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Fichier" help="JPG, PNG, WebP ou PDF · 10 Mo au maximum" htmlFor="file">
-            <input
-              id="file"
-              name="file"
-              type="file"
-              required
-              accept="image/jpeg,image/png,image/webp,application/pdf"
-              className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 py-2 text-body-s"
-            />
-          </Field>
-        </div>
-
-        <Button
-          type="submit"
-          variant="secondary"
-          size="mobile"
-          loading={pending}
-          loadingLabel="Envoi…"
-          className="self-start"
-        >
-          Déposer la pièce
-        </Button>
-      </form>
+        })}
+      </ul>
     </Surface>
   );
 }

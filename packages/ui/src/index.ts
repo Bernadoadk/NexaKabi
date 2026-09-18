@@ -115,4 +115,27 @@ export {
   type MobileMenuButtonProps,
 } from './components/drawer';
 export { BottomSheet, type BottomSheetProps } from './components/sheet';
+export {
+  Spinner,
+  ProgressRing,
+  TopProgressBar,
+  BusyOverlay,
+  LoadingPanel,
+  type SpinnerProps,
+  type SpinnerTone,
+  type ProgressRingProps,
+  type TopProgressBarProps,
+  type BusyOverlayProps,
+  type LoadingPanelProps,
+} from './components/progress';
+export {
+  RouteProgress,
+  startRouteProgress,
+  NO_PROGRESS_ATTRIBUTE,
+} from './components/route-progress';
+export {
+  UploadDropzone,
+  type UploadDropzoneProps,
+  type UploadPhase,
+} from './components/upload-dropzone';
 export { ConsoleMobileMenu, type ConsoleMobileMenuProps } from './components/console-mobile';

@@ -9,7 +9,16 @@ import {
   type SessionUser,
 } from '@nexakabi/contracts';
 import { formatShortCountdown, tryNormalizePhone } from '@nexakabi/utils';
-import { Alert, Button, Field, Input, OtpInput, PhoneInput, Surface } from '@nexakabi/ui';
+import {
+  Alert,
+  Button,
+  Field,
+  Input,
+  OtpInput,
+  PhoneInput,
+  Surface,
+  startRouteProgress,
+} from '@nexakabi/ui';
 
 /**
  * Connexion et inscription — le même parcours.
@@ -47,6 +56,11 @@ export function LoginFlow({
   const [pending, setPending] = React.useState(false);
 
   function finish() {
+    // La destination est souvent lourde — l'espace organisateur, le scanner,
+    // « Mes billets » — et le bouton vient de rendre la main. Sans le filet,
+    // l'écran resterait figé sur le formulaire, code validé, sans rien dire.
+    startRouteProgress();
+
     // `refresh()` force les composants serveur à relire le cookie de session.
     router.replace(redirectTo);
     router.refresh();

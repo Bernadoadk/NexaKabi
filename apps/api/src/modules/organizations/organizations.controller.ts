@@ -227,10 +227,13 @@ export class OrganizationsController {
   @RequirePermission('organization:update')
   @ApiConsumes('application/json', UPLOAD_CONTENT_TYPE)
   @ApiOperation({
-    summary: 'Déposer une pièce à l’appui du dossier',
+    summary: 'Déposer une pièce RÉCLAMÉE à l’appui du dossier',
     description:
-      'JPG, PNG, WebP ou PDF, 10 Mo au maximum. Stockage privé : jamais accessible par une ' +
-      'URL directe, seulement par une URL signée générée à la lecture, côté administration.',
+      'JPG, PNG, WebP ou PDF, 10 Mo au maximum. Refusé si la pièce ne figure pas dans les ' +
+      'pièces demandées par un modérateur, si elle ne correspond pas au statut de ' +
+      'l’organisation, ou — pour une pièce personnelle — si le consentement exprès manque. ' +
+      'Stockage privé : jamais accessible par une URL directe, seulement par une URL signée ' +
+      'générée à la lecture, côté administration, et détruite dès la décision rendue.',
   })
   async uploadVerificationDocument(
     @CurrentOrg() context: OrgContext,
@@ -244,13 +247,17 @@ export class OrganizationsController {
       throw new BadRequestException('Aucun fichier reçu.');
     }
 
-    const { type } = uploadVerificationDocumentSchema.parse(query);
+    const { type, consent } = uploadVerificationDocumentSchema.parse(query);
 
-    return this.organizations.addVerificationDocument(context, type, {
-      buffer: file.buffer,
-      mimeType: file.mimetype,
-      originalName: file.originalname,
-    });
+    return this.organizations.addVerificationDocument(
+      context,
+      { type, consent },
+      {
+        buffer: file.buffer,
+        mimeType: file.mimetype,
+        originalName: file.originalname,
+      },
+    );
   }
 }
 

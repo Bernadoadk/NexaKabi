@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { Rocket } from 'lucide-react';
-import { Alert, Button, SuccessDialog } from '@nexakabi/ui';
+import { Alert, Button, SuccessDialog, startRouteProgress } from '@nexakabi/ui';
 import { publishEventAction } from '../../../actions';
 
 /**
@@ -77,7 +77,15 @@ export function PublishBar({
         title="Événement publié"
         description="Il est désormais visible dans la découverte, et la billetterie est ouverte."
       >
-        <Button variant="primary" size="mobile" block onClick={() => router.push('/pro/evenements')}>
+        <Button
+          variant="primary"
+          size="mobile"
+          block
+          onClick={() => {
+            startRouteProgress();
+            router.push('/pro/evenements');
+          }}
+        >
           Voir mes événements →
         </Button>
       </SuccessDialog>

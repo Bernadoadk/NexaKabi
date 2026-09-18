@@ -220,9 +220,19 @@ export const submitVerificationSchema = z.object({
 
 export type SubmitVerificationInput = z.infer<typeof submitVerificationSchema>;
 
-/** Paramètres d'URL du dépôt d'une pièce — le corps de la requête est le fichier lui-même. */
+/**
+ * Paramètres d'URL du dépôt d'une pièce — le corps de la requête est le
+ * fichier lui-même.
+ *
+ * `consent` accompagne obligatoirement une pièce personnelle : le Code du
+ * numérique béninois exige un consentement exprès pour l'image du visage, et
+ * un consentement qu'on ne peut pas prouver n'a jamais existé. La version est
+ * celle de `IDENTITY_CONSENT`, pour savoir un jour à quel texte l'organisateur a
+ * dit oui.
+ */
 export const uploadVerificationDocumentSchema = z.object({
   type: documentTypeSchema,
+  consent: z.coerce.number().int().positive().optional(),
 });
 
 export type UploadVerificationDocumentInput = z.infer<typeof uploadVerificationDocumentSchema>;
@@ -249,6 +259,14 @@ export const verificationRequestSchema = z.object({
   reviewedAt: z.string().nullable(),
   decisionNote: z.string().nullable(),
   checks: verificationChecksSchema.nullable(),
+  /**
+   * Les pièces qu'un modérateur a explicitement réclamées.
+   *
+   * Vide dans le cas normal — et c'est le cas normal : rien n'est demandé tant
+   * qu'un doute n'a pas été formulé. Non vide, cette liste est le seul titre
+   * qui autorise le dépôt : l'API refuse toute pièce qui n'y figure pas.
+   */
+  requestedDocuments: z.array(documentTypeSchema),
   documents: z.array(
     z.object({
       id: idSchema,
@@ -257,6 +275,8 @@ export const verificationRequestSchema = z.object({
       status: z.enum(['PENDING', 'ACCEPTED', 'REJECTED']),
       rejectionReason: z.string().nullable(),
       createdAt: z.string(),
+      /** Faux quand le fichier a été détruit après décision — la trace reste. */
+      available: z.boolean(),
     }),
   ),
 });

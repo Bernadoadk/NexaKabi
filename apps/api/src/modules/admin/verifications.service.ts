@@ -1,7 +1,10 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   describeFailedChecks,
+  documentSpec,
+  isPersonalDocument,
   type AdminDashboard,
+  type DocumentType,
   type ReviewVerificationInput,
   type VerificationSummary,
 } from '@nexakabi/contracts';
@@ -111,8 +114,12 @@ export class VerificationsService {
             sizeBytes: true,
             status: true,
             rejectionReason: true,
+            consentVersion: true,
+            consentAt: true,
+            purgedAt: true,
             createdAt: true,
           },
+          orderBy: { createdAt: 'asc' },
         },
       },
     });
@@ -141,11 +148,21 @@ export class VerificationsService {
   ): Promise<{ url: string }> {
     const document = await this.prisma.verificationDocument.findFirst({
       where: { id: documentId, requestId },
-      select: { fileKey: true },
+      select: { fileKey: true, purgedAt: true, type: true },
     });
 
     if (!document) {
       throw new NotFoundException('Cette pièce n’existe pas.');
+    }
+
+    // Le fichier a été détruit à la décision : la ligne reste pour dire qu'il a
+    // existé, pas pour être rouverte. Le dire franchement vaut mieux qu'une
+    // URL signée qui mènerait à une erreur de stockage incompréhensible.
+    if (document.purgedAt) {
+      throw new NotFoundException(
+        `Cette pièce a été détruite le ${document.purgedAt.toLocaleDateString('fr-FR')}, ` +
+          'après la décision. Il faut la redemander pour la revoir.',
+      );
     }
 
     const url = await this.storage.signedUrl(document.fileKey, 300);
@@ -206,6 +223,9 @@ export class VerificationsService {
           decisionNote: input.note,
           reviewedAt: new Date(),
           reviewedById: userId,
+          // Les pièces réclamées ne survivent pas à la décision : approuver ou
+          // refuser clôt la demande, seul « il manque une pièce » en ouvre une.
+          requestedDocuments: input.decision === 'REQUEST_MORE' ? input.requestedDocuments : [],
         },
       });
 
@@ -234,8 +254,17 @@ export class VerificationsService {
       entityId: requestId,
       actorUserId: userId,
       organizationId: request.organizationId,
-      changes: { decision: input.decision, checks: input.checks, note: input.note },
+      changes: {
+        decision: input.decision,
+        checks: input.checks,
+        note: input.note,
+        requestedDocuments: input.requestedDocuments,
+      },
     });
+
+    if (status !== 'INCOMPLETE') {
+      await this.purgePersonalDocuments(requestId, userId, request.organizationId);
+    }
 
     if (released.events > 0) {
       await this.audit.record({
@@ -254,9 +283,75 @@ export class VerificationsService {
       decision: input.decision,
       checks: input.checks,
       note: input.note,
+      requestedDocuments: input.requestedDocuments,
     });
 
     this.logger.log(`Vérification ${requestId} → ${status}`);
+  }
+
+  /**
+   * Détruit les pièces d'identité une fois la décision rendue.
+   *
+   * ── Pourquoi ce n'est pas facultatif ────────────────────────────────────
+   * Une carte d'identité et une photo de visage ont servi à répondre à une
+   * question : « est-ce bien cette personne ? ». La réponse donnée, elles
+   * n'ont plus d'objet — et le Code du numérique béninois n'autorise leur
+   * conservation que pour la durée nécessaire à la finalité. Les garder « au
+   * cas où » ne protège de rien et crée le seul risque qui compte vraiment :
+   * celui d'une fuite de pièces d'identité d'organisateurs.
+   *
+   * Les documents d'ENTITÉ restent : RCCM, IFU, récépissé, acte de création
+   * viennent de registres publics, ne disent rien d'une personne, et un
+   * contrôle comptable peut légitimement les redemander.
+   *
+   * La ligne en base survit à son fichier, datée : sans elle, le dossier ne
+   * dirait plus ce qui avait été fourni, et le journal d'audit pointerait vers
+   * un document dont plus rien n'attesterait l'existence.
+   */
+  private async purgePersonalDocuments(
+    requestId: string,
+    actorUserId: string,
+    organizationId: string,
+  ): Promise<void> {
+    const documents = await this.prisma.verificationDocument.findMany({
+      where: { requestId, purgedAt: null },
+      select: { id: true, type: true, fileKey: true },
+    });
+
+    const personal = documents.filter((document) => isPersonalDocument(document.type));
+    if (personal.length === 0) return;
+
+    const purgedAt = new Date();
+
+    for (const document of personal) {
+      // Le stockage d'abord : si la ligne était marquée détruite alors que le
+      // fichier reste, plus rien n'indiquerait qu'il faut y revenir.
+      await this.storage.remove(document.fileKey).catch((error: unknown) => {
+        this.logger.error(
+          `Pièce ${document.id} non détruite au stockage : ` +
+            (error instanceof Error ? error.message : 'cause inconnue'),
+        );
+      });
+    }
+
+    await this.prisma.verificationDocument.updateMany({
+      where: { id: { in: personal.map((document) => document.id) } },
+      data: { purgedAt },
+    });
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.adminVerificationDocumentsPurged,
+      entityType: 'VerificationRequest',
+      entityId: requestId,
+      actorUserId,
+      actorType: 'ADMIN',
+      organizationId,
+      changes: { types: personal.map((document) => document.type), count: personal.length },
+    });
+
+    this.logger.log(
+      `Dossier ${requestId} : ${personal.length} pièce(s) personnelle(s) détruite(s) après décision.`,
+    );
   }
 
   /**
@@ -281,6 +376,7 @@ export class VerificationsService {
       decision: string;
       checks: ReviewVerificationInput['checks'];
       note?: string;
+      requestedDocuments?: DocumentType[];
     },
   ): Promise<void> {
     const owner = await this.prisma.user.findUnique({
@@ -296,9 +392,15 @@ export class VerificationsService {
       ? `${input.organizationName} est vérifiée.`
       : `Vérification de ${input.organizationName} : action requise.`;
 
+    // Nommer les pièces dans le SMS, et pas seulement dans l'écran : c'est le
+    // message que l'organisateur lit sur son téléphone, souvent le seul.
+    const asked = input.requestedDocuments?.length
+      ? `À fournir : ${input.requestedDocuments.map((type) => documentSpec(type).short).join(', ')}.`
+      : undefined;
+
     const body = approved
       ? 'Tu peux maintenant demander le versement de tes recettes depuis ton espace.'
-      : [...describeFailedChecks(input.checks), input.note]
+      : [...describeFailedChecks(input.checks), input.note, asked]
           .filter((line): line is string => Boolean(line))
           .join(' ');
 

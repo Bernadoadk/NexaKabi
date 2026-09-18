@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { cn } from '@nexakabi/ui';
+import { Spinner, cn } from '@nexakabi/ui';
 import { sessionHistory, type SyncedScan } from '@/lib/scan/db';
 import { drainQueue } from '@/lib/scan/sync';
 
@@ -56,10 +56,19 @@ export function ScanHistory({ eventId }: { eventId: string }) {
 
       <div className="flex flex-col gap-1">
         <h1 className="font-display text-h2 font-bold tracking-[-0.02em]">Historique</h1>
-        <p className="text-body-s text-white/60">
-          {entries === null
-            ? 'Chargement…'
-            : `${entries.length} scan${entries.length > 1 ? 's' : ''}${pending > 0 ? ` · ${pending} en attente d’envoi` : ' · tout est synchronisé'}`}
+        {/* La question du contrôleur est « est-ce que mes scans sont bien
+            partis ? ». Tant qu'on n'a pas lu la base locale, on ne peut pas y
+            répondre — et un « Chargement… » immobile à la place du compte se
+            lit comme un zéro. Le point qui tourne dit que la réponse arrive. */}
+        <p className="flex items-center gap-2 text-body-s text-white/60">
+          {entries === null ? (
+            <>
+              <Spinner size={13} tone="on-ink" />
+              Chargement…
+            </>
+          ) : (
+            `${entries.length} scan${entries.length > 1 ? 's' : ''}${pending > 0 ? ` · ${pending} en attente d’envoi` : ' · tout est synchronisé'}`
+          )}
         </p>
       </div>
 

@@ -25,6 +25,7 @@ import {
   verificationStatusSchema,
 } from './enums.js';
 import { verificationChecksSchema, type VerificationChecks } from './organizations.js';
+import { requestedDocumentsSchema } from './verification-documents.js';
 import { payoutSchema } from './finance.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,10 +331,23 @@ export const reviewVerificationSchema = z
      * second dossier identique, puis un appel au support.
      */
     note: z.string().trim().max(1_000).optional(),
+    /**
+     * Les pièces réclamées, quand la décision est « demander une pièce ».
+     *
+     * Nommées une par une, jamais laissées à l'interprétation : c'est aussi ce
+     * qui rend la demande défendable. Sous le Code du numérique béninois, une
+     * collecte doit être nécessaire à une finalité déterminée — une liste
+     * précise et un motif écrit, c'est exactement ce qui le démontre.
+     */
+    requestedDocuments: requestedDocumentsSchema.optional(),
   })
   .refine((input) => input.decision === 'APPROVE' || (input.note?.length ?? 0) >= 10, {
     message: 'Explique ce qui manque : l’organisateur ne verra que ce message.',
     path: ['note'],
+  })
+  .refine((input) => input.decision !== 'REQUEST_MORE' || input.requestedDocuments !== undefined, {
+    message: 'Choisis au moins une pièce à demander.',
+    path: ['requestedDocuments'],
   })
   .refine((input) => input.decision !== 'APPROVE' || allChecksPass(input.checks), {
     message: 'Les trois contrôles doivent être validés avant d’approuver.',

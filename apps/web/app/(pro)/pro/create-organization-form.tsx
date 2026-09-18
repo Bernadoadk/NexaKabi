@@ -2,7 +2,16 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button, Field, Input, PhoneInput, Surface, Textarea } from '@nexakabi/ui';
+import {
+  Alert,
+  Button,
+  Field,
+  Input,
+  PhoneInput,
+  Surface,
+  Textarea,
+  startRouteProgress,
+} from '@nexakabi/ui';
 import { PlaceSearch } from './place-search';
 import { createOrganizationAction } from './actions';
 
@@ -54,6 +63,10 @@ export function CreateOrganizationForm() {
             return;
           }
 
+          // L'espace organisateur se monte pour la première fois : tableau de
+          // bord, chiffres, navigation. C'est long, et le bouton est déjà
+          // relâché.
+          startRouteProgress();
           router.replace('/pro');
           router.refresh();
         }}

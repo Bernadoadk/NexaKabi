@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { ApiError, Order } from '@nexakabi/contracts';
-import { Alert, Button } from '@nexakabi/ui';
+import { Alert, Button, startRouteProgress } from '@nexakabi/ui';
 
 /**
  * Acceptation et passage au paiement.
@@ -42,6 +42,9 @@ export function ConfirmForm({ order }: { order: Order }) {
       return;
     }
 
+    // La commande est confirmée côté serveur : à partir d'ici, recliquer
+    // n'apporterait rien et inquiéterait. Le filet occupe l'attente.
+    startRouteProgress();
     router.push(`/checkout/${order.reference}/paiement`);
   }
 

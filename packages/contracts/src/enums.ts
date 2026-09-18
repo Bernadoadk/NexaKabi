@@ -80,19 +80,35 @@ export type MemberStatus = z.infer<typeof memberStatusSchema>;
 /**
  * Pièces recevables à l'appui d'une vérification.
  *
- * Volontairement AUCUNE pièce d'identité personnelle (carte nationale,
- * passeport) : les conserver expose à des sanctions sous la réglementation
- * béninoise de protection des données, pour un bénéfice qu'un rapprochement
- * avec le compte de retrait Mobile Money obtient déjà sans rien stocker — cet
- * opérateur a lui-même vérifié l'identité à l'ouverture du compte. Seuls des
- * documents sur l'ENTITÉ légale (jamais sur la personne) restent acceptés,
- * et seulement pour une organisation qui n'est pas une personne physique —
- * voir `verification/page.tsx` côté web.
+ * ── Deux régimes, pas un seul ─────────────────────────────────────────────
+ * Par DÉFAUT, aucune pièce d'identité personnelle n'est demandée à personne :
+ * le rapprochement avec le titulaire du compte de retrait Mobile Money suffit,
+ * et l'opérateur a lui-même vérifié cette identité à l'ouverture du compte.
+ * Collecter systématiquement des cartes d'identité serait disproportionné, et
+ * la disproportion est précisément ce que sanctionne le Livre cinquième du
+ * Code du numérique béninois.
+ *
+ * Par EXCEPTION, un modérateur qui a un doute nommé sur un dossier précis peut
+ * demander des pièces supplémentaires. C'est ce que la proportionnalité
+ * autorise : non pas « tout le monde, au cas où », mais « celui-ci, parce
+ * que ». Le motif est obligatoire, le consentement est recueilli, les fichiers
+ * sont purgés après décision.
+ *
+ * Le détail de ce qu'on a le droit de demander, à qui, et pourquoi, vit dans
+ * `verification-documents.ts` — un seul endroit, partagé par l'API, la console
+ * et l'espace organisateur.
  */
 export const DOCUMENT_TYPES = [
+  'SELFIE',
+  'CIP',
+  'ID_CARD',
+  'PASSPORT',
   'RCCM',
   'IFU',
+  'ASSOCIATION_RECEIPT',
+  /** Ancien type, conservé en lecture seule : voir `verification-documents.ts`. */
   'ASSOCIATION_STATUTES',
+  'INSTITUTION_ACT',
   'OTHER',
 ] as const;
 export const documentTypeSchema = makeEnum(DOCUMENT_TYPES).schema;

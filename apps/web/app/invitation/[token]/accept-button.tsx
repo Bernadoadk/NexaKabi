@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button } from '@nexakabi/ui';
+import { Alert, Button, startRouteProgress } from '@nexakabi/ui';
 import { acceptInvitationAction } from '@/app/(pro)/pro/actions';
 
 /**
@@ -47,6 +47,9 @@ export function AcceptInvitationButton({
             return;
           }
 
+          // Le bouton vient de rendre la main, et la destination — espace
+          // organisateur ou scanner — est un espace entier qui se monte.
+          startRouteProgress();
           router.replace(destination);
           router.refresh();
         }}

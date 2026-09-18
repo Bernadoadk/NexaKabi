@@ -1,7 +1,7 @@
 import { headers } from 'next/headers';
 import type { Metadata, Viewport } from 'next';
 import { Bricolage_Grotesque, Plus_Jakarta_Sans } from 'next/font/google';
-import { ThemeProvider, ThemeScript } from '@nexakabi/ui';
+import { RouteProgress, ThemeProvider, ThemeScript } from '@nexakabi/ui';
 import './globals.css';
 import { PwaProvider } from '@/components/pwa-provider';
 
@@ -97,6 +97,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body suppressHydrationWarning>
         <ThemeScript nonce={nonce} />
         <ThemeProvider>
+          {/* Le filet de navigation. Monté à la racine parce qu'il doit
+              survivre au changement de page qu'il annonce : posé dans un
+              layout de section, il disparaîtrait au moment précis où il sert. */}
+          <RouteProgress />
           {children}
           <PwaProvider />
         </ThemeProvider>

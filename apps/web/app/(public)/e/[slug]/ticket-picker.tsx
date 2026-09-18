@@ -10,7 +10,7 @@ import {
   type Order,
   type TicketTypeView,
 } from '@nexakabi/contracts';
-import { Alert, Badge, Button, Money } from '@nexakabi/ui';
+import { Alert, Badge, Button, Money, startRouteProgress } from '@nexakabi/ui';
 
 /**
  * Sélection des billets.
@@ -78,6 +78,10 @@ export function TicketPicker({
       return;
     }
 
+    // L'entrée dans le tunnel d'achat : les places sont réservées, le compte
+    // à rebours court déjà côté serveur. C'est la navigation qu'il ne faut
+    // surtout pas laisser silencieuse.
+    startRouteProgress();
     router.push(`/checkout/${(payload as Order).reference}/billets`);
   }
 

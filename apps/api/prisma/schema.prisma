@@ -332,12 +332,30 @@ enum MemberStatus {
   REMOVED
 }
 
+/// Pièces recevables à l'appui d'une vérification.
+///
+/// Le catalogue qui fait autorité — qui peut demander quoi, à qui, et sur quel
+/// fondement au regard du Code du numérique béninois — vit dans
+/// `packages/contracts/src/verification-documents.ts`. Cet enum n'est que le
+/// stockage : il est volontairement plus large que ce qui est demandable, pour
+/// garder lisibles les dossiers déposés sous d'anciennes règles.
 enum DocumentType {
+  /// Photo du visage prise en direct. Donnée biométrique au sens béninois :
+  /// consentement exprès, aucun rapprochement automatique, détruite à la décision.
+  SELFIE
   CIP
+  /// Carte nationale d'identité biométrique (ANIP).
+  ID_CARD
   PASSPORT
   RCCM
   IFU
+  /// Récépissé de déclaration délivré par le ministère de l'Intérieur.
+  ASSOCIATION_RECEIPT
+  /// N'est plus demandable : les statuts révèlent l'objet de l'association,
+  /// donc une éventuelle orientation religieuse ou politique — donnée sensible.
   ASSOCIATION_STATUTES
+  /// Décret, arrêté ou décision de création d'un établissement.
+  INSTITUTION_ACT
   OTHER
 }
 
@@ -565,6 +583,15 @@ model VerificationRequest {
   /// document légal valide. Tout le reste est indicatif.
   checks Json?
 
+  /// Les pièces qu'un modérateur a explicitement réclamées.
+  ///
+  /// Vide dans le cas normal — et le cas normal, c'est qu'on ne demande RIEN :
+  /// le rapprochement avec le titulaire du compte Mobile Money suffit. Non
+  /// vide, cette liste est le seul titre qui autorise un dépôt : l'API refuse
+  /// toute pièce qui n'y figure pas. C'est la proportionnalité exigée par le
+  /// Livre cinquième du Code du numérique, rendue exécutable.
+  requestedDocuments DocumentType[]
+
   documents VerificationDocument[]
 
   @@index([status, submittedAt])
@@ -591,6 +618,18 @@ model VerificationDocument {
 
   status          DocumentStatus @default(PENDING)
   rejectionReason String?
+
+  /// Consentement exprès, quand la pièce en exige un (selfie, pièce d'identité).
+  /// La version renvoie au texte accepté — `SELFIE_CONSENT.version`.
+  consentVersion Int?
+  consentAt      DateTime?
+
+  /// Date de destruction du fichier.
+  ///
+  /// Une pièce d'identité n'a plus d'objet une fois la décision rendue : le
+  /// fichier part du stockage, la ligne reste. Sans elle, le journal d'audit
+  /// pointerait vers un document dont plus rien ne dirait qu'il a existé.
+  purgedAt DateTime?
 
   createdAt DateTime @default(now())
 

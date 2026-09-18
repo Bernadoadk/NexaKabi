@@ -1089,9 +1089,47 @@ Cible **WCAG 2.1 AA**, cohérente avec l'exigence de contraste du prototype :
 | Upload               | Type MIME vérifié côté serveur, extension recalculée, taille limitée, ré-encodage systématique par `sharp` (détruit toute charge utile embarquée)                          |
 | Webhooks             | Signature vérifiée avant traitement, idempotence, limitation de débit, corps brut journalisé                                                                               |
 | Secrets              | Jamais dans le dépôt ; variables d'environnement validées au démarrage par un schéma Zod (échec rapide)                                                                    |
-| Données personnelles | Minimisation (carnet du contrôleur), chiffrement au repos des pièces de vérification, suppression de compte effective                                                      |
-| Administration       | Sous-domaine séparé, 2FA obligatoire, journalisation exhaustive, sessions courtes                                                                                          |
+| Données personnelles | Minimisation (carnet du contrôleur), stockage privé des pièces de vérification, destruction des pièces d'identité à la décision, suppression de compte effective            |
+| Administration       | Sous-domaine séparé, identifiant et mot de passe scrypt, droits par espace, sessions courtes révocables, journalisation exhaustive                                          |
 | Dépendances          | `pnpm audit` en CI, Dependabot                                                                                                                                             |
+
+## 10.1 bis Vérification d'identité et droit béninois
+
+Référence : **loi n° 2017-20 du 20 avril 2018 portant Code du numérique en République du Bénin**,
+Livre cinquième (protection des données à caractère personnel et de la vie privée), modifiée par la
+**loi n° 2020-35 du 6 janvier 2021**. Autorité de contrôle : l'**APDP**.
+
+Le catalogue qui fait autorité vit dans `packages/contracts/src/verification-documents.ts` : il dit
+quelle pièce peut être demandée, à quel statut d'organisateur, sur quel fondement. L'API applique la
+même règle que la console ; ce que l'écran n'affiche pas, l'API le refuse.
+
+### Quatre règles, et ce qu'elles imposent au code
+
+| Règle                        | Traduction dans le produit                                                                                                                                                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Proportionnalité**         | Aucune pièce d'identité n'est demandée par défaut, à personne. Le rapprochement avec le titulaire du compte Mobile Money suffit — l'opérateur a déjà vérifié cette identité. Une pièce ne devient déposable qu'après une demande écrite et motivée d'un modérateur (`VerificationRequest.requestedDocuments`). |
+| **Consentement exprès**      | L'image du visage est une **donnée biométrique** au sens béninois : la définition vise les caractéristiques physiques permettant l'identification unique, « telles que les images faciales », sans exiger de traitement technique particulier — plus large que le RGPD. Une case unique (`IDENTITY_CONSENT`), cochée avant tout dépôt, couvre toutes les pièces personnelles. La version acceptée est enregistrée avec chaque fichier. |
+| **Pas de données sensibles** | Le Code interdit par principe le traitement des données révélant les opinions religieuses, philosophiques, politiques, syndicales, la vie sexuelle, l'origine raciale, la santé et la génétique. D'où le retrait des **statuts d'association** du catalogue : ils décrivent l'objet de l'association. Le **récépissé de déclaration** prouve l'existence légale sans rien révéler. Jamais de casier judiciaire, de certificat médical ni de relevé bancaire. |
+| **Conservation limitée**     | Les pièces **personnelles** — selfie, CIP, carte d'identité, passeport — sont détruites du stockage dès la décision rendue (`VerificationsService.purgePersonalDocuments`). La ligne en base survit, datée, pour que le dossier dise encore ce qui a été fourni. Les pièces d'**entité** (RCCM, IFU, récépissé, acte) restent : registres publics, pas des données personnelles. |
+
+### Ce qu'on ne fait pas, délibérément
+
+**Aucune reconnaissance faciale, aucun gabarit biométrique, aucun rapprochement automatique.** Un
+modérateur regarde la photo et la pièce, et décide. Un traitement d'identification automatisée ferait
+basculer la plateforme sous un régime d'autorisation préalable de l'APDP — pour un gain nul sur
+quelques dossiers par semaine.
+
+### Ce qui reste à faire hors du code
+
+Deux formalités qu'aucune ligne de code ne remplace, à accomplir **avant la mise en service réelle** :
+
+1. **Déclarer le traitement auprès de l'APDP** (formalités préalables, articles 405 et suivants).
+2. **Publier une politique de confidentialité** reprenant les finalités, les durées de conservation
+   et les droits d'accès, de rectification et d'opposition — la page `/confidentialite` existe et
+   doit être alignée sur ce qui précède.
+
+Cette section décrit une architecture, pas un avis juridique : une relecture par un conseil inscrit
+au barreau béninois reste nécessaire avant l'ouverture commerciale.
 
 ## 10.2 Observabilité
 

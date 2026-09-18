@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -36,6 +37,8 @@ import {
  */
 @Injectable()
 export class EventsService {
+  private readonly logger = new Logger(EventsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -82,6 +85,12 @@ export class EventsService {
         });
 
     if (!category) {
+      // L'organisateur n'y peut rien : c'est l'environnement qui n'a pas ses
+      // référentiels. Le journal le dit à qui peut agir.
+      this.logger.error(
+        'Aucune catégorie active en base : les référentiels ne sont pas installés. ' +
+          'Lancer `pnpm db:seed` (prisma/seed.ts) sur cet environnement.',
+      );
       throw new BadRequestException('Aucune catégorie disponible. Contacte le support.');
     }
 

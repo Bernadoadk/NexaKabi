@@ -25,7 +25,7 @@ Command, Output Directory, Install Command) : le fichier fait foi.
 
 | Fichier                  | Ce qu'il fixe                                                                                                                                                |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/api/vercel.json`   | Preset `nestjs` · install `pnpm install --prod=false` · build `turbo run build && pnpm exec prisma migrate deploy` · `outputDirectory: dist` · région `fra1` |
+| `apps/api/vercel.json`   | Preset `nestjs` · install `pnpm install --prod=false` · build `turbo run build && pnpm exec prisma migrate deploy && pnpm exec tsx prisma/seed.ts` · `outputDirectory: dist` · région `fra1` |
 | `apps/web/vercel.json`   | Preset `nextjs` · build `turbo run build` · région `fra1`                                                                                                    |
 | `apps/admin/vercel.json` | Idem                                                                                                                                                         |
 
@@ -36,6 +36,11 @@ Trois mécanismes méritent d'être compris avant de toucher à quoi que ce soit
   décorateurs correctes, client Prisma copié), et non `src/main.ts` qu'il aurait compilé lui-même.
   Vercel capture ensuite l'appel `app.listen()` et route toutes les requêtes vers cette fonction.
   Le dossier n'est **pas** servi en statique.
+- **`prisma/seed.ts` dans le build, juste après les migrations.** Il installe les RÉFÉRENTIELS —
+  catégories et villes du cahier des charges — sans lesquels aucun événement ne peut être créé
+  (« Aucune catégorie disponible »). Il est idempotent (`upsert`) : le relancer à chaque
+  déploiement ne duplique rien et rattrape une base neuve. Ce n'est pas un jeu de données de
+  démonstration : aucun compte, aucun événement.
 - **`prisma migrate deploy` dans le build.** Les migrations s'appliquent pendant le build, avant que
   le nouveau déploiement ne prenne le trafic. Elles passent par `DATABASE_URL_UNPOOLED` (connexion
   directe) — voir `apps/api/prisma.config.ts`. Conséquence : une migration incompatible avec le code
@@ -137,9 +142,13 @@ Ne **pas** définir `PORT` ni `API_PREFIX`.
 
 6. **Deploy.** Dans le journal de build, vérifier dans l'ordre : `pnpm install` avec pnpm 11,
    `turbo run build` (utils → contracts → api), puis `prisma migrate deploy` qui liste les
-   migrations appliquées.
+   migrations appliquées, puis le seed : « 15 catégories, 7 villes ».
 7. Contrôles :
    - `https://nexakabi-api.vercel.app/api/health` → `{"status":"ok","checks":{"database":"up"}}`.
+   - `https://nexakabi-api.vercel.app/api/categories` → quinze catégories. Une liste vide signifie
+     que le seed n'a pas tourné : la création d'événement échouerait avec « Aucune catégorie
+     disponible ». Rattrapage sans redéploiement, depuis un poste :
+     `$env:DATABASE_URL='<URL Neon>'; pnpm --filter @nexakabi/api db:seed`.
    - Un appel à `https://nexakabi-api.vercel.app/api/internal/cron/retry-outbound` sans en-tête
      répond `403` : le garde est en place. Les tâches ne tourneront qu'après le §6.
 

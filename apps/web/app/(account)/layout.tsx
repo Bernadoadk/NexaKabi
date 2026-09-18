@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { CalendarPlus, LayoutDashboard } from 'lucide-react';
 import { Avatar, ThemeToggle } from '@nexakabi/ui';
 import { getCurrentUser } from '@/lib/session';
+import { listOrganizations } from '@/lib/organizations';
 import { fetchNotifications } from '@/lib/notifications';
 import { PublicBottomNav } from '@/components/public-bottom-nav';
 import { AccountNav } from './account-nav';
@@ -19,7 +21,14 @@ export default async function AccountLayout({ children }: { children: React.Reac
   if (!user) redirect('/connexion?suite=/mon-compte');
   if (user.needsProfileCompletion) redirect('/connexion');
 
-  const { unreadCount } = await fetchNotifications();
+  // En parallèle : ces deux appels ne dépendent pas l'un de l'autre, et
+  // l'en-tête ne s'affiche qu'une fois les deux revenus.
+  const [{ unreadCount }, organizations] = await Promise.all([
+    fetchNotifications(),
+    listOrganizations(),
+  ]);
+
+  const isOrganizer = organizations.length > 0;
 
   return (
     <div className="flex min-h-dvh flex-col bg-paper">
@@ -35,6 +44,38 @@ export default async function AccountLayout({ children }: { children: React.Reac
           </Link>
 
           <div className="flex items-center gap-3">
+            {/* Passage vers l'espace organisateur — le symétrique exact du
+                lien « Espace participant » de `(pro)/pro/layout.tsx`, même
+                forme et même place : on garde la session, on change de
+                casquette.
+
+                ── Une seule destination pour deux libellés ──────────────────
+                `/pro` sait déjà quoi faire dans les deux cas : sans
+                organisation, son layout affiche le formulaire de création
+                plein écran. Envoyer ailleurs le futur organisateur — une page
+                d'accueil commerciale, par exemple — lui ferait franchir une
+                étape de plus pour arriver au même formulaire.
+
+                Le libellé, lui, doit distinguer les deux : « Espace
+                organisateur » promet un endroit qui existe déjà, et le
+                montrer à quelqu'un qui n'a rien créé le ferait douter d'avoir
+                oublié quelque chose. */}
+            <Link
+              href="/pro"
+              aria-label={isOrganizer ? 'Espace organisateur' : 'Devenir organisateur'}
+              title={isOrganizer ? 'Espace organisateur' : 'Devenir organisateur'}
+              className="flex h-[36px] w-[36px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-border-field text-body-s font-semibold text-text-strong transition hover:bg-surface-alt sm:w-auto sm:px-3"
+            >
+              {isOrganizer ? (
+                <LayoutDashboard className="size-4" />
+              ) : (
+                <CalendarPlus className="size-4" />
+              )}
+              <span className="hidden sm:inline">
+                {isOrganizer ? 'Espace organisateur' : 'Devenir organisateur'}
+              </span>
+            </Link>
+
             <ThemeToggle />
             <Link
               href="/mon-compte"

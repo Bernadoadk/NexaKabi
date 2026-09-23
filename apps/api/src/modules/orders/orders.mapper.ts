@@ -26,6 +26,7 @@ export const orderWithRelations = Prisma.validator<Prisma.OrderDefaultArgs>()({
         city: { select: { name: true } },
       },
     },
+    refunds: { select: { amount: true, status: true } },
   },
 });
 
@@ -69,5 +70,16 @@ export function toOrder(order: OrderWithRelations): OrderContract {
     createdAt: order.createdAt.toISOString(),
 
     requiresAttendeeName: order.event.requiresAttendeeName,
+
+    refund:
+      order.refunds.length === 0
+        ? null
+        : {
+            // « Rendu » seulement quand TOUT ce qui a été décidé est parti.
+            state: order.refunds.every((refund) => refund.status === 'COMPLETED')
+              ? 'COMPLETED'
+              : 'IN_PROGRESS',
+            amount: order.refunds.reduce((total, refund) => total + refund.amount, 0),
+          },
   };
 }

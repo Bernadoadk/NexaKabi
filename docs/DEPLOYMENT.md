@@ -190,15 +190,17 @@ qu'il faut (cookies `secure`, HSTS, CSP stricte).
 
 ## 6. Planificateur des tâches — cron-job.org
 
-L'API a sept tâches de fond (`@Cron()` dans le code, plus la purge du transit) : libération des
-réservations expirées, rattrapage des paiements en attente, réconciliation des versements, reprise
-des envois en échec, rappels, balayage nocturne, purge des dépôts non conclus. Sans elles, les places restent bloquées par des commandes abandonnées
-et un paiement confirmé en différé ne l'est jamais. Sur Vercel, personne ne les lance : c'est
-cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-tête secret.
+L'API a neuf tâches de fond (`@Cron()` dans le code, plus la purge du transit) : libération des
+réservations expirées, rattrapage des paiements en attente, réconciliation des versements et des
+remboursements, reprise des envois en échec, rappels, balayage nocturne, purge des dépôts non
+conclus, relevé de l'état des opérateurs, synchronisation du compte marchand. Sans elles, les
+places restent bloquées par des commandes abandonnées, un paiement confirmé en différé ne l'est
+jamais, et un opérateur en panne reste proposé aux acheteurs. Sur Vercel, personne ne les lance :
+c'est cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-tête secret.
 
 1. Créer un compte sur [cron-job.org](https://cron-job.org). Fuseau horaire du compte :
    `Africa/Porto-Novo` (seul le balayage nocturne y est sensible).
-2. Pour chacune des sept tâches, **Create cronjob** :
+2. Pour chacune des tâches du tableau, **Create cronjob** :
    - **Title** : le nom de la tâche.
    - **URL** : `https://nexakabi-api.vercel.app/api/internal/cron/<tâche>`.
    - **Schedule** : selon le tableau ci-dessous.
@@ -210,10 +212,12 @@ cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-tête 
 | ------------------------ | ---------------------------- | ---------------------------------------------------- |
 | `release-expired-orders` | chaque minute                | rend les places des réservations arrivées à échéance |
 | `poll-pending-payments`  | chaque minute                | interroge l'opérateur sur les paiements en attente   |
-| `reconcile-payouts`      | chaque minute                | conclut les versements Mobile Money en cours         |
+| `reconcile-payouts`      | chaque minute                | conclut les versements et remboursements en cours    |
+| `sync-payment-availability` | toutes les 5 minutes      | relève chez KPay l'état des opérateurs (panne, retards) |
 | `retry-outbound`         | toutes les 10 minutes        | réessaie les e-mails et SMS en échec                 |
 | `purge-staged-uploads`   | tous les jours à 4 h 30      | supprime les dépôts directs jamais conclus (transit) |
 | `send-reminders`         | chaque heure, à la 7ᵉ minute | rappels avant événement                              |
+| `sync-payment-providers` | chaque heure, à la 17ᵉ minute | constate les moyens ouverts sur le compte marchand — **facultatif en V1** : KPay n'expose pas cette liste, la tâche ne fait rien |
 | `nightly-sweep`          | tous les jours à 3 h         | reprise des webhooks orphelins                       |
 
 3. Vérifier depuis la page d'un job (exécution de test) : réponse `200` avec
@@ -227,9 +231,10 @@ tout double traitement si deux appels se chevauchent. Un échec est visible dans
 et notifié par e-mail ; l'appel suivant repart normalement.
 
 > **Le jour du plan Pro**, Vercel Cron peut reprendre l'horloge : remettre dans
-> `apps/api/vercel.json` un bloc `"crons"` avec les sept entrées
+> `apps/api/vercel.json` un bloc `"crons"` avec une entrée par tâche
 > (`{ "path": "/api/internal/cron/<tâche>", "schedule": "* * * * *" }`, schedules `* * * * *`,
-> `*/10 * * * *`, `7 * * * *`, `0 3 * * *`, `30 4 * * *`) et supprimer les jobs cron-job.org. Vercel envoie
+> `*/5 * * * *`, `*/10 * * * *`, `7 * * * *`, `17 * * * *`, `0 3 * * *`, `30 4 * * *`) et supprimer
+> les jobs cron-job.org. Vercel envoie
 > alors `CRON_SECRET` de lui-même. Rien d'autre ne change.
 
 ---

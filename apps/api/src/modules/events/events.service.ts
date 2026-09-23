@@ -538,8 +538,10 @@ export class EventsService {
      * serait remboursé, et ne l'était jamais.
      *
      * Commande par commande, frais compris, sans qu'un échec isolé bloque les
-     * autres. Ce qui n'a pas pu être rendu automatiquement est consigné dans
-     * l'audit, nominativement : c'est la liste du support.
+     * autres. Chaque remboursement est inscrit dès maintenant — l'argent quitte
+     * le solde de l'organisateur —, même quand le prestataire ne peut pas s'en
+     * charger : il attend alors dans la console, où l'administration le fait
+     * à la main.
      */
     const refunds = await this.refunds.refundCancelledEvent(eventId, userId);
 
@@ -556,6 +558,7 @@ export class EventsService {
       changes: {
         reason,
         refunded: refunds.refunded,
+        refundsManual: refunds.manual,
         freeOrdersClosed: refunds.closed,
         refundsFailed: refunds.failed,
         ticketsCancelled,

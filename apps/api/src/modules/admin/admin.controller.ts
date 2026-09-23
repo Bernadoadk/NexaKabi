@@ -14,11 +14,15 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { createZodDto } from 'nestjs-zod';
 import {
   adminLoginSchema,
+  canMoveMoney,
   changeAdminPasswordSchema,
   createAdminStaffSchema,
+  createRefundSchema,
   createReportSchema,
   freezeFundsSchema,
   recordPayoutSchema,
+  recordRefundSchema,
+  refundQueueSchema,
   resetAdminStaffPasswordSchema,
   resolveReportSchema,
   reviewEventSchema,
@@ -48,6 +52,7 @@ import {
 import { AdminStaffService } from './admin-staff.service';
 import { AdminUsersService } from './admin-users.service';
 import { PayoutsService } from '../finance/payouts.service';
+import { RefundsService } from '../finance/refunds.service';
 import { EventModerationService } from './event-moderation.service';
 import { ModerationService } from './moderation.service';
 import { VerificationsService } from './verifications.service';
@@ -65,6 +70,8 @@ class FreezeDto extends createZodDto(freezeFundsSchema) {}
 class UnfreezeDto extends createZodDto(unfreezeFundsSchema) {}
 class SuspendUserDto extends createZodDto(suspendUserSchema) {}
 class RecordPayoutDto extends createZodDto(recordPayoutSchema) {}
+class CreateRefundDto extends createZodDto(createRefundSchema) {}
+class RecordRefundDto extends createZodDto(recordRefundSchema) {}
 class NoteDto extends createZodDto(z.object({ body: z.string().trim().min(1).max(2_000) })) {}
 
 /**
@@ -197,6 +204,7 @@ export class AdminController {
     private readonly verifications: VerificationsService,
     private readonly moderation: ModerationService,
     private readonly payouts: PayoutsService,
+    private readonly refunds: RefundsService,
     private readonly events: EventModerationService,
     private readonly organizations: AdminOrganizationsService,
     private readonly users: AdminUsersService,
@@ -440,6 +448,83 @@ export class AdminController {
     @Req() request: AdminRequest,
   ) {
     return this.payouts.recordManual(id, body, request.admin.id);
+  }
+
+  // ── Remboursements ────────────────────────────────────────────────────────
+
+  /**
+   * Remboursements, file par file.
+   *
+   * Le numéro du payeur n'est en clair que pour qui peut déplacer l'argent :
+   * c'est vers lui qu'un remboursement fait à la main s'envoie.
+   */
+  @RequireAdminAccess('finance', 'read')
+  @Get('refunds')
+  @ApiOperation({ summary: 'Remboursements — à faire, en cours, faits' })
+  listRefunds(@Query('file') queue: string | undefined, @Req() request: AdminRequest) {
+    const parsed = refundQueueSchema.safeParse(queue);
+
+    return this.refunds.listAll(
+      { queue: parsed.success ? parsed.data : undefined },
+      { revealPhones: canMoveMoney(request.admin) },
+    );
+  }
+
+  @RequireAdminAccess('finance', 'read')
+  @Get('orders/:reference/refund-preview')
+  @ApiOperation({ summary: 'Ce qui reste à rembourser sur une commande' })
+  previewRefund(@Param('reference') reference: string) {
+    return this.refunds.preview(reference);
+  }
+
+  /**
+   * Décide un remboursement.
+   *
+   * L'argent quitte aussitôt le solde de l'organisateur ; le prestataire s'en
+   * charge s'il le peut, sinon il attend dans la file « à faire ».
+   */
+  @RequireAdminAccess('finance', 'act')
+  @RequireMoney()
+  @Post('orders/:reference/refunds')
+  @ApiOperation({ summary: 'Rembourser une commande' })
+  createRefund(
+    @Param('reference') reference: string,
+    @Body() body: CreateRefundDto,
+    @Req() request: AdminRequest,
+  ) {
+    return this.refunds.refundOrder(
+      {
+        orderReference: reference.trim().toUpperCase(),
+        reason: body.reason,
+        note: body.note,
+        refundFees: body.refundFees,
+      },
+      request.admin.id,
+    );
+  }
+
+  @RequireAdminAccess('finance', 'act')
+  @RequireMoney()
+  @Post('refunds/:id/retry')
+  @ApiOperation({ summary: 'Relancer un remboursement chez le prestataire' })
+  retryRefund(@Param('id') id: string, @Req() request: AdminRequest) {
+    return this.refunds.retry(id, request.admin.id);
+  }
+
+  /**
+   * Consigne un remboursement fait hors API — même rang que la décision :
+   * c'est le pouvoir de déclarer que l'argent est rendu.
+   */
+  @RequireAdminAccess('finance', 'act')
+  @RequireMoney()
+  @Post('refunds/:id/record')
+  @ApiOperation({ summary: 'Enregistrer un remboursement fait à la main' })
+  recordRefund(
+    @Param('id') id: string,
+    @Body() body: RecordRefundDto,
+    @Req() request: AdminRequest,
+  ) {
+    return this.refunds.recordManual(id, body, request.admin.id);
   }
 
   // ── Fonds ─────────────────────────────────────────────────────────────────

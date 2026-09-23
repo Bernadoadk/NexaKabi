@@ -436,18 +436,6 @@ export class PayoutsService {
   }
 
   /**
-   * Choisit l'opérateur qui versera.
-   *
-   * ── Ce que ce choix a de simple, et pourquoi ────────────────────────────
-   * Un seul agrégateur — FedaPay — couvre les trois opérateurs béninois. Le
-   * premier fournisseur capable de verser fait l'affaire : ils partagent le même
-   * compte marchand et la même API.
-   *
-   * Le jour où plusieurs agrégateurs coexisteront, ce point sera le seul à
-   * changer — et il faudra alors router selon l'opérateur du compte, pas selon
-   * l'ordre d'enregistrement.
-   */
-  /**
    * Notification de versement reçue d'un prestataire.
    *
    * Même idempotence que les encaissements : l'événement est consigné dans
@@ -466,11 +454,20 @@ export class PayoutsService {
       return { duplicate: true, applied: false };
     }
 
-    const record =
-      existing ??
-      (await this.prisma.webhookEvent.create({
-        data: { providerCode, externalId: event.externalId, rawBody: JSON.stringify(event) },
-      }));
+    let record = existing;
+
+    if (!record) {
+      try {
+        record = await this.prisma.webhookEvent.create({
+          data: { providerCode, externalId: event.externalId, rawBody: JSON.stringify(event) },
+        });
+      } catch (error) {
+        // Même événement livré deux fois et traité en parallèle : l'index unique
+        // a tranché, l'autre traitement s'en occupe.
+        if (!isUniqueViolation(error)) throw error;
+        return { duplicate: true, applied: false };
+      }
+    }
 
     const payout = await this.prisma.payout.findFirst({
       where: { providerCode, providerReference: event.providerReference },
@@ -478,9 +475,16 @@ export class PayoutsService {
     });
 
     if (!payout) {
+      // `FAILED` et non `RECEIVED` : la reprise des notifications orphelines ne
+      // cherche que des PAIEMENTS, et y aurait classé celle-ci « illisible ».
+      // Rien n'est perdu — l'interrogation minute par minute des retraits en
+      // cours conclura, et un rejeu du prestataire est encore repris.
       await this.prisma.webhookEvent.update({
         where: { id: record.id },
-        data: { error: `Aucun retrait pour la référence ${event.providerReference}` },
+        data: {
+          status: 'FAILED',
+          error: `Aucun retrait pour la référence ${event.providerReference} — l'interrogation des retraits en cours conclura.`,
+        },
       });
       this.logger.warn(
         `Notification de versement ${providerCode}/${event.externalId} sans retrait`,
@@ -760,4 +764,13 @@ function maskAccount(accountNumber: string): string {
   }
 
   return `•••• ${accountNumber.slice(-4)}`;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code: unknown }).code === 'P2002'
+  );
 }

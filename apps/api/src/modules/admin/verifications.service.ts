@@ -445,6 +445,7 @@ ${body}`,
       verifiedOrganizations,
       grossVolume,
       eventsPublishedThisMonth,
+      refundsToProcess,
     ] = await Promise.all([
       this.prisma.event.count({ where: { status: 'PENDING_REVIEW', deletedAt: null } }),
       this.prisma.verificationRequest.count({
@@ -476,6 +477,12 @@ ${body}`,
       this.prisma.event.count({
         where: { deletedAt: null, publishedAt: { gte: startOfMonth } },
       }),
+      // Dus et sans exécution en cours : jamais tentés, ou refusés.
+      this.prisma.refund.aggregate({
+        where: { status: { in: ['PENDING', 'FAILED'] } },
+        _count: true,
+        _sum: { amount: true },
+      }),
     ]);
 
     return {
@@ -484,6 +491,8 @@ ${body}`,
       openReports,
       pendingPayouts,
       pendingPayoutAmount: payoutSum._sum.netAmount ?? 0,
+      refundsToProcess: refundsToProcess._count,
+      refundsToProcessAmount: refundsToProcess._sum.amount ?? 0,
       // Les `FREEZE` sont négatives et les `UNFREEZE` positives : le gel net est
       // l'opposé de leur somme. Le `+ 0` évite le `-0` que produit la négation
       // de zéro en JavaScript.

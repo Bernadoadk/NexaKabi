@@ -375,11 +375,23 @@ export class PaymentsService {
       return { received: true, duplicate: true, outcome: 'ignored' };
     }
 
-    const record =
-      existing ??
-      (await this.prisma.webhookEvent.create({
-        data: { providerCode, externalId: event.externalId, rawBody, signature },
-      }));
+    let record = existing;
+
+    if (!record) {
+      try {
+        record = await this.prisma.webhookEvent.create({
+          data: { providerCode, externalId: event.externalId, rawBody, signature },
+        });
+      } catch (error) {
+        // Deux livraisons du même événement traitées en même temps — le
+        // prestataire a rejoué pendant que la première tournait encore en
+        // arrière-plan. L'index unique a tranché : l'autre s'en occupe.
+        if (!isUniqueViolation(error)) throw error;
+
+        this.logger.log(`Webhook ${providerCode}/${event.externalId} déjà en cours — doublon écarté`);
+        return { received: true, duplicate: true, outcome: 'ignored' };
+      }
+    }
 
     const payment = await this.prisma.payment.findFirst({
       where: { providerCode, providerReference: event.providerReference },

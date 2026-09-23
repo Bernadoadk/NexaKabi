@@ -4,6 +4,7 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../auth/decorators/public.decorator';
 import { PayoutsScheduler } from '../finance/payouts.scheduler';
 import { NotificationsScheduler } from '../notifications/notifications.scheduler';
+import { PaymentRoutingService } from '../payments/payment-routing.service';
 import { ReconciliationService } from '../payments/reconciliation.service';
 import { StorageProvider } from '../media/storage.provider';
 import { CronSecretGuard } from './cron-secret.guard';
@@ -25,6 +26,8 @@ export const CRON_JOBS = [
   'send-reminders',
   'retry-outbound',
   'purge-staged-uploads',
+  'sync-payment-availability',
+  'sync-payment-providers',
 ] as const;
 
 export type CronJobName = (typeof CRON_JOBS)[number];
@@ -61,6 +64,7 @@ export class CronController {
     payouts: PayoutsScheduler,
     notifications: NotificationsScheduler,
     storage: StorageProvider,
+    routing: PaymentRoutingService,
   ) {
     this.jobs = {
       'release-expired-orders': () => reconciliation.releaseExpiredOrders(),
@@ -75,6 +79,11 @@ export class CronController {
         const purged = await storage.purgeStaged(new Date(Date.now() - 24 * 60 * 60 * 1000));
         if (purged > 0) this.logger.log(`Transit purgé : ${purged} fichier(s)`);
       },
+      // Sans appel externe, l'état des opérateurs ne se relevait qu'au
+      // démarrage d'une instance : un opérateur en panne restait proposé aux
+      // acheteurs jusqu'au démarrage suivant.
+      'sync-payment-availability': () => routing.syncAvailability(),
+      'sync-payment-providers': () => routing.syncConnectedProviders(),
     };
   }
 

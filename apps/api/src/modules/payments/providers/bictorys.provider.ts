@@ -130,6 +130,7 @@ export class BictorysProvider extends PaymentProvider {
   readonly capabilities = {
     refund: true,
     partialRefund: false,
+    refundWindowDays: null,
     payout: true,
     statusPolling: true,
     verifyWebhookByFetch: true,

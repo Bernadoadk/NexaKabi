@@ -8,11 +8,11 @@
  *   · Le MOYEN      — ce que le participant reconnaît : « MTN MoMo », « Wave »,
  *                     « Carte bancaire ». Un catalogue de marques, pas de code
  *                     métier.
- *   · Le PRESTATAIRE — qui traite réellement l'argent : Bictorys aujourd'hui,
+ *   · Le PRESTATAIRE — qui traite réellement l'argent : KPay aujourd'hui,
  *                     un autre demain. Le participant ne le voit jamais.
  *
  * Ce qui relie les trois est une CONFIGURATION, pas du code : « au Bénin, MTN
- * MoMo est collecté ET versé par Bictorys sous le code `mtn_money` ». Ouvrir
+ * MoMo est collecté ET versé par KPay sous le code `MTN_MOMO_BEN` ». Ouvrir
  * la Côte d'Ivoire consiste à ajouter des lignes de cette configuration, pas
  * à écrire un `if (country === 'CI')`.
  *

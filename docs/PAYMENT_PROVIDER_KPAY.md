@@ -18,6 +18,7 @@ Le produit part avec **un seul prestataire opérationnel**. Ce qui a changé :
 | Carte | Bictorys | Aucun prestataire (USD chez KPay) |
 | État des opérateurs | Inconnu | **Relevé toutes les 5 min chez KPay** |
 | Logos | Aucun | **Un par opérateur, avec sa couleur** |
+| Remboursements | Aucun écran, impossibles avec KPay | **Par KPay (7 jours, intégral), sinon à la main — console « Remboursements »** |
 
 `PaymentProviderDefinition.status` porte la décision : `ACTIVE` ou `LEGACY`. C'est le seul
 endroit où « KPay est le seul prestataire du lancement » est écrit. Ajouter CinetPay plus tard
@@ -45,9 +46,9 @@ endpoint par endpoint dans sa documentation.
 | Contrôle montant/devise | Une notification qui ne concorde pas est refusée et consignée |
 | **Correctif F7** | Les webhooks orphelins sont enfin repris (défaut silencieux de l'existant) |
 
-**Ce qui reste volontairement hors périmètre** : la carte par KPay (facturée en USD, §G.0),
-le remboursement par son API (inexistant), l'administration financière et le remboursement
-manuel (§E.2, antérieurs à KPay), les logos (§H.2).
+**Ce qui reste volontairement hors périmètre** : la carte par KPay (facturée en USD, §G.0) et
+l'administration financière complète (§J) — tableau de bord, transactions, grand livre,
+rapprochement, rapports.
 
 **Décisions prises en cours d'intégration, toutes fondées sur sa documentation :**
 
@@ -55,10 +56,10 @@ manuel (§E.2, antérieurs à KPay), les logos (§H.2).
   l'acheteur réglant l'équivalent en monnaie locale. Une commande Nexa-Kabi est un entier de
   francs CFA : passer par une conversion dont nous ne maîtrisons ni le taux ni l'arrondi ferait
   diverger le montant encaissé du montant dû, et le grand livre avec.
-- **`capabilities.refund: false`.** Son API n'expose aucun remboursement — seulement des
-  notifications `refund.*` pour ceux décidés depuis son tableau de bord. Le service de
-  remboursement dit alors clairement qu'il faut le faire à la main.
-- **Le Togo et Wave ne sont pas couverts** par KPay ; ils restent chez Bictorys.
+- **~~`capabilities.refund: false`~~ — corrigé le 23 septembre 2026.** L'intégration du 22
+  concluait que l'API ne remboursait pas. Sa documentation décrit pourtant
+  `POST /api/v1/payments/:id/refund` : voir « Remboursements » ci-dessous.
+- **Le Togo, Wave et Celtiis ne sont pas couverts** par KPay : ils n'ont pas de moyen en V1.
 - **Pas de `KPAY_ENVIRONMENT`.** Une seule adresse, et c'est le préfixe de la clé qui décide.
   Un réglage séparé laisserait croire qu'on peut viser le bac à sable avec une clé de
   production — on ne peut pas.
@@ -75,6 +76,39 @@ migration appliquée, base nettoyée après) :
   Togo) ;
 - configuration refusée au démarrage sur clé incomplète ou préfixe incohérent ;
 - Bictorys et KPay branchés ensemble, sans avertissement ni régression.
+
+### Remboursements (23 septembre 2026)
+
+**Ce que KPay permet** (documentation, section « Remboursements ») : rembourser un paiement
+abouti, **intégralement** (frais compris, sans frais de plus), **dans les 7 jours** suivant
+l'encaissement, de façon **asynchrone** — demande acceptée (`PENDING`), puis webhook
+`refund.completed` ou `refund.failed`. Le montant est réservé sur le wallet dès la demande ; un
+solde insuffisant la fait refuser. `externalId` sert de clé d'idempotence.
+
+**Le modèle retenu : un remboursement est dû dès qu'il est décidé.**
+
+| Moment | Ce qui s'écrit |
+| ------ | -------------- |
+| Décision (console, ou annulation d'événement) | `Refund` en `PENDING`, écritures `REFUND` (+ `REFUND_FEE_REVERSAL` si les frais sont rendus) dans la même poche que la vente, commande `REFUNDED`, billets annulés |
+| Confié à KPay (≤ 7 jours, intégral) | `PROCESSING`, référence KPay |
+| Issue (webhook, ou interrogation chaque minute) | `COMPLETED`, ou `FAILED` — toujours dû |
+| Fait à la main (délai dépassé, partiel, refus) | `COMPLETED`, `manual`, référence de l'opération |
+
+L'argent quitte le solde de l'organisateur **à la décision** : il ne peut plus retirer ce qu'il
+doit rendre, même si le remboursement se fait des jours plus tard. Le participant lit
+« Remboursement en cours » tant que tout n'est pas `COMPLETED`.
+
+**Idempotence** : la clé envoyée est `<remboursement>-<génération>`. Après une réponse perdue,
+« Relancer » renvoie la même clé (pas de doublon possible) ; elle ne change qu'après un refus
+pour lequel KPay a créé une transaction. Un remboursement conclu à la main puis annoncé réussi
+par KPay laisse une trace `refund.duplicate_suspected`.
+
+**Console** : écran « Remboursements », espace **Finance** (nouveau), mouvements soumis au droit
+`canMoveMoney`. Files « À faire », « En cours », « Remboursés ». Le numéro du payeur n'y est en
+clair que pour qui peut déplacer l'argent. Le tableau de bord compte les remboursements à faire.
+
+**À confirmer en bac à sable** : la documentation ne publie pas le corps d'un webhook
+`refund.*`. Le rapprochement se fait par la référence KPay, ou à défaut par notre `externalId`.
 
 **Avant le premier encaissement réel** : poser les clés de bac à sable, déclarer le webhook
 sur `https://<api>/api/webhooks/payments/kpay`, puis ouvrir un moyen à la fois depuis

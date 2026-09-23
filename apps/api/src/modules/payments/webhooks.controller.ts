@@ -21,8 +21,10 @@ import { paymentProviderSchema, type PaymentProviderCode } from '@nexakabi/contr
 import { formatMoney } from '@nexakabi/utils';
 import type { Request, Response } from 'express';
 import type { Env } from '../../config/env';
+import { runInBackground } from '../../infra/scheduling/background';
 import { Public } from '../auth/decorators/public.decorator';
 import { PayoutsService } from '../finance/payouts.service';
+import { RefundsService } from '../finance/refunds.service';
 import { PaymentsService } from './payments.service';
 import { PaymentProviderRegistry } from './provider.registry';
 import { MockPaymentProvider } from './providers/mock-payment.provider';
@@ -47,10 +49,15 @@ interface RawBodyRequest extends Request {
  *  4. **Aucune limitation de débit** : ce n'est pas du trafic utilisateur, et
  *     une salve de notifications après un incident est justement le moment où
  *     il ne faut rien perdre.
+ *  5. **On accuse réception AVANT de traiter.** Une notification authentifiée
+ *     est acquittée aussitôt, puis traitée en arrière-plan. KPay abandonne au
+ *     bout de trois secondes — moins qu'un premier encaissement sur une
+ *     instance qui démarre. Un traitement interrompu n'est pas perdu : la
+ *     réconciliation relit l'état chez le prestataire chaque minute.
  *
- * Un même point de terminaison reçoit les encaissements ET les versements :
- * c'est la notification normalisée qui dit de quoi elle parle, et chacune
- * va au service qui la comprend.
+ * Un même point de terminaison reçoit les encaissements, les versements et
+ * les remboursements : c'est la notification normalisée qui dit de quoi elle
+ * parle, et chacune va au service qui la comprend.
  *
  * Voir docs/TECHNICAL_ARCHITECTURE.md §6.4.
  */
@@ -64,6 +71,7 @@ export class WebhooksController {
   constructor(
     private readonly payments: PaymentsService,
     private readonly payouts: PayoutsService,
+    private readonly refunds: RefundsService,
     private readonly registry: PaymentProviderRegistry,
     config: ConfigService<Env, true>,
   ) {
@@ -81,7 +89,7 @@ export class WebhooksController {
   async receive(
     @Param('provider') providerParam: string,
     @Req() request: RawBodyRequest,
-  ): Promise<{ received: boolean; duplicate?: boolean }> {
+  ): Promise<{ received: boolean }> {
     const providerCode = this.resolveProvider(providerParam);
     const provider = this.registry.get(providerCode);
 
@@ -114,20 +122,33 @@ export class WebhooksController {
       throw new BadRequestException('Charge utile de webhook illisible.');
     }
 
+    // Conservée pour l'audit. Jamais `X-Secret-Key` : chez Bictorys, cet en-tête
+    // porte le secret lui-même, pas une signature — l'écrire en base revenait à
+    // stocker le secret du webhook en clair, à chaque notification.
     const signature = firstHeader(
-      request.headers['x-signature'] ??
-        request.headers['x-secret-key'] ??
+      request.headers['x-kpay-signature'] ??
+        request.headers['x-signature'] ??
         request.headers['x-mock-signature'],
     );
 
-    if (event.kind === 'payout') {
-      const result = await this.payouts.handleProviderEvent(providerCode, event);
-      return { received: true, duplicate: result.duplicate };
-    }
+    // Authentifiée et lisible : on acquitte, le traitement suit. Les refus
+    // (401, 400) sont tous tombés au-dessus — un prestataire ne rejoue pas une
+    // erreur 4xx, et c'est ce qu'on veut pour une notification invalide.
+    runInBackground(`Webhook ${providerCode}/${event.externalId}`, async () => {
+      if (event.kind === 'payout') {
+        await this.payouts.handleProviderEvent(providerCode, event);
+        return;
+      }
 
-    const result = await this.payments.handleWebhook(providerCode, event, rawBody, signature);
+      if (event.kind === 'refund') {
+        await this.refunds.handleProviderEvent(providerCode, event);
+        return;
+      }
 
-    return { received: true, duplicate: result.duplicate };
+      await this.payments.handleWebhook(providerCode, event, rawBody, signature);
+    });
+
+    return { received: true };
   }
 
   // ───────────────────────────────────────────────────────────────────────────

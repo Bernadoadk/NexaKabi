@@ -1539,16 +1539,33 @@ model Refund {
 
   requestedById String?
   approvedById  String?
+  /// Qui a conclu à la main, ou relancé la demande chez le prestataire.
+  processedById String?
 
+  /// Référence du remboursement chez le prestataire — ou de l'opération faite
+  /// à la main (transfert Mobile Money, geste dans son tableau de bord).
   providerReference String?
   /// Motif obligatoire en cas de refus.
   note              String?
+  /// Pourquoi le remboursement n'est pas (encore) fait : refus du prestataire,
+  /// délai dépassé, réponse perdue. Lu par l'administrateur qui reprend.
+  failureReason     String?
+  /// Conclu à la main plutôt que par le prestataire.
+  manual            Boolean   @default(false)
+
+  /// Génération de la clé d'idempotence envoyée au prestataire (`<id>-<n>`).
+  /// Elle ne change qu'après un refus pour lequel il a créé une transaction :
+  /// réessayer après une réponse perdue réutilise la même clé, sans doublon.
+  providerAttempt Int       @default(0)
+  lastAttemptAt   DateTime?
 
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
   completedAt DateTime?
 
   @@index([orderId])
   @@index([status, createdAt])
+  @@index([providerReference])
   @@map("refund")
 }
 

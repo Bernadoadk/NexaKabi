@@ -190,8 +190,8 @@ export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
 /**
  * Prestataires de paiement — ceux qui traitent réellement l'argent.
  *
- * Un prestataire n'est PAS un moyen de paiement : Bictorys encaisse MTN MoMo,
- * Wave et la carte derrière la même API. Le participant ne voit jamais ce
+ * Un prestataire n'est PAS un moyen de paiement : KPay encaisse MTN MoMo et
+ * Moov Money derrière la même API. Le participant ne voit jamais ce
  * code ; il choisit un MOYEN, et la configuration du pays désigne le
  * prestataire qui le traite. Ajouter un prestataire consiste à déposer une
  * implémentation de `PaymentProvider` et à ajouter son code ici.

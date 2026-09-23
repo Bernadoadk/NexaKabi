@@ -81,6 +81,15 @@ export default async function AdminHomePage() {
         hint={`${formatMoney(data.pendingPayoutAmount)}`}
       />
     ),
+    hasAdminAccess(user, 'finance') && (
+      <ActionTile
+        key="refunds"
+        href="/remboursements"
+        label="Remboursements à faire"
+        value={data.refundsToProcess}
+        hint={`${formatMoney(data.refundsToProcessAmount)} dus aux participants`}
+      />
+    ),
   ].filter(Boolean);
 
   return (

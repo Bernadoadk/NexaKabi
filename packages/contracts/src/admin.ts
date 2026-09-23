@@ -16,8 +16,11 @@ import { z } from 'zod';
 import { idSchema, phoneSchema, slugSchema } from './common.js';
 import {
   globalRoleSchema,
+  orderStatusSchema,
   organizationTypeSchema,
   payoutStatusSchema,
+  refundReasonSchema,
+  refundStatusSchema,
   reportReasonSchema,
   reportStatusSchema,
   reportTargetTypeSchema,
@@ -77,6 +80,11 @@ export const ADMIN_SPACES = [
     key: 'payouts',
     label: 'Retraits',
     description: 'Demandes de retrait des organisateurs et leur exécution.',
+  },
+  {
+    key: 'finance',
+    label: 'Finance',
+    description: 'Remboursements des participants, paiements et comptabilité de la plateforme.',
   },
   {
     key: 'settings',
@@ -505,6 +513,12 @@ export const adminDashboardSchema = z.object({
   pendingPayouts: z.number().int(),
   /** Montant total en attente de versement, pour dimensionner la trésorerie. */
   pendingPayoutAmount: z.number().int(),
+  /**
+   * Remboursements dus qui attendent un geste : jamais tentés, ou refusés par
+   * le prestataire. Chacun est un participant qui attend son argent.
+   */
+  refundsToProcess: z.number().int(),
+  refundsToProcessAmount: z.number().int(),
   frozenAmount: z.number().int(),
   /** Activité des dernières vingt-quatre heures. */
   ordersLast24h: z.number().int(),
@@ -692,3 +706,116 @@ export const listPayoutsQuerySchema = z.object({
 });
 
 export type ListPayoutsQuery = z.infer<typeof listPayoutsQuerySchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Remboursements — vue plateforme
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Un remboursement, tel que l'administration le suit.
+ *
+ * ── Un remboursement est dû dès qu'il est décidé ───────────────────────────
+ * Il s'inscrit au grand livre au moment de la décision : l'argent quitte le
+ * solde de l'organisateur, qui ne peut plus le retirer. Son EXÉCUTION se suit
+ * à part — par le prestataire quand il le permet, à la main sinon :
+ *
+ *   · `PENDING`    — à rembourser à la main, jamais tenté automatiquement ;
+ *   · `PROCESSING` — accepté par le prestataire, l'argent est en route ;
+ *   · `COMPLETED`  — le participant est remboursé ;
+ *   · `FAILED`     — le prestataire a refusé : toujours dû, à reprendre.
+ */
+export const adminRefundSchema = z.object({
+  id: idSchema,
+  orderId: idSchema,
+  orderReference: z.string(),
+  eventTitle: z.string(),
+  organizationId: idSchema,
+  organizationName: z.string(),
+  buyerName: z.string(),
+  /**
+   * Numéro débité à l'achat — celui qu'on recrédite. En clair seulement pour
+   * qui peut déplacer l'argent, et seulement tant qu'il reste quelque chose à
+   * faire : c'est le numéro vers lequel un remboursement manuel est envoyé.
+   */
+  payerPhone: z.string(),
+  payerPhoneMasked: z.boolean(),
+  methodLabel: z.string(),
+  amount: z.number().int(),
+  currency: z.string(),
+  feesRefunded: z.boolean(),
+  reason: refundReasonSchema,
+  status: refundStatusSchema,
+  /** Conclu à la main plutôt que par le prestataire. */
+  manual: z.boolean(),
+  /**
+   * Pourquoi le prestataire ne peut pas s'en charger — délai dépassé,
+   * remboursement partiel… `null` : le remboursement automatique est possible.
+   */
+  automaticBlocker: z.string().nullable(),
+  providerLabel: z.string(),
+  providerReference: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  note: z.string().nullable(),
+  createdAt: z.string(),
+  lastAttemptAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+});
+
+export type AdminRefund = z.infer<typeof adminRefundSchema>;
+
+/** Les trois files : ce qui attend un geste, ce qui est en route, ce qui est fait. */
+export const REFUND_QUEUES = ['todo', 'processing', 'done'] as const;
+export const refundQueueSchema = z.enum(REFUND_QUEUES);
+export type RefundQueue = z.infer<typeof refundQueueSchema>;
+
+/** Ce qu'on vérifie avant de rembourser une commande. */
+export const refundPreviewSchema = z.object({
+  orderReference: z.string(),
+  orderStatus: orderStatusSchema,
+  eventTitle: z.string(),
+  organizationName: z.string(),
+  buyerName: z.string(),
+  currency: z.string(),
+  totalAmount: z.number().int(),
+  buyerFeeAmount: z.number().int(),
+  alreadyRefunded: z.number().int(),
+  /** Ce qui reste à rendre, selon qu'on rend aussi les frais de service. */
+  refundableWithFees: z.number().int(),
+  refundableWithoutFees: z.number().int(),
+  paidAt: z.string().nullable(),
+  methodLabel: z.string().nullable(),
+  /** Pourquoi le prestataire ne pourra pas s'en charger, dans chacun des deux cas. */
+  automaticBlockerWithFees: z.string().nullable(),
+  automaticBlockerWithoutFees: z.string().nullable(),
+});
+
+export type RefundPreview = z.infer<typeof refundPreviewSchema>;
+
+/**
+ * Rembourser une commande depuis la console.
+ *
+ * `EVENT_CANCELLED` n'y figure pas : il est réservé à l'annulation d'un
+ * événement, qui rembourse toutes ses commandes d'un coup, frais compris.
+ */
+export const createRefundSchema = z.object({
+  reason: z.enum(['CUSTOMER_REQUEST', 'DUPLICATE_PAYMENT', 'DISPUTE', 'ADMIN']),
+  note: z
+    .string()
+    .trim()
+    .min(10, 'Explique la décision : elle sera relue par quelqu’un d’autre.')
+    .max(500),
+  refundFees: z.boolean().default(false),
+});
+
+export type CreateRefundInput = z.infer<typeof createRefundSchema>;
+
+/**
+ * Consigner un remboursement fait hors API — depuis le tableau de bord du
+ * prestataire, ou par transfert Mobile Money vers le numéro du payeur.
+ */
+export const recordRefundSchema = z.object({
+  reference: z.string().trim().min(3, 'Indique la référence de l’opération.').max(80),
+  note: z.string().trim().max(500).optional(),
+});
+
+export type RecordRefundInput = z.infer<typeof recordRefundSchema>;

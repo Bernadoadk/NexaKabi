@@ -15,6 +15,7 @@ import {
   type PayoutResult,
   type ProviderPaymentStatus,
   type ProviderPayoutStatus,
+  type ProviderRefundStatus,
   type RawWebhook,
   type RefundInput,
   type RefundResult,
@@ -38,24 +39,33 @@ import {
  * livre avec. `card` est donc absent de son catalogue dans `payments.ts`, et la
  * console refuse de le lui confier.
  *
- * Le remboursement. Son API n'expose aucun point de terminaison pour cela —
- * seulement des notifications `refund.*` pour des remboursements décidés depuis
- * son tableau de bord. `capabilities.refund` vaut donc `false`, et le service
- * de remboursement dit clairement qu'il faut le faire à la main.
+ * ── Ce qu'il rembourse, et à quelles conditions ─────────────────────────────
+ * Un paiement abouti, INTÉGRALEMENT — frais compris, sans frais de plus —, dans
+ * les SEPT JOURS qui suivent l'encaissement, et de façon asynchrone : la
+ * demande est acceptée (`PENDING`), puis conclue par une notification
+ * `refund.completed` ou `refund.failed`. Le montant est réservé sur notre
+ * wallet dès la demande : un solde insuffisant la fait refuser.
+ * Hors de ces conditions — remboursement partiel, délai dépassé — le
+ * remboursement reste dû et se fait à la main ; `capabilities` le déclare, et
+ * `RefundsService` le dit à l'administrateur avant même d'appeler.
  *
  * ── Les appels ──────────────────────────────────────────────────────────────
  *   Encaissement   POST /api/v1/payments/init           (USSD, `provider` + numéro)
- *   Statut         GET  /api/v1/payments/:id
+ *   Statut         GET  /api/v1/payments/:id            (paiement ou remboursement)
+ *   Rembourser     POST /api/v1/payments/:id/refund
  *   Versement      POST /api/v1/payments/withdraw
  *   Statut versem. GET  /api/v1/payments/withdraw/:id
  *   Compte         GET  /api/v1/payments/me             (diagnostic des clés)
  *
  * ── Le webhook est signé, et pourtant relu ──────────────────────────────────
- * KPay signe le corps en HMAC-SHA256 (`X-KPAY-Signature`), ce qui est déjà
- * beaucoup mieux qu'un secret partagé. Sa propre documentation pose néanmoins
- * la règle : « ne marquez la commande payée qu'après un statut COMPLETED
- * confirmé par GET /api/v1/payments/:id ». `verifyWebhookByFetch` applique
- * cette règle — la notification dit « regarde », la lecture dit « voilà ».
+ * KPay signe le corps en HMAC-SHA256 (`X-KPAY-Signature`) et tient sa
+ * notification pour la source d'autorité, l'interrogation de
+ * `GET /api/v1/payments/:id` n'étant qu'un complément. Nous la relisons quand
+ * même, pour deux raisons : la notification ne porte PAS la commission
+ * prélevée (`feeAmount`), que le grand livre doit consigner ; et une seconde
+ * source avant d'émettre des billets ne coûte rien. Ce coût n'est pas payé
+ * par KPay, qui abandonne au bout de trois secondes : la notification est
+ * acquittée d'abord, traitée ensuite (voir `WebhooksController`).
  *
  * ── L'environnement est dans la clé ─────────────────────────────────────────
  * Une seule adresse, et c'est le préfixe de la clé qui décide si l'argent
@@ -89,6 +99,33 @@ interface KpayTransaction {
   failureReason?: string;
   gatewayUrl?: string;
   expiresAt?: string;
+}
+
+/** Réponse de `POST /api/v1/payments/:id/refund`. */
+interface KpayRefund {
+  id?: string;
+  status?: KpayStatus | string;
+  amount?: number;
+  currency?: string;
+  originalPaymentId?: string;
+  originalPaymentStatus?: string;
+  message?: string;
+}
+
+/**
+ * Refus explicite de l'API — réponse 4xx. Distinct d'une panne : un refus est
+ * une réponse, et il dit que rien n'a été fait.
+ */
+class KpayRefusalError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    /** Le message de KPay, seul — ce qu'on traduit pour l'administrateur. */
+    readonly detail: string = message,
+  ) {
+    super(message);
+    this.name = 'KpayRefusalError';
+  }
 }
 
 /** Corps d'une notification. Le nom du champ d'identifiant varie selon l'objet. */
@@ -164,12 +201,13 @@ export class KpayProvider extends PaymentProvider {
   readonly code: PaymentProviderCode = 'kpay';
 
   readonly capabilities = {
-    /** Aucun point de terminaison de remboursement dans son API. */
-    refund: false,
+    refund: true,
+    /** Intégral seulement : un remboursement partiel se fait à la main. */
     partialRefund: false,
+    refundWindowDays: 7,
     payout: true,
     statusPolling: true,
-    /** Sa documentation l'exige, signature ou non. Voir l'en-tête du fichier. */
+    /** Pour la commission, absente de la notification. Voir l'en-tête du fichier. */
     verifyWebhookByFetch: true,
   };
 
@@ -317,9 +355,35 @@ export class KpayProvider extends PaymentProvider {
     }
 
     if (event.startsWith('refund.')) {
-      // Décidé depuis le tableau de bord de KPay : consigné là-bas, pas traité
-      // ici. Le passer en paiement corromprait l'état d'un encaissement abouti.
-      throw new WebhookIgnoredError(`Notification de remboursement (${event})`);
+      const refundStatus = normalizeRefundStatus(payload.status);
+
+      // KPay ne notifie que les issues ; un « en cours » ne changerait rien.
+      if (refundStatus === 'PROCESSING') {
+        throw new WebhookIgnoredError(`Remboursement encore en cours (${event})`);
+      }
+
+      // La documentation ne publie pas le corps d'une notification de
+      // remboursement. `externalId` est celui qu'on a envoyé — notre clé de
+      // tentative, la référence la plus sûre ; l'identifiant de KPay est pris
+      // où il se trouve, et le service rapproche par l'un OU l'autre.
+      const providerReference = payload.refundId ?? payload.paymentId ?? payload.reference;
+      const merchantReference = payload.externalId;
+
+      if (!providerReference && !merchantReference) {
+        throw new Error('Notification de remboursement KPay sans identifiant.');
+      }
+
+      return {
+        kind: 'refund',
+        externalId: `refund:${providerReference ?? merchantReference}:${refundStatus}`,
+        providerReference,
+        merchantReference,
+        status: refundStatus,
+        failureReason:
+          refundStatus === 'FAILED'
+            ? describeRefundRefusal(payload.failureReason ?? payload.failureCode ?? '')
+            : undefined,
+      };
     }
 
     if (event && !event.startsWith('payment.')) {
@@ -349,13 +413,70 @@ export class KpayProvider extends PaymentProvider {
     };
   }
 
-  async refund(_input: RefundInput): Promise<RefundResult> {
-    // `capabilities.refund` vaut `false` : le service de remboursement s'arrête
-    // avant d'arriver ici et explique qu'il faut le faire à la main. Ce garde-fou
-    // ne sert qu'au jour où quelqu'un basculerait la capacité sans lire l'API.
-    throw new Error(
-      "L'API de KPay n'expose pas de remboursement : il se fait depuis son tableau de bord.",
+  /**
+   * Rembourse un paiement abouti, intégralement.
+   *
+   * `externalId` porte notre clé de tentative : KPay la tient pour une clé
+   * d'idempotence, si bien que rejouer la demande après une réponse perdue ne
+   * rembourse pas deux fois. Un refus (délai dépassé, solde insuffisant,
+   * remboursement déjà en cours) revient en `FAILED` avec sa cause ; seule une
+   * issue inconnue — panne, réponse perdue — lève.
+   */
+  async refund(input: RefundInput): Promise<RefundResult> {
+    let response: KpayRefund;
+
+    try {
+      response = await this.request<KpayRefund>(
+        'POST',
+        `/api/v1/payments/${encodeURIComponent(input.providerReference)}/refund`,
+        { reason: input.reason.slice(0, 255), externalId: input.refundKey },
+      );
+    } catch (error) {
+      if (error instanceof KpayRefusalError) {
+        return {
+          status: 'FAILED',
+          failureReason: describeRefundRefusal(error.detail),
+          rawResponse: { status: error.status, message: error.detail },
+        };
+      }
+
+      throw error;
+    }
+
+    const status = normalizeRefundStatus(response.status);
+
+    return {
+      providerReference: response.id,
+      status,
+      failureReason:
+        status === 'FAILED' ? describeRefundRefusal(response.message ?? '') : undefined,
+      rawResponse: response,
+    };
+  }
+
+  /**
+   * Où en est un remboursement.
+   *
+   * KPay ne lui consacre pas de route : un remboursement est une transaction
+   * comme une autre, et sa documentation renvoie à `GET /api/v1/payments/:id`
+   * quand le webhook fait défaut.
+   */
+  override async getRefundStatus(providerReference: string): Promise<ProviderRefundStatus> {
+    const transaction = await this.request<KpayTransaction>(
+      'GET',
+      `/api/v1/payments/${encodeURIComponent(providerReference)}`,
     );
+
+    const status = normalizeRefundStatus(transaction.status);
+
+    return {
+      status,
+      failureReason:
+        status === 'FAILED'
+          ? describeRefundRefusal(transaction.failureReason ?? transaction.message ?? '')
+          : undefined,
+      rawResponse: transaction,
+    };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -550,8 +671,10 @@ export class KpayProvider extends PaymentProvider {
         // côté des clés.
         if (response.status === 409) {
           this.logger.warn(`KPay ${method} ${path} → 409 (identifiant déjà utilisé)`);
-          throw new Error(
+          throw new KpayRefusalError(
+            409,
             `KPay connaît déjà une transaction portant cet identifiant : ${message}`,
+            message,
           );
         }
 
@@ -566,6 +689,19 @@ export class KpayProvider extends PaymentProvider {
         // Ni la clé, ni le corps : les journaux ne portent que la voie, le code
         // et le message renvoyé.
         this.logger.warn(`KPay ${method} ${path} → ${response.status} ${message}`);
+
+        // Un 4xx — hors authentification et limite de débit, qui passent avec
+        // le temps ou une correction de configuration — est un REFUS : la
+        // demande a été lue et écartée, rien n'a été fait. Un 5xx ne dit rien
+        // de tel, l'opération a pu aboutir.
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          throw new KpayRefusalError(
+            response.status,
+            `KPay a répondu ${response.status} : ${message}`,
+            message,
+          );
+        }
+
         throw new Error(`KPay a répondu ${response.status} : ${message}`);
       }
 
@@ -662,6 +798,50 @@ function normalizeWebhookPaymentStatus(
     default:
       return 'PROCESSING';
   }
+}
+
+/**
+ * Statut d'un remboursement : `PENDING` à la demande (« accepté, transfert en
+ * cours »), puis `COMPLETED` ou `FAILED`.
+ */
+function normalizeRefundStatus(status: string | undefined): 'PROCESSING' | 'COMPLETED' | 'FAILED' {
+  switch (String(status).toUpperCase()) {
+    case 'COMPLETED':
+      return 'COMPLETED';
+    case 'FAILED':
+    case 'CANCELLED':
+      return 'FAILED';
+    default:
+      return 'PROCESSING';
+  }
+}
+
+/**
+ * Un refus de remboursement, dit à l'administrateur qui devra le reprendre.
+ *
+ * KPay répond par des messages courts (« Window exceeded », « Insufficient
+ * balance »…) : les plus attendus sont traduits en ce qu'il faut FAIRE, les
+ * autres sont rapportés tels quels.
+ */
+function describeRefundRefusal(message: string): string {
+  const lower = message.toLowerCase();
+
+  if (lower.includes('window')) {
+    return 'Le délai de 7 jours de KPay est dépassé : ce remboursement se fait à la main.';
+  }
+  if (lower.includes('balance') || lower.includes('insufficient')) {
+    return 'Solde du wallet KPay insuffisant : alimente-le, puis relance le remboursement.';
+  }
+  if (lower.includes('already')) {
+    return 'KPay a déjà un remboursement en cours pour ce paiement : vérifie dans son tableau de bord.';
+  }
+  if (lower.includes('not refundable') || lower.includes('not found')) {
+    return 'KPay ne peut pas rembourser ce paiement : ce remboursement se fait à la main.';
+  }
+
+  return message
+    ? `KPay a refusé le remboursement : ${message}`
+    : 'KPay a refusé le remboursement sans en donner la cause.';
 }
 
 function normalizePayoutStatus(status: string | undefined): 'PROCESSING' | 'PAID' | 'FAILED' {

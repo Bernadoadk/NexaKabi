@@ -98,7 +98,10 @@ export interface RawWebhook {
  * VERSEMENT : les deux arrivent par le même point de terminaison chez la
  * plupart des prestataires, et ne se traitent pas au même endroit.
  */
-export type NormalizedWebhookEvent = NormalizedPaymentWebhook | NormalizedPayoutWebhook;
+export type NormalizedWebhookEvent =
+  | NormalizedPaymentWebhook
+  | NormalizedPayoutWebhook
+  | NormalizedRefundWebhook;
 
 export interface NormalizedPaymentWebhook {
   readonly kind: 'payment';
@@ -131,6 +134,22 @@ export interface NormalizedPayoutWebhook {
   readonly failureReason?: string;
 }
 
+/**
+ * Issue d'un remboursement, annoncée par le prestataire.
+ *
+ * Les deux références sont facultatives, mais il en faut une : celle du
+ * prestataire quand sa notification la porte, et à défaut la nôtre
+ * (`refundKey`), qu'il renvoie telle qu'on la lui a donnée.
+ */
+export interface NormalizedRefundWebhook {
+  readonly kind: 'refund';
+  readonly externalId: string;
+  readonly providerReference?: string;
+  readonly merchantReference?: string;
+  readonly status: 'COMPLETED' | 'FAILED';
+  readonly failureReason?: string;
+}
+
 /** Notification qui ne concerne ni un paiement ni un versement — ignorée. */
 export class WebhookIgnoredError extends Error {
   constructor(message = 'Notification sans objet pour nous.') {
@@ -140,16 +159,40 @@ export class WebhookIgnoredError extends Error {
 }
 
 export interface RefundInput {
+  /**
+   * Notre clé d'idempotence pour cette demande : reçue deux fois, elle ne
+   * rembourse qu'une fois. Elle ne change qu'après un refus pour lequel le
+   * prestataire a créé une transaction — voir `RefundsService`.
+   */
+  readonly refundKey: string;
   readonly paymentId: string;
+  /** Référence du PAIEMENT à rembourser, chez le prestataire. */
   readonly providerReference: string;
   readonly amount: number;
   readonly currency: string;
   readonly reason: string;
+  /** Numéro débité à l'achat : c'est lui qu'un remboursement recrédite. */
+  readonly payerPhone?: string;
 }
 
 export interface RefundResult {
-  readonly providerReference: string;
+  /** Référence du remboursement chez le prestataire. Absente s'il a refusé sans rien créer. */
+  readonly providerReference?: string;
+  /**
+   * `PROCESSING` est l'issue normale d'un remboursement Mobile Money : accepté,
+   * puis exécuté. `FAILED` est un refus DÉFINITIF, rien n'a bougé. Une réponse
+   * perdue n'est ni l'un ni l'autre : la méthode lève alors une erreur.
+   */
   readonly status: 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  readonly failureReason?: string;
+  readonly rawResponse?: unknown;
+}
+
+/** Ce que le prestataire répond quand on lui demande où en est un remboursement. */
+export interface ProviderRefundStatus {
+  readonly status: RefundResult['status'];
+  readonly failureReason?: string;
+  readonly rawResponse?: unknown;
 }
 
 /**
@@ -232,7 +275,7 @@ export class WebhookSignatureError extends Error {
  * Contrat d'un PRESTATAIRE de paiement.
  *
  * Un prestataire traite plusieurs moyens dans plusieurs pays derrière une
- * seule API : Bictorys encaisse MTN, Wave, Orange Money et la carte. Le
+ * seule API : KPay encaisse MTN et Moov au Bénin, Orange et Free au Sénégal. Le
  * moyen et le pays lui sont donc PASSÉS à chaque appel ; il n'en porte aucun
  * en dur. Ajouter un prestataire consiste à déposer une implémentation de
  * plus — aucun écran à redessiner, aucun service métier à modifier.
@@ -245,6 +288,12 @@ export abstract class PaymentProvider {
   abstract readonly capabilities: {
     readonly refund: boolean;
     readonly partialRefund: boolean;
+    /**
+     * Jours après l'encaissement au-delà desquels le prestataire refuse de
+     * rembourser — sept chez KPay. `null` : aucune limite connue. Au-delà, le
+     * remboursement reste dû et se fait à la main.
+     */
+    readonly refundWindowDays: number | null;
     readonly payout: boolean;
     readonly statusPolling: boolean;
     /**
@@ -272,7 +321,21 @@ export abstract class PaymentProvider {
    */
   abstract parseWebhook(raw: RawWebhook): Promise<NormalizedWebhookEvent>;
 
+  /**
+   * Demande le remboursement d'un paiement.
+   * @throws quand l'issue est INCONNUE — réponse perdue, prestataire
+   * injoignable. Un refus explicite se renvoie en `FAILED`, sans lever.
+   */
   abstract refund(input: RefundInput): Promise<RefundResult>;
+
+  /**
+   * Où en est un remboursement accepté.
+   *
+   * Même rôle que `getPayoutStatus` : un remboursement asynchrone se conclut
+   * par un webhook, ou par cette interrogation quand le webhook se perd.
+   * Facultatif : un prestataire qui rembourse sur-le-champ n'en a pas besoin.
+   */
+  getRefundStatus?(providerReference: string): Promise<ProviderRefundStatus>;
 
   /**
    * Verse les recettes à un organisateur.

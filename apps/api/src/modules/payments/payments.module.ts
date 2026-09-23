@@ -18,11 +18,12 @@ import type { Env } from '../../config/env';
  * Paiements.
  *
  * ── Comment les prestataires se branchent ───────────────────────────────────
- * Chaque clé renseignée branche SON prestataire, et ils coexistent : Bictorys
- * pour la carte et le Mobile Money là où il est configuré, KPay pour le Mobile
- * Money au Bénin, en Côte d'Ivoire et au Sénégal. C'est alors l'environnement
- * du prestataire — sa clé de test ou de production — qui dit si l'argent est
- * réel : rien d'autre ne simule.
+ * Chaque clé renseignée branche SON prestataire, et ils coexistent. En V1,
+ * KPay est le seul prestataire ACTIF — le Mobile Money au Bénin, en Côte
+ * d'Ivoire, au Sénégal et au Cameroun ; Bictorys, hérité, n'est branché que
+ * pour relire ce qu'il a déjà encaissé. C'est l'environnement du prestataire
+ * — sa clé de test ou de production — qui dit si l'argent est réel : rien
+ * d'autre ne simule.
  *
  * Cette coexistence est ce qui rend une bascule POSSIBLE. Le prestataire d'un
  * moyen se change dans la configuration d'un pays, ligne par ligne, sans

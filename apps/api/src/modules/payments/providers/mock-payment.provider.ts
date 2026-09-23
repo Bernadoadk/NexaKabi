@@ -15,6 +15,7 @@ import {
   type PayoutResult,
   type ProviderPaymentStatus,
   type ProviderPayoutStatus,
+  type ProviderRefundStatus,
   type RawWebhook,
   type RefundInput,
   type RefundResult,
@@ -54,6 +55,14 @@ import {
  * — succès ou refus — avant de le renvoyer au tunnel, exactement comme la
  * page hébergée d'un prestataire réel.
  *
+ * Un REMBOURSEMENT suit le numéro qui a payé, avec ses propres terminaisons —
+ * un paiement par un numéro en 00 ou 11 n'aboutit jamais, il faut donc
+ * d'autres chiffres pour éprouver les remboursements :
+ *   · se termine par 22 → remboursé sur-le-champ
+ *   · se termine par 33 → accepté, puis refusé après un court délai
+ *   · se termine par 44 → refusé d'emblée (solde du compte marchand insuffisant)
+ *   · sinon             → accepté, puis remboursé après un court délai
+ *
  * ── Pourquoi il n'a pas de mémoire ──────────────────────────────────────────
  * Le scénario et l'instant d'émission sont ENCODÉS dans la référence :
  * n'importe quelle instance, à n'importe quel moment, peut répondre — c'est
@@ -67,6 +76,7 @@ export class MockPaymentProvider extends PaymentProvider {
   readonly capabilities = {
     refund: true,
     partialRefund: true,
+    refundWindowDays: null,
     payout: true,
     statusPolling: true,
     verifyWebhookByFetch: false,
@@ -236,15 +246,50 @@ export class MockPaymentProvider extends PaymentProvider {
     };
   }
 
+  /**
+   * Rembourse — en simulation, avec l'asynchronisme d'un vrai prestataire :
+   * accepté, puis conclu par l'interrogation. Le numéro qui a payé choisit
+   * l'issue (voir l'en-tête).
+   */
   async refund(input: RefundInput): Promise<RefundResult> {
+    const scenario = refundScenarioFor(input.payerPhone ?? '');
+
     this.logger.warn(
-      `[mock] Remboursement de ${input.amount} ${input.currency} sur ${input.providerReference}`,
+      `[mock] Remboursement ${input.refundKey} · ${input.amount} ${input.currency} sur ${input.providerReference} · scénario « ${scenario} »`,
     );
 
+    if (scenario === 'immediate_refusal') {
+      return { status: 'FAILED', failureReason: REFUND_REFUSAL_REASON, rawResponse: { scenario } };
+    }
+
     return {
-      providerReference: `MOCKREF-${randomBytes(4).toString('hex').toUpperCase()}`,
-      status: 'COMPLETED',
+      providerReference: encodeRefundReference(scenario, Date.now()),
+      status: scenario === 'instant_success' ? 'COMPLETED' : 'PROCESSING',
+      rawResponse: { scenario },
     };
+  }
+
+  override async getRefundStatus(providerReference: string): Promise<ProviderRefundStatus> {
+    const decoded = decodeRefundReference(providerReference);
+
+    if (!decoded) {
+      return { status: 'FAILED', failureReason: "Ce remboursement n'existe pas chez l'opérateur." };
+    }
+
+    const settled = Date.now() >= decoded.issuedAt + SETTLEMENT_DELAY_MS;
+
+    switch (decoded.scenario) {
+      case 'instant_success':
+        return { status: 'COMPLETED' };
+      case 'delayed_success':
+        return { status: settled ? 'COMPLETED' : 'PROCESSING' };
+      case 'delayed_failure':
+        return settled
+          ? { status: 'FAILED', failureReason: REFUND_FAILURE_REASON }
+          : { status: 'PROCESSING' };
+      case 'immediate_refusal':
+        return { status: 'FAILED', failureReason: REFUND_REFUSAL_REASON };
+    }
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -329,6 +374,58 @@ export class MockPaymentProvider extends PaymentProvider {
 const SETTLEMENT_DELAY_MS = 4_000;
 
 const PAYOUT_FAILURE_REASON = 'Le compte Mobile Money du bénéficiaire est inactif ou inexistant.';
+
+const REFUND_FAILURE_REASON =
+  'Le compte Mobile Money du payeur n’accepte plus de crédit (simulation).';
+
+const REFUND_REFUSAL_REASON =
+  'Solde du compte marchand insuffisant pour rembourser : alimente-le, puis relance (simulation).';
+
+type RefundScenario = 'instant_success' | 'delayed_success' | 'delayed_failure' | 'immediate_refusal';
+
+/** Le numéro qui a payé pilote l'issue du remboursement. */
+function refundScenarioFor(number: string): RefundScenario {
+  const tail = number.slice(-2);
+
+  if (tail === '22') return 'instant_success';
+  if (tail === '33') return 'delayed_failure';
+  if (tail === '44') return 'immediate_refusal';
+  return 'delayed_success';
+}
+
+const REFUND_SCENARIO_CODES: Record<RefundScenario, string> = {
+  instant_success: 'I',
+  delayed_success: 'D',
+  delayed_failure: 'X',
+  immediate_refusal: 'R',
+};
+
+const REFUND_SCENARIO_BY_CODE = Object.fromEntries(
+  Object.entries(REFUND_SCENARIO_CODES).map(([scenario, code]) => [code, scenario as RefundScenario]),
+) as Record<string, RefundScenario>;
+
+/** `MOCKREF-X1K2J3H4G-7A3F` : même principe que les références de paiement. */
+function encodeRefundReference(scenario: RefundScenario, issuedAt: number): string {
+  const stamp = issuedAt.toString(36).toUpperCase();
+  const salt = randomBytes(2).toString('hex').toUpperCase();
+
+  return `MOCKREF-${REFUND_SCENARIO_CODES[scenario]}${stamp}-${salt}`;
+}
+
+function decodeRefundReference(
+  reference: string,
+): { scenario: RefundScenario; issuedAt: number } | null {
+  const match = /^MOCKREF-([IDXR])([0-9A-Z]+)-[0-9A-F]{4}$/.exec(reference);
+  const [, code, stamp] = match ?? [];
+  if (!code || !stamp) return null;
+
+  const scenario = REFUND_SCENARIO_BY_CODE[code];
+  const issuedAt = parseInt(stamp, 36);
+
+  if (!scenario || Number.isNaN(issuedAt)) return null;
+
+  return { scenario, issuedAt };
+}
 
 type Scenario = 'immediate_failure' | 'timeout' | 'instant_success' | 'delayed_success';
 

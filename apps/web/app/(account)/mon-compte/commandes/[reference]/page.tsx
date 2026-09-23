@@ -66,7 +66,7 @@ export default async function OrderDetailPage({
         </Link>
         <div className="flex items-baseline justify-between gap-3">
           <h1 className="font-display text-h1 font-bold tracking-[-0.02em]">{order.eventTitle}</h1>
-          <OrderStatusBadge status={order.status} />
+          <OrderStatusBadge status={order.status} refund={order.refund} />
         </div>
         <p className="flex items-center gap-2 text-body-s text-text-2">
           <span className="tabular font-semibold">{order.reference}</span>
@@ -84,6 +84,21 @@ export default async function OrderDetailPage({
             </Button>
           </div>
         </Alert>
+      ) : null}
+
+      {order.refund ? (
+        order.refund.state === 'COMPLETED' ? (
+          <Alert tone="info" title="Remboursement effectué">
+            <Money amount={order.refund.amount} currency={order.currency} size="small" /> ont été
+            renvoyés sur le numéro qui a payé.
+          </Alert>
+        ) : (
+          <Alert tone="warning" title="Remboursement en cours">
+            <Money amount={order.refund.amount} currency={order.currency} size="small" /> vont être
+            renvoyés sur le numéro qui a payé. Tu n’as rien à faire ; si rien n’arrive d’ici
+            quelques jours, écris au support avec la référence ci-dessous.
+          </Alert>
+        )
       ) : null}
 
       <Surface variant="panel" padding="none" className="overflow-hidden">
@@ -176,8 +191,9 @@ export default async function OrderDetailPage({
         </Surface>
       ) : null}
 
-      {/* Le remboursement arrive en phase 9 : l'annoncer honnêtement vaut mieux
-          qu'un bouton qui ne ferait rien. */}
+      {/* Pas de bouton « me faire rembourser » : une demande se juge au cas par
+          cas, selon la politique de l'événement. Elle passe par le support, qui
+          la décide depuis la console. */}
       <p className="text-center text-micro text-text-3">
         Une question sur cette commande ? Communique la référence{' '}
         <span className="tabular font-semibold">{order.reference}</span> au support.

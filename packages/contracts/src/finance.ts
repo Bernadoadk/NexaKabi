@@ -24,6 +24,8 @@ import {
   payoutStatusSchema,
   type LedgerEntryType,
   type PayoutStatus,
+  type RefundReason,
+  type RefundStatus,
 } from './enums.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -384,6 +386,25 @@ export const recordPayoutSchema = z
   });
 
 export type RecordPayoutInput = z.infer<typeof recordPayoutSchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Remboursements
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const REFUND_STATUS_LABELS: Readonly<Record<RefundStatus, string>> = {
+  PENDING: 'À rembourser',
+  PROCESSING: 'En cours',
+  COMPLETED: 'Remboursé',
+  FAILED: 'Refusé par l’opérateur',
+};
+
+export const REFUND_REASON_LABELS: Readonly<Record<RefundReason, string>> = {
+  EVENT_CANCELLED: 'Événement annulé',
+  CUSTOMER_REQUEST: 'Demande du participant',
+  DUPLICATE_PAYMENT: 'Paiement en double',
+  DISPUTE: 'Litige',
+  ADMIN: 'Décision de la plateforme',
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Statistiques

@@ -18,6 +18,16 @@ const FIRST_POLL_DELAY_SECONDS = 45;
 /** Nombre de paiements interrogés par passage. Borne la charge sur l'opérateur. */
 const POLL_BATCH_SIZE = 50;
 
+/**
+ * Âge au-delà duquel une notification orpheline n'est plus reprise.
+ *
+ * Un orphelin légitime — le prestataire a notifié avant que notre initiation
+ * soit validée — retrouve son paiement en quelques secondes. Passé trois
+ * jours, celui qui n'a toujours rien trouvé ne le trouvera plus : c'est une
+ * transaction que nous ne connaissons pas, et elle relève d'un examen humain.
+ */
+const ORPHAN_WEBHOOK_MAX_AGE_HOURS = 72;
+
 export interface ReconciliationReport {
   readonly inspected: number;
   readonly recovered: number;
@@ -141,9 +151,37 @@ export class ReconciliationService {
    * ne se valide. La ligne est conservée en `RECEIVED` ; ici, on la rejoue.
    */
   private async replayOrphanWebhooks(): Promise<number> {
+    /**
+     * ── Pourquoi clore les plus vieux, et commencer par les plus récents ────
+     * Une notification qui ne trouve jamais son paiement restait `RECEIVED`
+     * pour toujours. La passe ne lisant que les cinquante plus anciennes, il
+     * suffisait de cinquante notifications étrangères — un essai lancé depuis
+     * le tableau de bord du prestataire, par exemple — pour que plus aucune
+     * autre ne soit jamais reprise, sans le moindre signal.
+     *
+     * Les vieilles sont donc closes, avec un motif qui dit quoi en faire ; et
+     * les récentes passent d'abord, parce que ce sont elles qui ont une chance
+     * de retrouver leur paiement.
+     */
+    const expiredBefore = new Date(Date.now() - ORPHAN_WEBHOOK_MAX_AGE_HOURS * 60 * 60 * 1000);
+
+    const expired = await this.prisma.webhookEvent.updateMany({
+      where: { status: 'RECEIVED', paymentId: null, createdAt: { lt: expiredBefore } },
+      data: {
+        status: 'FAILED',
+        error: `Aucun paiement ne correspond après ${ORPHAN_WEBHOOK_MAX_AGE_HOURS} h : transaction inconnue de Nexa-Kabi, à examiner.`,
+      },
+    });
+
+    if (expired.count > 0) {
+      this.logger.warn(
+        `${expired.count} notification(s) sans paiement depuis ${ORPHAN_WEBHOOK_MAX_AGE_HOURS} h — closes, à examiner`,
+      );
+    }
+
     const orphans = await this.prisma.webhookEvent.findMany({
       where: { status: 'RECEIVED', paymentId: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       take: POLL_BATCH_SIZE,
     });
 

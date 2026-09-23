@@ -33,6 +33,7 @@
     "@prisma/adapter-pg": "catalog:",
     "@prisma/client": "catalog:",
     "@prisma/client-runtime-utils": "catalog:",
+    "@vercel/functions": "^3.9.9",
     "cloudinary": "catalog:",
     "cookie-parser": "catalog:",
     "dotenv": "catalog:",

@@ -117,6 +117,20 @@ export const orderSchema = z.object({
 
   /** Vrai si l'événement exige un nom par billet. */
   requiresAttendeeName: z.boolean(),
+
+  /**
+   * Remboursement de la commande, s'il y en a un.
+   *
+   * Décidé n'est pas encore rendu : un remboursement se fait parfois à la
+   * main, des jours après la décision. Tant que l'argent n'est pas reparti
+   * vers lui, le participant doit lire « en cours », pas « remboursée ».
+   */
+  refund: z
+    .object({
+      state: z.enum(['IN_PROGRESS', 'COMPLETED']),
+      amount: z.number().int(),
+    })
+    .nullable(),
 });
 
 export type Order = z.infer<typeof orderSchema>;

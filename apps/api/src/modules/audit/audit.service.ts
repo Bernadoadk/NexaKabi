@@ -75,14 +75,28 @@ export const AUDIT_ACTIONS = {
   /** Correction manuelle du grand livre. Motif obligatoire. */
   ledgerAdjusted: 'ledger.adjusted',
 
+  /** Remboursement décidé : inscrit au grand livre, pas encore exécuté. */
+  refundRequested: 'refund.requested',
+  /** Accepté par le prestataire : l'argent est en route. */
   refundIssued: 'refund.issued',
   /**
-   * Remboursement automatique impossible sur un événement annulé.
+   * Refusé par le prestataire, ou impossible à créer.
    *
-   * Une ligne par commande : c'est la liste de ce qu'il reste à rendre à la
-   * main, et elle doit survivre à la rotation des journaux.
+   * Une ligne par remboursement : c'est la liste de ce qu'il reste à rendre à
+   * la main, et elle doit survivre à la rotation des journaux.
    */
   refundFailed: 'refund.failed',
+  /** Hors de portée du prestataire (délai dépassé, partiel…) : à faire à la main. */
+  refundManualRequired: 'refund.manual_required',
+  /** Le participant est remboursé — par le prestataire. */
+  refundCompleted: 'refund.completed',
+  /** Remboursement fait hors API, consigné par un administrateur. */
+  refundRecorded: 'refund.recorded',
+  /**
+   * Le prestataire annonce avoir remboursé ce qu'un administrateur a déjà
+   * rendu à la main : le participant a peut-être été remboursé deux fois.
+   */
+  refundDuplicateSuspected: 'refund.duplicate_suspected',
   /** Recettes du palier 0 replanifiées à la vérification de l'organisation. */
   ledgerHoldReleased: 'ledger.hold_released',
 

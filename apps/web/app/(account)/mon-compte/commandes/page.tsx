@@ -60,7 +60,7 @@ export default async function MyOrdersPage() {
                   </div>
 
                   <div className="flex shrink-0 items-center gap-3">
-                    <OrderStatusBadge status={order.status} />
+                    <OrderStatusBadge status={order.status} refund={order.refund} />
                     <Money amount={order.totalAmount} currency={order.currency} size="small" />
                   </div>
                 </Link>
@@ -77,9 +77,17 @@ export default async function MyOrdersPage() {
  * Statut de commande, tel que le participant le comprend.
  *
  * « AWAITING_PAYMENT » ne veut rien dire pour un acheteur : ce qu'il retient,
- * c'est qu'il n'a pas fini de payer et qu'il peut reprendre.
+ * c'est qu'il n'a pas fini de payer et qu'il peut reprendre. De même,
+ * « remboursée » ne se dit qu'une fois l'argent reparti vers lui — pas au
+ * moment où le remboursement est décidé.
  */
-export function OrderStatusBadge({ status }: { status: Order['status'] }) {
+export function OrderStatusBadge({
+  status,
+  refund,
+}: {
+  status: Order['status'];
+  refund?: Order['refund'];
+}) {
   switch (status) {
     case 'PAID':
     case 'COMPLETED':
@@ -88,7 +96,14 @@ export function OrderStatusBadge({ status }: { status: Order['status'] }) {
       return <Badge tone="warning">À payer</Badge>;
     case 'REFUNDED':
     case 'PARTIALLY_REFUNDED':
-      return <Badge tone="info">Remboursée</Badge>;
+      if (refund?.state === 'IN_PROGRESS') {
+        return <Badge tone="warning">Remboursement en cours</Badge>;
+      }
+      return (
+        <Badge tone="info">
+          {status === 'PARTIALLY_REFUNDED' ? 'Remboursée en partie' : 'Remboursée'}
+        </Badge>
+      );
     case 'CANCELLED':
       return <Badge tone="neutral">Annulée</Badge>;
     case 'EXPIRED':

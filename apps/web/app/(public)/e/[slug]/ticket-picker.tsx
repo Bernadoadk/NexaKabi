@@ -28,6 +28,8 @@ export interface TicketPickerProps {
   eventId: string;
   ticketTypes: TicketTypeView[];
   maxTicketsPerOrder: number | null;
+  /** Devise de l'événement : celle de son pays. */
+  currency: string;
   /** Bouton de fermeture, présent uniquement quand le sélecteur est en feuille. */
   onClose?: () => void;
 }
@@ -36,6 +38,7 @@ export function TicketPicker({
   eventId,
   ticketTypes,
   maxTicketsPerOrder,
+  currency,
   onClose,
 }: TicketPickerProps) {
   const router = useRouter();
@@ -127,7 +130,7 @@ export function TicketPicker({
                 {ticket.price === 0 ? (
                   <Badge tone="accent">Gratuit</Badge>
                 ) : (
-                  <Money amount={ticket.price} size="default" />
+                  <Money amount={ticket.price} currency={currency} size="default" />
                 )}
               </div>
 
@@ -174,12 +177,16 @@ export function TicketPicker({
           /* Les frais sont annoncés ici, pas au moment de payer : c'est la
              règle de transparence du prototype. */
           <dl className="flex flex-col gap-1.5 rounded-card bg-surface-alt px-4 py-3">
-            <Row label={`Billets (${ticketCount})`} amount={breakdown.subtotalAmount} />
-            <Row label="Frais de service" amount={breakdown.buyerFeeAmount} />
+            <Row
+              label={`Billets (${ticketCount})`}
+              amount={breakdown.subtotalAmount}
+              currency={currency}
+            />
+            <Row label="Frais de service" amount={breakdown.buyerFeeAmount} currency={currency} />
             <div className="mt-1 flex items-baseline justify-between border-t border-border-subtle pt-2">
               <dt className="text-body font-bold">Total</dt>
               <dd>
-                <Money amount={breakdown.totalAmount} size="default" />
+                <Money amount={breakdown.totalAmount} currency={currency} size="default" />
               </dd>
             </div>
           </dl>
@@ -204,12 +211,12 @@ export function TicketPicker({
   );
 }
 
-function Row({ label, amount }: { label: string; amount: number }) {
+function Row({ label, amount, currency }: { label: string; amount: number; currency: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
       <dt className="text-body-s text-text-2">{label}</dt>
       <dd>
-        <Money amount={amount} size="small" />
+        <Money amount={amount} currency={currency} size="small" />
       </dd>
     </div>
   );

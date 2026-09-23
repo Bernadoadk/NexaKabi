@@ -12,6 +12,7 @@ import {
   IDENTITY_CONSENT,
   canRequestDocument,
   documentSpec,
+  getPaymentMethodDefinition,
   isPersonalDocument,
   type CreateOrganizationInput,
   type CreatePayoutAccountInput,
@@ -28,11 +29,13 @@ import {
   type UpdateOrganizationInput,
   type VerificationRequestDetail,
 } from '@nexakabi/contracts';
-import { maskPhone, slugify, uniqueSlug } from '@nexakabi/utils';
+import { maskPhone, resolveCurrency, slugify, uniqueSlug } from '@nexakabi/utils';
 import type { DocumentType as PrismaDocumentType } from '../../generated/prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { CountriesService } from '../countries/countries.service';
 import { MediaService } from '../media/media.service';
+import { PaymentRoutingService } from '../payments/payment-routing.service';
 import type { OrgContext } from './guards/org-member.guard';
 
 /**
@@ -51,6 +54,8 @@ export class OrganizationsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly media: MediaService,
+    private readonly countries: CountriesService,
+    private readonly routing: PaymentRoutingService,
   ) {}
 
   // ── Organisation ──────────────────────────────────────────────────────────
@@ -58,12 +63,20 @@ export class OrganizationsService {
   async create(userId: string, input: CreateOrganizationInput): Promise<Organization> {
     const slug = await this.buildUniqueSlug(input.name);
 
+    // Le pays de l'organisation gouverne la devise de son grand livre et ses
+    // moyens de réception. Il doit être OUVERT : une organisation dans un pays
+    // fermé ne pourrait ni vendre ni retirer.
+    const country = input.countryCode
+      ? await this.countries.requireActive(input.countryCode)
+      : await this.countries.getDefault();
+
     const organization = await this.prisma.$transaction(async (tx) => {
       const created = await tx.organization.create({
         data: {
           slug,
           name: input.name,
           type: input.type,
+          countryCode: country.code,
           cityName: input.cityName,
           address: input.address,
           phone: input.phone,
@@ -97,7 +110,7 @@ export class OrganizationsService {
       actorUserId: userId,
     });
 
-    return toOrganization(organization);
+    return toOrganization({ ...organization, country });
   }
 
   /** Organisations dont l'utilisateur est membre actif — le sélecteur en tête de sidebar. */
@@ -127,6 +140,7 @@ export class OrganizationsService {
   async findById(organizationId: string): Promise<Organization> {
     const organization = await this.prisma.organization.findFirst({
       where: { id: organizationId, deletedAt: null },
+      include: { country: { select: { currency: true } } },
     });
 
     if (!organization) {
@@ -143,12 +157,29 @@ export class OrganizationsService {
   ): Promise<Organization> {
     const before = await this.findById(context.organizationId);
 
+    // Changer de pays change la devise du grand livre : impossible dès qu'une
+    // écriture existe. Avant la première vente, c'est une simple correction.
+    if (input.countryCode && input.countryCode !== before.countryCode) {
+      const country = await this.countries.requireActive(input.countryCode);
+      const entries = await this.prisma.ledgerEntry.count({
+        where: { organizationId: context.organizationId },
+      });
+
+      if (entries > 0 && country.currency !== before.currency) {
+        throw new BadRequestException(
+          'Le pays ne peut plus changer : des recettes sont déjà enregistrées dans une autre devise.',
+        );
+      }
+    }
+
     const updated = await this.prisma.organization.update({
       where: { id: context.organizationId },
+      include: { country: { select: { currency: true } } },
       data: {
         name: input.name,
         legalName: input.legalName,
         type: input.type,
+        countryCode: input.countryCode,
         description: input.description,
         cityName: input.cityName,
         address: input.address,
@@ -532,7 +563,18 @@ export class OrganizationsService {
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     });
 
-    return accounts.map(toPayoutAccount);
+    const views: PayoutAccount[] = [];
+
+    for (const account of accounts) {
+      views.push(
+        toPayoutAccount(
+          account,
+          await this.routing.isPayoutMethodOpen(account.countryCode, account.methodCode),
+        ),
+      );
+    }
+
+    return views;
   }
 
   async addPayoutAccount(
@@ -540,6 +582,37 @@ export class OrganizationsService {
     actorUserId: string,
     input: CreatePayoutAccountInput,
   ): Promise<PayoutAccount> {
+    const organization = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: context.organizationId },
+      select: { countryCode: true, country: { select: { currency: true } } },
+    });
+
+    // Le moyen de réception est l'un de ceux que le PAYS de l'organisation
+    // autorise en versement — la liste que l'écran a affichée. Jamais déduit
+    // du moyen par lequel les participants ont payé.
+    const available = await this.routing.listPayoutMethods(organization.countryCode);
+    const method = available.methods.find((entry) => entry.code === input.methodCode);
+
+    if (!method) {
+      throw new BadRequestException(
+        `Ce moyen de réception n'est pas disponible pour ${organization.countryCode}.`,
+      );
+    }
+
+    if ((method.kind === 'BANK_TRANSFER') !== (input.type === 'BANK')) {
+      throw new BadRequestException('Le type de compte ne correspond pas au moyen choisi.');
+    }
+
+    // Un compte Mobile Money est un numéro du pays de réception, au format
+    // E.164 : c'est ce que le prestataire attend, et ce que le masque affiche.
+    const accountNumber = method.requiresPhone
+      ? this.countries.normalizePhone(input.accountNumber, {
+          code: available.countryCode,
+          name: organization.countryCode,
+          dialCode: available.dialCode,
+        })
+      : input.accountNumber;
+
     const account = await this.prisma.$transaction(async (tx) => {
       if (input.isDefault) {
         await tx.payoutAccount.updateMany({
@@ -556,8 +629,10 @@ export class OrganizationsService {
         data: {
           organizationId: context.organizationId,
           type: input.type,
-          provider: input.provider,
-          accountNumber: input.accountNumber,
+          countryCode: organization.countryCode,
+          currency: resolveCurrency(organization.country.currency).code,
+          methodCode: input.methodCode,
+          accountNumber,
           accountHolderName: input.accountHolderName,
           bankName: input.bankName,
           // Le premier compte enregistré devient le compte par défaut.
@@ -572,10 +647,10 @@ export class OrganizationsService {
       entityId: account.id,
       organizationId: context.organizationId,
       actorUserId,
-      changes: { type: input.type },
+      changes: { type: input.type, methodCode: input.methodCode },
     });
 
-    return toPayoutAccount(account);
+    return toPayoutAccount(account, true);
   }
 
   // ── Vérification ──────────────────────────────────────────────────────────
@@ -681,7 +756,9 @@ export class OrganizationsService {
 
     const request = await this.prisma.verificationRequest.findUnique({
       where: { organizationId: context.organizationId },
-      include: { documents: { where: { purgedAt: null }, select: { id: true, type: true, fileKey: true } } },
+      include: {
+        documents: { where: { purgedAt: null }, select: { id: true, type: true, fileKey: true } },
+      },
     });
 
     if (!request) {
@@ -940,6 +1017,8 @@ interface OrganizationRow {
   tiktok: string | null;
   cityName: string | null;
   address: string | null;
+  countryCode: string;
+  country: { currency: string };
   status: Organization['status'];
   verificationStatus: Organization['verificationStatus'];
   verifiedAt: Date | null;
@@ -967,6 +1046,8 @@ function toOrganization(row: OrganizationRow): Organization {
     tiktok: row.tiktok,
     cityName: row.cityName,
     address: row.address,
+    countryCode: row.countryCode,
+    currency: resolveCurrency(row.country.currency).code,
     status: row.status,
     verificationStatus: row.verificationStatus,
     verifiedAt: row.verifiedAt?.toISOString() ?? null,
@@ -979,7 +1060,9 @@ function toOrganization(row: OrganizationRow): Organization {
 interface PayoutAccountRow {
   id: string;
   type: PayoutAccount['type'];
-  provider: string | null;
+  countryCode: string;
+  currency: string;
+  methodCode: string;
   accountNumber: string;
   accountHolderName: string;
   bankName: string | null;
@@ -988,11 +1071,18 @@ interface PayoutAccountRow {
   lastFailureReason: string | null;
 }
 
-function toPayoutAccount(row: PayoutAccountRow): PayoutAccount {
+function toPayoutAccount(row: PayoutAccountRow, payoutAvailable: boolean): PayoutAccount {
   return {
     id: row.id,
     type: row.type,
-    provider: row.provider,
+    countryCode: row.countryCode,
+    currency: row.currency,
+    methodCode: row.methodCode as PayoutAccount['methodCode'],
+    methodLabel:
+      row.type === 'BANK' && row.bankName
+        ? row.bankName
+        : (getPaymentMethodDefinition(row.methodCode)?.label ?? row.methodCode),
+    payoutAvailable,
     maskedAccountNumber: maskAccountNumber(row.accountNumber),
     accountHolderName: row.accountHolderName,
     bankName: row.bankName,

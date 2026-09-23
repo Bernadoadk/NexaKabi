@@ -20,6 +20,7 @@ import {
   Input,
   Money,
   MoneyInput,
+  Select,
   Surface,
   SuccessDialog,
   Textarea,
@@ -406,18 +407,12 @@ function GeneralStep({
       </Field>
 
       <Field label="Catégorie" htmlFor="categoryId">
-        <select
+        <Select
           id="categoryId"
           name="categoryId"
           defaultValue={categories.find((c) => c.name === event.categoryName)?.id}
-          className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 text-[14px]"
-        >
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
+          options={categories.map((category) => ({ value: category.id, label: category.name }))}
+        />
       </Field>
 
       <Field label="Description" htmlFor="description">
@@ -779,20 +774,14 @@ function LocationStep({
             </Field>
 
             <Field label="Ville" htmlFor="cityId">
-              <select
+              <Select
                 id="cityId"
                 name="cityId"
                 value={cityId}
-                onChange={(e) => setCityId(e.target.value)}
-                className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 text-[14px]"
-              >
-                <option value="">Choisir…</option>
-                {cities.map((city) => (
-                  <option key={city.id} value={city.id}>
-                    {city.name}
-                  </option>
-                ))}
-              </select>
+                onValueChange={setCityId}
+                placeholder="Choisir…"
+                options={cities.map((city) => ({ value: city.id, label: city.name }))}
+              />
             </Field>
           </div>
 
@@ -1154,7 +1143,7 @@ function TicketsStep({
               {ticket.price === 0 ? (
                 <Badge tone="accent">Gratuit</Badge>
               ) : (
-                <Money amount={ticket.price} size="small" />
+                <Money amount={ticket.price} currency={event.currency} size="small" />
               )}
 
               <Badge tone={ticket.available ? 'success' : 'neutral'}>
@@ -1229,7 +1218,12 @@ function TicketsStep({
           </Field>
 
           <Field label="Prix" help="0 pour une inscription gratuite" htmlFor="price">
-            <MoneyInput id="price" value={price} onValueChange={setPrice} />
+            <MoneyInput
+              id="price"
+              value={price}
+              currency={event.currency}
+              onValueChange={setPrice}
+            />
           </Field>
 
           <Field label="Nombre de places" htmlFor="quantityTotal">
@@ -1358,7 +1352,12 @@ function EditTicketTypeDialog({
           </Field>
 
           <Field label="Prix" help="0 pour une inscription gratuite" htmlFor="edit-price">
-            <MoneyInput id="edit-price" value={price} onValueChange={setPrice} />
+            <MoneyInput
+              id="edit-price"
+              value={price}
+              currency={ticket.currency}
+              onValueChange={setPrice}
+            />
           </Field>
 
           <Field label="Nombre de places" htmlFor="edit-quantityTotal">
@@ -1452,15 +1451,15 @@ function SettingsStep({
       />
 
       <Field label="Visibilité" htmlFor="visibility">
-        <select
+        <Select
           id="visibility"
           name="visibility"
           defaultValue={event.visibility}
-          className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 text-[14px]"
-        >
-          <option value="PUBLIC">Public · référencé dans la découverte</option>
-          <option value="PRIVATE">Privé · accessible par lien uniquement</option>
-        </select>
+          options={[
+            { value: 'PUBLIC', label: 'Public', description: 'Référencé dans la découverte' },
+            { value: 'PRIVATE', label: 'Privé', description: 'Accessible par lien uniquement' },
+          ]}
+        />
       </Field>
 
       <fieldset className="flex flex-col gap-2.5 rounded-card border border-border p-4">

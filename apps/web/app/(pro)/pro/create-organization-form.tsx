@@ -8,6 +8,7 @@ import {
   Field,
   Input,
   PhoneInput,
+  Select,
   Surface,
   Textarea,
   startRouteProgress,
@@ -90,18 +91,12 @@ export function CreateOrganizationForm() {
           </Field>
 
           <Field label="Type" htmlFor="type">
-            <select
+            <Select
               id="type"
               name="type"
               defaultValue="INDIVIDUAL"
-              className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 text-[14px]"
-            >
-              {TYPES.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              options={TYPES.map(([value, label]) => ({ value, label }))}
+            />
           </Field>
 
           <Field

@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import type { PaymentProviderCode } from '@nexakabi/contracts';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { ADVISORY_LOCKS, AdvisoryLockService } from '../../infra/scheduling/advisory-lock.service';
 import { OrdersService } from '../orders/orders.service';
 import { PaymentsService } from './payments.service';
+import { PaymentProviderRegistry } from './provider.registry';
 
 /**
  * Délai avant la première interrogation.
@@ -46,6 +48,7 @@ export class ReconciliationService {
     private readonly payments: PaymentsService,
     private readonly orders: OrdersService,
     private readonly locks: AdvisoryLockService,
+    private readonly registry: PaymentProviderRegistry,
   ) {}
 
   /** Libère les réservations arrivées à échéance. */
@@ -147,7 +150,7 @@ export class ReconciliationService {
     let replayed = 0;
 
     for (const orphan of orphans) {
-      const providerReference = extractProviderReference(orphan.rawBody);
+      const providerReference = this.referenceOf(orphan.providerCode, orphan.rawBody);
 
       if (!providerReference) {
         await this.prisma.webhookEvent.update({
@@ -178,19 +181,36 @@ export class ReconciliationService {
 
     return replayed;
   }
-}
 
-/**
- * Extrait la référence opérateur d'un corps brut.
- *
- * Volontairement tolérant : ce corps a déjà été validé et signé lors de sa
- * réception. On ne cherche ici qu'à retrouver le paiement concerné.
- */
-function extractProviderReference(rawBody: string): string | null {
-  try {
-    const parsed = JSON.parse(rawBody) as { providerReference?: unknown };
-    return typeof parsed.providerReference === 'string' ? parsed.providerReference : null;
-  } catch {
-    return null;
+  /**
+   * Retrouve la référence du prestataire dans un corps conservé.
+   *
+   * ── Pourquoi le prestataire doit répondre lui-même ──────────────────────
+   * Chacun nomme cette référence à sa façon : `id` chez Bictorys, `paymentId`
+   * chez KPay, `providerReference` chez le simulateur. Chercher un seul nom
+   * ici revenait à ne retrouver QUE les notifications du simulateur — les
+   * autres finissaient en `FAILED`, et l'acheteur payé restait sans billet,
+   * silencieusement, dans le cas précis que ce filet doit rattraper.
+   *
+   * Le repli sur `providerReference` couvre le simulateur et tout prestataire
+   * qui n'aurait pas déclaré la méthode.
+   */
+  private referenceOf(providerCode: string, rawBody: string): string | null {
+    const code = providerCode as PaymentProviderCode;
+
+    if (this.registry.has(code)) {
+      const provider = this.registry.get(code);
+
+      if (provider.extractProviderReference) {
+        return provider.extractProviderReference(rawBody);
+      }
+    }
+
+    try {
+      const parsed = JSON.parse(rawBody) as { providerReference?: unknown };
+      return typeof parsed.providerReference === 'string' ? parsed.providerReference : null;
+    } catch {
+      return null;
+    }
   }
 }

@@ -1,9 +1,8 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  PAYMENT_SECURITY_NOTICE,
+  type CheckoutPaymentMethods,
   type Order,
-  type PaymentMethod,
   type PaymentState,
   type Ticket,
 } from '@nexakabi/contracts';
@@ -128,12 +127,20 @@ export class CheckoutController {
     return this.orders.cancel(reference.toUpperCase());
   }
 
-  /** Étape 3 · moyens de paiement proposés. */
+  /**
+   * Étape 3 · moyens de paiement proposés POUR CETTE COMMANDE.
+   *
+   * Ils dépendent du pays de l'événement : à Cotonou MTN, Moov et la carte ;
+   * à Dakar Wave et Orange Money. La liste vient de la configuration du pays,
+   * filtrée par ce que le prestataire sait réellement faire.
+   */
   @Public()
-  @Get('payment-methods')
-  @ApiOperation({ summary: 'Moyens de paiement disponibles' })
-  listPaymentMethods(): { methods: PaymentMethod[]; notice: string } {
-    return { methods: this.payments.listMethods(), notice: PAYMENT_SECURITY_NOTICE };
+  @UseGuards(CheckoutAccessGuard)
+  @Get('orders/:reference/payment-methods')
+  @ApiHeader({ name: CHECKOUT_TOKEN_HEADER, required: false })
+  @ApiOperation({ summary: 'Moyens de paiement disponibles pour la commande' })
+  listPaymentMethods(@Param('reference') reference: string): Promise<CheckoutPaymentMethods> {
+    return this.payments.listMethods(reference.toUpperCase());
   }
 
   @Public()

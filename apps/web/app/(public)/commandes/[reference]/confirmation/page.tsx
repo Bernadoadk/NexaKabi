@@ -106,18 +106,35 @@ export default async function OrderConfirmationPage({
 
             {order.items.map((item) => (
               <Row key={item.id} label={`${item.quantity} × ${item.ticketTypeName}`}>
-                <Money amount={item.subtotal} size="small" className="text-white" hideSymbol />
+                <Money
+                  amount={item.subtotal}
+                  currency={order.currency}
+                  size="small"
+                  className="text-white"
+                  hideSymbol
+                />
               </Row>
             ))}
 
             <Row label="Frais de service">
-              <Money amount={order.buyerFeeAmount} size="small" className="text-white" hideSymbol />
+              <Money
+                amount={order.buyerFeeAmount}
+                currency={order.currency}
+                size="small"
+                className="text-white"
+                hideSymbol
+              />
             </Row>
 
             <div className="mt-1 flex items-baseline justify-between border-t border-white/12 pt-3">
               <dt className="text-body font-bold">Montant payé</dt>
               <dd>
-                <Money amount={order.totalAmount} size="hero" className="text-white" />
+                <Money
+                  amount={order.totalAmount}
+                  currency={order.currency}
+                  size="hero"
+                  className="text-white"
+                />
               </dd>
             </div>
           </dl>

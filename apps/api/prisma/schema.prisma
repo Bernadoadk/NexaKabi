@@ -401,6 +401,11 @@ model Organization {
   cityName String?
   address  String?
 
+  /// Pays de l'organisation : devise du grand livre, moyens de réception,
+  /// pays par défaut de ses événements en ligne.
+  countryCode String  @default("BJ")
+  country     Country @relation(fields: [countryCode], references: [code])
+
   status             OrganizationStatus @default(ACTIVE)
   verificationStatus VerificationStatus @default(UNVERIFIED)
   verifiedAt         DateTime?
@@ -432,6 +437,7 @@ model Organization {
   ledgerEntries       LedgerEntry[]
   payouts             Payout[]
   reports             Report[]
+  commissionPolicies  CommissionPolicy[]
 
   @@index([status, verificationStatus])
   @@index([ownerId])
@@ -526,8 +532,15 @@ model PayoutAccount {
 
   type PayoutAccountType
 
-  /// `mtn_momo`, `moov_money`, `celtiis_cash` pour le Mobile Money.
-  provider String?
+  /// Pays de réception : fixe la devise et les moyens possibles. Celui de
+  /// l'organisation, sauf exception explicite.
+  countryCode String  @default("BJ")
+  country     Country @relation(fields: [countryCode], references: [code])
+  currency    String  @default("XOF")
+
+  /// Moyen de réception du catalogue : `mtn_momo`, `wave`, `bank_transfer`.
+  /// Jamais déduit du moyen qu'un participant a utilisé pour payer.
+  methodCode String @default("bank_transfer")
 
   /// Numéro Mobile Money en E.164, ou IBAN/RIB.
   accountNumber String
@@ -700,6 +713,171 @@ enum EventImageType {
   FLOOR_PLAN
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYS, MOYENS DE PAIEMENT, COMMISSIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Pays où la plateforme opère.
+///
+/// Le Bénin est le premier, pas le seul. Un pays porte sa devise, son
+/// indicatif, et — par `CountryPaymentMethod` — les moyens de collecte et de
+/// versement qui y sont ouverts. Activer un pays est un geste d'administration,
+/// jamais une modification de code.
+model Country {
+  /// ISO 3166-1 alpha-2 : `BJ`, `CI`, `SN`.
+  code String @id
+
+  name     String
+  /// ISO 4217 : `XOF`, `XAF`, `GNF`… Fixe la devise de tout ce qui se passe
+  /// dans ce pays : billets, commandes, grand livre, retraits.
+  currency String
+  /// Indicatif international, sans `+`.
+  dialCode String
+  flag     String @default("")
+
+  isActive  Boolean @default(false)
+  /// Pays proposé par défaut — un seul à la fois, garanti par index partiel.
+  isDefault Boolean @default(false)
+  position  Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cities             City[]
+  paymentMethods     CountryPaymentMethod[]
+  organizations      Organization[]
+  events             Event[]
+  orders             Order[]
+  payoutAccounts     PayoutAccount[]
+  commissionPolicies CommissionPolicy[]
+
+  @@index([isActive, position])
+  @@map("country")
+}
+
+enum PaymentMethodKind {
+  MOBILE_MONEY
+  CARD
+  BANK_TRANSFER
+  CASH
+  DEMO
+}
+
+/// État opérationnel d'un moyen, constaté chez le prestataire.
+enum PaymentAvailability {
+  OPERATIONAL
+  /// Fonctionne, mais plus lentement que d'habitude. Proposé, avec la mention.
+  DELAYED
+  /// Indisponible : retiré de l'écran de choix plutôt que de laisser échouer.
+  CLOSED
+  /// Aucun relevé à ce jour. Ne ferme rien.
+  UNKNOWN
+}
+
+/// Un moyen de paiement ouvert dans un pays, et le prestataire qui le traite.
+///
+/// C'est LA table de configuration du système de paiement : « au Bénin, MTN
+/// MoMo est collecté et versé par Bictorys sous le code `mtn_money` ».
+/// Collecte et versement sont deux drapeaux distincts — qu'un moyen sache
+/// encaisser ne dit rien de sa capacité à verser.
+///
+/// Deux paires de drapeaux : la DÉCISION de l'administrateur
+/// (`collectionEnabled`, `payoutEnabled`) et le CONSTAT synchronisé depuis le
+/// prestataire (`providerCollectionEnabled`, `providerPayoutEnabled`, `null`
+/// tant qu'aucune synchronisation n'a eu lieu). Un moyen n'est proposé que si
+/// les deux l'autorisent.
+model CountryPaymentMethod {
+  id String @id @default(cuid())
+
+  countryCode String
+  country     Country @relation(fields: [countryCode], references: [code], onDelete: Cascade)
+
+  /// Code du catalogue : `mtn_momo`, `wave`, `card`, `bank_transfer`.
+  methodCode String
+  kind       PaymentMethodKind
+
+  /// Prestataire : `bictorys`, `mock`.
+  providerCode       String
+  /// Le même moyen tel que CE prestataire le nomme : `mtn_money`, `wave_money`.
+  providerMethodCode String
+
+  collectionEnabled Boolean @default(false)
+  payoutEnabled     Boolean @default(false)
+
+  providerCollectionEnabled Boolean?
+  providerPayoutEnabled     Boolean?
+  providerSyncedAt          DateTime?
+
+  /// État opérationnel relevé chez le prestataire, encaissement et versement
+  /// séparés : un opérateur peut encaisser normalement et verser en retard.
+  ///
+  /// Distinct des drapeaux ci-dessus, qui disent ce que le compte marchand a
+  /// le DROIT de faire ; ceux-ci disent ce que l'opérateur fait EN CE MOMENT.
+  /// `UNKNOWN` tant qu'aucun relevé n'a eu lieu — et l'ignorance ne ferme rien.
+  collectionAvailability PaymentAvailability @default(UNKNOWN)
+  payoutAvailability     PaymentAvailability @default(UNKNOWN)
+  availabilityCheckedAt  DateTime?
+
+  position Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([countryCode, methodCode, providerCode])
+  @@index([countryCode, collectionEnabled, position])
+  @@index([countryCode, payoutEnabled, position])
+  @@map("country_payment_method")
+}
+
+/// Politique de commission, résolue par portée.
+///
+/// Une politique sans pays ni organisation est celle de la plateforme. Une
+/// politique de pays la remplace dans ce pays ; une politique d'organisation
+/// l'emporte sur les deux. À la commande, la plus spécifique gagne, et ses
+/// montants sont FIGÉS sur la commande : changer une politique ne réécrit
+/// jamais une vente passée.
+///
+/// La commission ne dépend jamais du moyen de paiement : les frais du
+/// prestataire sont une ligne à part, constatée à l'encaissement.
+model CommissionPolicy {
+  id String @id @default(cuid())
+
+  /// Libellé d'administration : « Défaut plateforme », « Bénin 2026 ».
+  name String
+
+  countryCode String?
+  country     Country? @relation(fields: [countryCode], references: [code], onDelete: Cascade)
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Commission plateforme, en points de base (500 = 5 %).
+  percentageBps        Int
+  fixedAmountPerTicket Int     @default(0)
+  minFeePerOrder       Int?
+  maxFeePerOrder       Int?
+  /// 100 = frais intégralement ajoutés au participant ; 0 = prélevés sur l'organisateur.
+  buyerSharePercent    Int     @default(100)
+  appliesToFreeTickets Boolean @default(false)
+
+  payoutFeeBps    Int @default(100)
+  payoutFeeMax    Int @default(2000)
+  minPayoutAmount Int @default(5000)
+
+  isActive  Boolean   @default(true)
+  validFrom DateTime  @default(now())
+  validTo   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders Order[]
+
+  @@index([countryCode, isActive])
+  @@index([organizationId, isActive])
+  @@map("commission_policy")
+}
+
 /// Catégorie d'événement.
 model Category {
   id String @id @default(cuid())
@@ -738,8 +916,8 @@ model City {
 
   /// Département.
   region      String?
-  /// Prépare l'extension vers l'Afrique de l'Ouest.
   countryCode String  @default("BJ")
+  country     Country @relation(fields: [countryCode], references: [code])
 
   latitude  Float?
   longitude Float?
@@ -821,6 +999,12 @@ model Event {
   /// Dénormalisé pour le filtrage du catalogue.
   cityId String?
   city   City?   @relation(fields: [cityId], references: [id])
+
+  /// Pays de l'événement : celui de sa ville, ou de son organisation s'il est
+  /// en ligne. Fixe la devise des billets et les moyens de paiement du tunnel.
+  countryCode String  @default("BJ")
+  country     Country @relation(fields: [countryCode], references: [code])
+  currency    String  @default("XOF")
 
   onlineUrl      String?
   onlinePlatform String?
@@ -1133,6 +1317,13 @@ model Order {
   organizerNetAmount Int @default(0)
 
   currency String @default("XOF")
+  /// Pays de paiement : celui de l'événement au moment de la commande.
+  countryCode String  @default("BJ")
+  country     Country @relation(fields: [countryCode], references: [code])
+
+  /// Politique appliquée, pour l'explication ; les montants sont figés au-dessus.
+  commissionPolicyId String?
+  commissionPolicy   CommissionPolicy? @relation(fields: [commissionPolicyId], references: [id])
 
   /// Preuve horodatée d'acceptation des conditions de vente.
   termsAcceptedAt DateTime?
@@ -1224,9 +1415,13 @@ model Payment {
   orderId String
   order   Order  @relation(fields: [orderId], references: [id])
 
-  /// `mock`, `mtn_momo`, `moov_money`, `celtiis_cash`, `card`.
+  /// Prestataire qui traite : `bictorys`, `mock`.
   providerCode      String
-  /// Référence chez l'opérateur.
+  /// Moyen choisi par le participant : `mtn_momo`, `wave`, `card`.
+  methodCode        String @default("mock")
+  /// Pays de paiement.
+  countryCode       String @default("BJ")
+  /// Référence chez le prestataire.
   providerReference String?
 
   /// Empêche la double initiation sur un double-clic ou un réessai réseau.
@@ -1237,8 +1432,14 @@ model Payment {
 
   status PaymentStatus @default(INITIATED)
 
-  /// Numéro Mobile Money utilisé pour payer.
+  /// Numéro Mobile Money utilisé pour payer. Absent pour une carte.
   payerPhone String?
+
+  /// Page du prestataire où le paiement se poursuit (carte, checkout hébergé).
+  redirectUrl String?
+
+  /// Frais réellement prélevés par le prestataire, tels qu'il les annonce.
+  providerFeeAmount Int?
 
   failureCode   String?
   failureReason String?
@@ -1601,6 +1802,8 @@ model Payout {
 
   status PayoutStatus @default(PENDING)
 
+  /// Prestataire qui exécute le versement, `null` pour un virement manuel.
+  providerCode      String?
   providerReference String?
   /// « Le numéro n'est pas un compte marchand » — jamais un code brut seul.
   failureReason     String?

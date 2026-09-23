@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { FinanceModule } from '../finance/finance.module';
+import { PaymentsModule } from '../payments/payments.module';
+import { AdminSettingsController } from './admin-settings.controller';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminOrganizationsService } from './admin-organizations.service';
 import { AdminSessionGuard } from './admin-session.guard';
@@ -25,8 +27,14 @@ import { VerificationsService } from './verifications.service';
  * en contournant le garde qui exige une session d'administration validée.
  */
 @Module({
-  imports: [FinanceModule],
-  controllers: [AdminAuthController, AdminStaffController, AdminController, PublicReportsController],
+  imports: [FinanceModule, PaymentsModule],
+  controllers: [
+    AdminAuthController,
+    AdminStaffController,
+    AdminController,
+    AdminSettingsController,
+    PublicReportsController,
+  ],
   providers: [
     AdminAuthService,
     AdminOrganizationsService,

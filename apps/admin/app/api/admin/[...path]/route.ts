@@ -38,12 +38,18 @@ const ALLOWED: readonly RegExp[] = [
   /^payouts\/[\w-]+\/execute$/,
   /^organizations\/[\w-]+\/freeze$/,
   /^organizations\/[\w-]+\/unfreeze$/,
+  /^settings\/countries$/,
+  /^settings\/catalogue$/,
+  /^settings\/countries\/[A-Z]{2}$/,
+  /^settings\/countries\/[A-Z]{2}\/methods$/,
+  /^settings\/countries\/[A-Z]{2}\/methods\/[\w-]+$/,
+  /^settings\/providers\/[a-z_]+\/sync$/,
 ];
 
 async function relay(
   request: NextRequest,
   path: string[],
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
 ): Promise<Response> {
   const target = path.join('/');
 
@@ -116,6 +122,14 @@ export async function PATCH(
 ): Promise<Response> {
   const { path } = await context.params;
   return relay(request, path, 'PATCH');
+}
+
+export async function PUT(
+  request: NextRequest,
+  context: { params: Promise<{ path: string[] }> },
+): Promise<Response> {
+  const { path } = await context.params;
+  return relay(request, path, 'PUT');
 }
 
 export async function DELETE(

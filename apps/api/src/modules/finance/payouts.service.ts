@@ -8,19 +8,24 @@ import {
 import {
   canTransitionPayout,
   computePayoutFee,
+  getPaymentMethodDefinition,
   validatePayoutRequest,
   type AdminPayoutSummary,
   type Payout,
-  type PayoutAccountType,
+  type PaymentMethodCode,
+  type PaymentProviderCode,
   type PayoutStatus,
   type RecordPayoutInput,
   type RequestPayoutInput,
 } from '@nexakabi/contracts';
-import { maskPhone } from '@nexakabi/utils';
+import { maskPhone, resolveCurrency } from '@nexakabi/utils';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { PaymentRoutingService, type ResolvedRoute } from '../payments/payment-routing.service';
 import { PaymentProviderRegistry } from '../payments/provider.registry';
+import type { NormalizedPayoutWebhook } from '../payments/providers/payment-provider';
+import { CommissionService } from './commission.service';
 import { LedgerService } from './ledger.service';
 
 /**
@@ -47,6 +52,8 @@ export class PayoutsService {
     private readonly ledger: LedgerService,
     private readonly audit: AuditService,
     private readonly registry: PaymentProviderRegistry,
+    private readonly routing: PaymentRoutingService,
+    private readonly commission: CommissionService,
   ) {}
 
   /**
@@ -59,14 +66,24 @@ export class PayoutsService {
     organizationId: string,
     amount: number,
   ): Promise<{ grossAmount: number; feeAmount: number; netAmount: number; error: string | null }> {
-    const balance = await this.ledger.balance(organizationId);
-    const feeAmount = computePayoutFee(amount);
+    const [balance, policy] = await Promise.all([
+      this.ledger.balance(organizationId),
+      this.commission.resolveForOrganization(organizationId),
+    ]);
+    const feeAmount = computePayoutFee(amount, policy);
 
     return {
       grossAmount: amount,
       feeAmount,
       netAmount: amount - feeAmount,
-      error: balance.payoutBlockedReason ?? validatePayoutRequest(amount, balance.availableAmount),
+      error:
+        balance.payoutBlockedReason ??
+        validatePayoutRequest(
+          amount,
+          balance.availableAmount,
+          policy,
+          resolveCurrency(balance.currency).symbol,
+        ),
     };
   }
 
@@ -90,19 +107,41 @@ export class PayoutsService {
       throw new NotFoundException("Ce compte de retrait n'existe pas.");
     }
 
-    const balance = await this.ledger.balance(organizationId);
+    const [balance, policy] = await Promise.all([
+      this.ledger.balance(organizationId),
+      this.commission.resolveForOrganization(organizationId),
+    ]);
 
     if (balance.payoutBlockedReason) {
       throw new BadRequestException(balance.payoutBlockedReason);
     }
 
-    const refusal = validatePayoutRequest(input.amount, balance.availableAmount);
+    // Un compte enregistré sous un moyen depuis fermé en versement ne doit
+    // pas produire un retrait sans issue.
+    if (!(await this.routing.isPayoutMethodOpen(account.countryCode, account.methodCode))) {
+      throw new BadRequestException(
+        `Le moyen de réception de ce compte n'est plus disponible pour ${account.countryCode}. Enregistre un autre compte.`,
+      );
+    }
+
+    if (account.currency !== balance.currency) {
+      throw new BadRequestException(
+        `Ce compte reçoit en ${account.currency} alors que ton solde est en ${balance.currency}.`,
+      );
+    }
+
+    const refusal = validatePayoutRequest(
+      input.amount,
+      balance.availableAmount,
+      policy,
+      resolveCurrency(balance.currency).symbol,
+    );
 
     if (refusal) {
       throw new BadRequestException(refusal);
     }
 
-    const feeAmount = computePayoutFee(input.amount);
+    const feeAmount = computePayoutFee(input.amount, policy);
     const netAmount = input.amount - feeAmount;
 
     const payout = await this.prisma.$transaction(async (tx) => {
@@ -115,6 +154,7 @@ export class PayoutsService {
           grossAmount: input.amount,
           feeAmount,
           netAmount,
+          currency: balance.currency,
           status: 'PENDING',
         },
       });
@@ -203,28 +243,50 @@ export class PayoutsService {
      * la demande n'empêchait donc pas le versement : le gel arrivait trop tard
      * pour le seul cas où il sert.
      */
-    const balance = await this.ledger.balance(payout.organizationId);
+    /**
+     * Seuls le gel et la vérification comptent ici — pas le minimum de retrait.
+     * Le montant a déjà été débité à la demande : le solde disponible est
+     * souvent SOUS le minimum au moment d'exécuter, et ce n'est pas une raison
+     * de refuser le versement d'un retrait déjà accordé. Une première version
+     * relisait `payoutBlockedReason` en entier, et refusait précisément le cas
+     * le plus courant : l'organisateur qui retire tout son solde.
+     */
+    const organization = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: payout.organizationId },
+      select: { payoutFrozen: true, payoutFrozenReason: true, verificationStatus: true },
+    });
 
-    if (balance.payoutBlockedReason) {
+    if (organization.payoutFrozen) {
       throw new ConflictException(
-        `Versement refusé : ${balance.payoutBlockedReason} ` +
+        `Versement refusé : ${organization.payoutFrozenReason ?? 'les retraits de cette organisation sont gelés.'} ` +
           'Lève le gel avant de verser, ou annule ce retrait.',
       );
     }
 
-    const provider = this.resolveProvider(payout.payoutAccount.type);
-
-    if (!provider?.payout) {
+    if (organization.verificationStatus !== 'VERIFIED') {
       throw new ConflictException(
-        'Aucun opérateur configuré ne sait verser automatiquement. ' +
+        "Versement refusé : l'organisation n'est plus vérifiée. Annule ce retrait ou rétablis la vérification.",
+      );
+    }
+
+    // Le prestataire est celui que le PAYS et le MOYEN du compte de réception
+    // désignent — jamais celui par lequel les participants ont payé. Un
+    // organisateur reçoit sur MTN ce que ses acheteurs ont réglé par carte.
+    const route = await this.resolveRoute(payout.payoutAccount);
+
+    if (!route?.provider.payout) {
+      throw new ConflictException(
+        'Aucun prestataire configuré ne sait verser sur ce moyen dans ce pays. ' +
           'Le virement doit être fait à la main, puis enregistré ici.',
       );
     }
 
-    const result = await provider.payout({
+    const result = await route.provider.payout({
       reference: payout.reference,
       amount: payout.netAmount,
       currency: payout.currency,
+      countryCode: route.countryCode,
+      method: route.method,
       accountNumber: payout.payoutAccount.accountNumber,
       accountHolderName: payout.payoutAccount.accountHolderName,
       email: payout.organization.owner.email ?? undefined,
@@ -240,6 +302,7 @@ export class PayoutsService {
      */
     const processing = await this.transition(payoutId, 'PROCESSING', {
       userId,
+      providerCode: route.provider.code,
       providerReference: result.providerReference,
     });
 
@@ -279,9 +342,9 @@ export class PayoutsService {
       select: {
         id: true,
         reference: true,
+        providerCode: true,
         providerReference: true,
         processedByUserId: true,
-        payoutAccount: { select: { type: true } },
       },
     });
 
@@ -289,8 +352,13 @@ export class PayoutsService {
     let failed = 0;
 
     for (const payout of payouts) {
-      const provider = this.resolveProvider(payout.payoutAccount.type);
-      if (!provider?.getPayoutStatus || !payout.providerReference) continue;
+      // Le prestataire qui a VERSÉ est celui qu'on interroge — enregistré sur
+      // le retrait à l'exécution, indépendant de la configuration d'aujourd'hui.
+      const code = payout.providerCode as PaymentProviderCode | null;
+      if (!code || !this.registry.has(code)) continue;
+
+      const provider = this.registry.get(code);
+      if (!provider.getPayoutStatus || !payout.providerReference) continue;
 
       try {
         const status = await provider.getPayoutStatus(payout.providerReference);
@@ -379,19 +447,75 @@ export class PayoutsService {
    * changer — et il faudra alors router selon l'opérateur du compte, pas selon
    * l'ordre d'enregistrement.
    */
-  private resolveProvider(accountType: PayoutAccountType | string) {
-    if (accountType !== 'MOBILE_MONEY') {
-      // Un virement bancaire ne passe pas par un agrégateur Mobile Money : il
-      // se fait à la main, et `transition` l'enregistre.
-      return null;
+  /**
+   * Notification de versement reçue d'un prestataire.
+   *
+   * Même idempotence que les encaissements : l'événement est consigné dans
+   * `webhook_event`, un rejeu est reconnu. Un retrait déjà conclu n'est jamais
+   * rouvert — la machine à états le refuse, et on se contente de le noter.
+   */
+  async handleProviderEvent(
+    providerCode: PaymentProviderCode,
+    event: NormalizedPayoutWebhook,
+  ): Promise<{ duplicate: boolean; applied: boolean }> {
+    const existing = await this.prisma.webhookEvent.findUnique({
+      where: { providerCode_externalId: { providerCode, externalId: event.externalId } },
+    });
+
+    if (existing && existing.status !== 'RECEIVED' && existing.status !== 'FAILED') {
+      return { duplicate: true, applied: false };
     }
 
-    for (const code of this.registry.availableCodes) {
-      const provider = this.registry.get(code);
-      if (provider.capabilities.payout && provider.payout) return provider;
+    const record =
+      existing ??
+      (await this.prisma.webhookEvent.create({
+        data: { providerCode, externalId: event.externalId, rawBody: JSON.stringify(event) },
+      }));
+
+    const payout = await this.prisma.payout.findFirst({
+      where: { providerCode, providerReference: event.providerReference },
+      select: { id: true, status: true, processedByUserId: true, reference: true },
+    });
+
+    if (!payout) {
+      await this.prisma.webhookEvent.update({
+        where: { id: record.id },
+        data: { error: `Aucun retrait pour la référence ${event.providerReference}` },
+      });
+      this.logger.warn(
+        `Notification de versement ${providerCode}/${event.externalId} sans retrait`,
+      );
+      return { duplicate: Boolean(existing), applied: false };
     }
 
-    return null;
+    let applied = false;
+
+    if (event.status !== 'PROCESSING' && canTransitionPayout(payout.status, event.status)) {
+      await this.transition(payout.id, event.status, {
+        userId: payout.processedByUserId ?? undefined,
+        system: true,
+        failureReason: event.failureReason ?? "L'opérateur a refusé le versement.",
+      });
+      applied = true;
+    }
+
+    await this.prisma.webhookEvent.update({
+      where: { id: record.id },
+      data: { status: applied ? 'PROCESSED' : 'IGNORED', processedAt: new Date(), error: null },
+    });
+
+    return { duplicate: Boolean(existing), applied };
+  }
+
+  /**
+   * Le prestataire qui verse sur un compte de réception, ou `null` si le
+   * virement se fait à la main.
+   */
+  private resolveRoute(account: {
+    countryCode: string;
+    methodCode: string;
+  }): Promise<ResolvedRoute | null> {
+    return this.routing.resolvePayout(account.countryCode, account.methodCode as PaymentMethodCode);
   }
 
   async transition(
@@ -401,6 +525,7 @@ export class PayoutsService {
       /** Absent quand c'est la réconciliation qui conclut, sans personne derrière. */
       userId?: string;
       failureReason?: string;
+      providerCode?: string;
       providerReference?: string;
       /** Conclu par la réconciliation, pas par une personne. */
       system?: boolean;
@@ -429,6 +554,7 @@ export class PayoutsService {
         where: { id: payoutId },
         data: {
           status: to,
+          providerCode: context.providerCode ?? payout.providerCode,
           providerReference: context.providerReference ?? payout.providerReference,
           failureReason: to === 'FAILED' ? context.failureReason : payout.failureReason,
           processedAt: to === 'PROCESSING' ? now : payout.processedAt,
@@ -490,11 +616,17 @@ export class PayoutsService {
       include: { payoutAccount: true, organization: { select: { id: true, name: true } } },
     });
 
-    return payouts.map((payout) => ({
-      ...toPayoutView(payout),
-      organizationId: payout.organization.id,
-      organizationName: payout.organization.name,
-    }));
+    const views: AdminPayoutSummary[] = [];
+
+    for (const payout of payouts) {
+      views.push({
+        ...toPayoutView(payout, await this.isAutomatic(payout.payoutAccount)),
+        organizationId: payout.organization.id,
+        organizationName: payout.organization.name,
+      });
+    }
+
+    return views;
   }
 
   async list(organizationId: string, limit = 50): Promise<Payout[]> {
@@ -505,7 +637,13 @@ export class PayoutsService {
       include: { payoutAccount: true },
     });
 
-    return payouts.map(toPayoutView);
+    const views: Payout[] = [];
+
+    for (const payout of payouts) {
+      views.push(toPayoutView(payout, await this.isAutomatic(payout.payoutAccount)));
+    }
+
+    return views;
   }
 
   async findOne(organizationId: string, payoutId: string): Promise<Payout> {
@@ -518,7 +656,7 @@ export class PayoutsService {
       throw new NotFoundException("Cette demande de retrait n'existe pas.");
     }
 
-    return toPayoutView(payout);
+    return toPayoutView(payout, await this.isAutomatic(payout.payoutAccount));
   }
 
   private async toPayout(payoutId: string): Promise<Payout> {
@@ -527,7 +665,16 @@ export class PayoutsService {
       include: { payoutAccount: true },
     });
 
-    return toPayoutView(payout);
+    return toPayoutView(payout, await this.isAutomatic(payout.payoutAccount));
+  }
+
+  /** Vrai si un prestataire branché sait exécuter le versement vers ce compte. */
+  private async isAutomatic(account: {
+    countryCode: string;
+    methodCode: string;
+  }): Promise<boolean> {
+    const route = await this.resolveRoute(account);
+    return Boolean(route?.provider.payout);
   }
 }
 
@@ -550,15 +697,17 @@ interface PayoutRow {
   requestedAt: Date;
   processedAt: Date | null;
   completedAt: Date | null;
+  providerCode: string | null;
   payoutAccount: {
     type: string;
-    provider: string | null;
+    methodCode: string;
+    countryCode: string;
     bankName: string | null;
     accountNumber: string;
   };
 }
 
-function toPayoutView(payout: PayoutRow): Payout {
+function toPayoutView(payout: PayoutRow, automatic = false): Payout {
   return {
     id: payout.id,
     reference: payout.reference,
@@ -571,6 +720,9 @@ function toPayoutView(payout: PayoutRow): Payout {
     accountLabel: accountLabel(payout.payoutAccount),
     // Jamais le numéro complet : cet écran se consulte parfois à plusieurs.
     accountMaskedNumber: maskAccount(payout.payoutAccount.accountNumber),
+    methodCode: payout.payoutAccount.methodCode,
+    countryCode: payout.payoutAccount.countryCode,
+    automatic,
     failureReason: payout.failureReason,
     requestedAt: payout.requestedAt.toISOString(),
     processedAt: payout.processedAt?.toISOString() ?? null,
@@ -585,8 +737,9 @@ function toPayoutView(payout: PayoutRow): Payout {
  * distinguent d'un coup d'œil, « Compte 1 » et « Compte 2 » non.
  */
 function accountLabel(account: PayoutRow['payoutAccount']): string {
-  if (account.provider) return account.provider;
-  if (account.bankName) return account.bankName;
+  if (account.type === 'BANK' && account.bankName) return account.bankName;
+  const definition = getPaymentMethodDefinition(account.methodCode);
+  if (definition) return definition.label;
   return account.type === 'MOBILE_MONEY' ? 'Mobile Money' : 'Compte bancaire';
 }
 

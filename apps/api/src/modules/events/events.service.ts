@@ -102,12 +102,22 @@ export class EventsService {
     const startsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 4 * 60 * 60 * 1000);
 
+    // Le pays de l'événement naît de celui de l'organisation ; l'étape « Lieu »
+    // le remplacera par celui de la ville. Sa devise suit, et fixe celle des
+    // billets, de la commande et des recettes.
+    const organization = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: context.organizationId },
+      select: { countryCode: true, country: { select: { currency: true } } },
+    });
+
     const event = await this.prisma.event.create({
       ...eventWithRelations,
       data: {
         slug,
         shortCode,
         organizationId: context.organizationId,
+        countryCode: organization.countryCode,
+        currency: organization.country.currency,
         title: input.title,
         subtitle: input.subtitle,
         description: input.description,
@@ -141,6 +151,13 @@ export class EventsService {
     const existing = await this.requireEditable(context, eventId);
 
     const venueId = await this.resolveVenue(context, input, existing.venueId);
+
+    // Une ville emporte son pays, et le pays sa devise. Un événement qui a
+    // déjà vendu ne change plus de devise : ses billets et ses commandes sont
+    // libellés dans l'ancienne.
+    const country = input.location?.cityId
+      ? await this.countryOfCity(input.location.cityId, existing)
+      : null;
 
     /**
      * Plans du lieu : la liste reçue REMPLACE la précédente.
@@ -180,6 +197,8 @@ export class EventsService {
 
         format: input.location?.format,
         cityId: input.location?.cityId,
+        countryCode: country?.code,
+        currency: country?.currency,
         onlineUrl: input.location?.onlineUrl,
         onlinePlatform: input.location?.onlinePlatform,
         venueId,
@@ -224,6 +243,35 @@ export class EventsService {
   }
 
   /**
+   * Pays et devise d'une ville, pour un événement donné.
+   *
+   * Refuse le changement de devise après la première vente : les billets
+   * vendus, la commande encaissée et les écritures au grand livre sont
+   * libellés dans la devise d'origine, et ne se convertissent pas.
+   */
+  private async countryOfCity(
+    cityId: string,
+    existing: { countryCode: string; currency: string; salesCount: number },
+  ): Promise<{ code: string; currency: string }> {
+    const city = await this.prisma.city.findUnique({
+      where: { id: cityId },
+      select: { country: { select: { code: true, currency: true, isActive: true, name: true } } },
+    });
+
+    if (!city) {
+      throw new BadRequestException("Cette ville n'existe pas.");
+    }
+
+    if (existing.salesCount > 0 && city.country.currency !== existing.currency) {
+      throw new BadRequestException(
+        `Impossible de déplacer cet événement vers ${city.country.name} : des billets ont déjà été vendus en ${existing.currency}.`,
+      );
+    }
+
+    return { code: city.country.code, currency: city.country.currency };
+  }
+
+  /**
    * Contrôles obligatoires avant publication.
    *
    * Renvoie la liste des manques plutôt que la première erreur : l'organisateur
@@ -247,6 +295,9 @@ export class EventsService {
       missing.push('La date de début doit être à venir');
     }
     if (event.format !== 'ONLINE' && !event.cityId) missing.push('Indique la ville');
+    if (!event.country.isActive) {
+      missing.push(`La billetterie n'est pas encore ouverte pour ${event.country.name}`);
+    }
     if (event.format !== 'PHYSICAL' && !event.onlineUrl) {
       missing.push('Indique le lien de connexion');
     }

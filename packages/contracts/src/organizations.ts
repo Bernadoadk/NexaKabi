@@ -14,9 +14,11 @@ import {
   organizationStatusSchema,
   organizationTypeSchema,
   orgRoleSchema,
+  paymentMethodCodeSchema,
   payoutAccountTypeSchema,
   verificationStatusSchema,
 } from './enums.js';
+import { countryCodeSchema } from './payments.js';
 
 /** Durée de validité d'une invitation d'équipe — valeur du prototype. */
 export const INVITATION_TTL_DAYS = 7;
@@ -30,6 +32,12 @@ const socialUrl = z.string().url('Adresse invalide').max(200).optional().or(z.li
 export const createOrganizationSchema = z.object({
   name: z.string().trim().min(2, "Le nom de l'organisation est trop court").max(120),
   type: organizationTypeSchema.default('INDIVIDUAL'),
+  /**
+   * Pays de l'organisation. Gouverne la devise de son grand livre, les moyens
+   * de réception proposés pour ses retraits, et le pays par défaut de ses
+   * événements en ligne. Absent : le pays par défaut de la plateforme.
+   */
+  countryCode: countryCodeSchema.optional(),
   /** Ville d'exercice. La table des villes arrive en phase 5. */
   cityName: z.string().trim().max(80).optional(),
   /** Posée par la recherche Google Maps, ajustable à la main. */
@@ -72,6 +80,9 @@ export const organizationSchema = z.object({
   tiktok: z.string().nullable(),
   cityName: z.string().nullable(),
   address: z.string().nullable(),
+  countryCode: countryCodeSchema,
+  /** Devise du grand livre et des retraits — celle du pays. */
+  currency: z.string(),
   status: organizationStatusSchema,
   verificationStatus: verificationStatusSchema,
   verifiedAt: z.string().nullable(),
@@ -174,22 +185,34 @@ export type UpdateMemberRoleInput = z.infer<typeof updateMemberRoleSchema>;
 // Comptes de retrait
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Compte de réception d'un organisateur.
+ *
+ * Le moyen de réception est CHOISI parmi ceux que le pays de l'organisation
+ * autorise en versement — jamais déduit du moyen qu'un participant a utilisé
+ * pour payer. Le numéro est validé côté serveur contre la règle du pays.
+ */
 export const createPayoutAccountSchema = z
   .object({
     type: payoutAccountTypeSchema,
-    provider: z.string().trim().max(40).optional(),
+    /** Moyen de réception : `mtn_momo`, `wave`, `bank_transfer`… */
+    methodCode: paymentMethodCodeSchema,
     accountNumber: z.string().trim().min(4).max(40),
     accountHolderName: z.string().trim().min(2).max(120),
     bankName: z.string().trim().max(120).optional(),
     isDefault: z.boolean().default(false),
   })
-  .refine((value) => value.type !== 'MOBILE_MONEY' || Boolean(value.provider), {
-    message: "Précise l'opérateur Mobile Money",
-    path: ['provider'],
-  })
   .refine((value) => value.type !== 'BANK' || Boolean(value.bankName), {
     message: 'Précise la banque',
     path: ['bankName'],
+  })
+  .refine((value) => value.type !== 'BANK' || value.methodCode === 'bank_transfer', {
+    message: 'Un compte bancaire reçoit par virement',
+    path: ['methodCode'],
+  })
+  .refine((value) => value.type !== 'MOBILE_MONEY' || value.methodCode !== 'bank_transfer', {
+    message: 'Choisis un opérateur Mobile Money',
+    path: ['methodCode'],
   });
 
 export type CreatePayoutAccountInput = z.infer<typeof createPayoutAccountSchema>;
@@ -197,7 +220,16 @@ export type CreatePayoutAccountInput = z.infer<typeof createPayoutAccountSchema>
 export const payoutAccountSchema = z.object({
   id: idSchema,
   type: payoutAccountTypeSchema,
-  provider: z.string().nullable(),
+  countryCode: countryCodeSchema,
+  currency: z.string(),
+  methodCode: paymentMethodCodeSchema,
+  /** Libellé du moyen : « MTN MoMo », « Virement bancaire ». */
+  methodLabel: z.string(),
+  /**
+   * Vrai si le pays autorise encore ce moyen en versement. Un compte peut
+   * survivre à une désactivation : il reste visible, mais plus utilisable.
+   */
+  payoutAvailable: z.boolean(),
   /** Numéro masqué : seuls les derniers caractères sont exposés. */
   maskedAccountNumber: z.string(),
   accountHolderName: z.string(),

@@ -96,7 +96,8 @@ export class VerificationsService {
             payoutAccounts: {
               select: {
                 type: true,
-                provider: true,
+                methodCode: true,
+                countryCode: true,
                 accountNumber: true,
                 accountHolderName: true,
                 isDefault: true,

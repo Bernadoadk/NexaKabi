@@ -112,7 +112,7 @@ export default async function PayoutsPage({
                     </div>
                   </div>
 
-                  <Money amount={payout.netAmount} size="small" />
+                  <Money amount={payout.netAmount} currency={payout.currency} size="small" />
 
                   <PayoutBadge status={payout.status} />
 
@@ -130,18 +130,20 @@ export default async function PayoutsPage({
 /**
  * Le geste qui convient à un retrait, selon son compte et son état.
  *
- * Mobile Money en attente : l'opérateur verse, « Exécuter » suffit — et
- * l'enregistrement manuel reste à portée pour le jour où il refuse. Virement
- * bancaire : personne d'autre que l'administrateur ne le fait, il n'y a qu'à
- * l'enregistrer. En cours : l'interrogation conclura d'elle-même, mais un
- * versement que l'opérateur ne conclut jamais doit pouvoir être clos ici.
+ * Versement automatique en attente — un prestataire branché sait verser sur
+ * ce moyen dans ce pays : « Exécuter » suffit, et l'enregistrement manuel
+ * reste à portée pour le jour où il refuse. Versement manuel — virement
+ * bancaire, ou moyen sans prestataire : personne d'autre que l'administrateur
+ * ne le fait, il n'y a qu'à l'enregistrer. En cours : l'interrogation
+ * conclura d'elle-même, mais un versement que le prestataire ne conclut
+ * jamais doit pouvoir être clos ici.
  */
 function PayoutActions({ payout, allowed }: { payout: AdminPayoutSummary; allowed: boolean }) {
   // Sans le droit « Mouvements d'argent », un retrait se lit, il ne se
   // déclenche pas : les boutons disparaissent au lieu d'échouer au clic.
   if (!allowed) return null;
 
-  if (payout.status === 'PENDING' && payout.accountType === 'MOBILE_MONEY') {
+  if (payout.status === 'PENDING' && payout.automatic) {
     return (
       <div className="flex w-full flex-wrap items-start justify-end gap-2 sm:w-auto">
         <ExecuteButton payoutId={payout.id} />

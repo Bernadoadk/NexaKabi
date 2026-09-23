@@ -2,41 +2,52 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import type { PayoutAccount } from '@nexakabi/contracts';
+import type { PayoutAccount, PayoutMethod, PayoutMethods } from '@nexakabi/contracts';
 import {
   Alert,
   Badge,
   Button,
   Field,
   Input,
+  PhoneInput,
+  Select,
   Surface,
   SurfaceHeader,
   SurfaceTitle,
 } from '@nexakabi/ui';
 import { addPayoutAccountAction } from '../actions';
 
-const MOBILE_PROVIDERS = ['MTN', 'MOOV', 'CELTIIS'] as const;
-
 /**
- * Comptes de retrait — liste et ajout.
+ * Comptes de réception — liste et ajout.
  *
  * C'est le formulaire vers lequel `finances/page.tsx` renvoie déjà quand il
- * n'existe aucun compte : « Renseigne un numéro Mobile Money ou un compte
- * bancaire dans les paramètres de ton organisation ». Le champ le plus
- * important est `accountHolderName` — c'est lui que la vérification
- * d'identité rapprochera du nom sur la pièce déposée.
+ * n'existe aucun compte. Le champ le plus important est `accountHolderName` —
+ * c'est lui que la vérification d'identité rapprochera du nom sur la pièce
+ * déposée.
+ *
+ * ── Les moyens viennent du pays, pas d'une liste figée ─────────────────────
+ * L'organisateur choisit parmi les moyens que SON pays autorise en
+ * versement : MTN et Moov au Bénin, Wave et Orange Money au Sénégal. Un
+ * moyen fermé depuis reste visible sur le compte existant, marqué
+ * indisponible, plutôt que de disparaître sans explication.
+ *
+ * Le moyen de réception est indépendant de ce que les participants ont
+ * utilisé pour payer : recevoir sur MTN ce qui a été réglé par carte est le
+ * cas normal, pas l'exception.
  */
 export function PayoutAccountsSection({
   organizationId,
   accounts,
+  payoutMethods,
 }: {
   organizationId: string;
   accounts: PayoutAccount[];
+  payoutMethods: PayoutMethods;
 }) {
   return (
     <Surface variant="panel" padding="none" className="overflow-hidden">
       <SurfaceHeader>
-        <SurfaceTitle>Comptes de retrait</SurfaceTitle>
+        <SurfaceTitle>Comptes de réception</SurfaceTitle>
       </SurfaceHeader>
 
       {accounts.length > 0 ? (
@@ -48,12 +59,14 @@ export function PayoutAccountsSection({
             >
               <div className="min-w-0 flex-1">
                 <div className="text-body font-semibold">
-                  {account.provider ?? account.bankName ?? 'Compte'} · ••••{' '}
-                  {account.maskedAccountNumber}
+                  {account.methodLabel} · {account.maskedAccountNumber}
                 </div>
-                <div className="text-micro text-text-3">{account.accountHolderName}</div>
+                <div className="text-micro text-text-3">
+                  {account.accountHolderName} · {account.countryCode} · {account.currency}
+                </div>
               </div>
               {account.isDefault ? <Badge tone="ink">Par défaut</Badge> : null}
+              {!account.payoutAvailable ? <Badge tone="warning">Moyen indisponible</Badge> : null}
               {account.lastFailureReason ? (
                 <Badge tone="danger">Dernier échec : {account.lastFailureReason}</Badge>
               ) : null}
@@ -68,7 +81,18 @@ export function PayoutAccountsSection({
       )}
 
       <div className="border-t border-border-subtle px-5 py-4">
-        <AddPayoutAccountForm organizationId={organizationId} hasAccounts={accounts.length > 0} />
+        {payoutMethods.methods.length > 0 ? (
+          <AddPayoutAccountForm
+            organizationId={organizationId}
+            hasAccounts={accounts.length > 0}
+            payoutMethods={payoutMethods}
+          />
+        ) : (
+          <Alert tone="warning" title="Aucun moyen de réception disponible">
+            Aucun moyen de versement n’est encore ouvert pour ton pays. Les retraits seront
+            possibles dès qu’un moyen sera activé.
+          </Alert>
+        )}
       </div>
     </Surface>
   );
@@ -77,14 +101,22 @@ export function PayoutAccountsSection({
 function AddPayoutAccountForm({
   organizationId,
   hasAccounts,
+  payoutMethods,
 }: {
   organizationId: string;
   hasAccounts: boolean;
+  payoutMethods: PayoutMethods;
 }) {
   const router = useRouter();
-  const [type, setType] = React.useState<'MOBILE_MONEY' | 'BANK'>('MOBILE_MONEY');
+  const [methodCode, setMethodCode] = React.useState<string>(payoutMethods.methods[0]?.code ?? '');
+  const [accountNumber, setAccountNumber] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
+
+  const method: PayoutMethod | undefined = payoutMethods.methods.find(
+    (entry) => entry.code === methodCode,
+  );
+  const isBank = method?.kind === 'BANK_TRANSFER';
 
   return (
     <form
@@ -92,6 +124,12 @@ function AddPayoutAccountForm({
       action={async (formData) => {
         setPending(true);
         setError(null);
+
+        // Le type de compte découle du moyen : un virement va sur un compte
+        // bancaire, tout le reste sur un numéro Mobile Money.
+        formData.set('type', isBank ? 'BANK' : 'MOBILE_MONEY');
+        formData.set('methodCode', methodCode);
+        formData.set('accountNumber', accountNumber);
 
         const result = await addPayoutAccountAction(organizationId, formData);
         setPending(false);
@@ -112,47 +150,54 @@ function AddPayoutAccountForm({
         </Alert>
       ) : null}
 
-      <Field label="Type de compte" htmlFor="type">
-        <select
-          id="type"
-          name="type"
-          value={type}
-          onChange={(event) => setType(event.target.value as 'MOBILE_MONEY' | 'BANK')}
-          className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 text-body"
-        >
-          <option value="MOBILE_MONEY">Mobile Money</option>
-          <option value="BANK">Compte bancaire</option>
-        </select>
+      <Field
+        label="Moyen de réception"
+        help={`Les moyens ouverts pour ${payoutMethods.countryCode} · versements en ${payoutMethods.currency}.`}
+        htmlFor="methodCode"
+      >
+        <Select
+          id="methodCode"
+          value={methodCode}
+          onValueChange={(value) => {
+            setMethodCode(value);
+            setAccountNumber('');
+          }}
+          options={payoutMethods.methods.map((entry) => ({
+            value: entry.code,
+            label: entry.label,
+            description: entry.automatic
+              ? 'Versement automatique par le prestataire'
+              : 'Versement manuel, enregistré par Nexa-Kabi',
+          }))}
+        />
       </Field>
 
-      {type === 'MOBILE_MONEY' ? (
-        <Field label="Opérateur" htmlFor="provider">
-          <select
-            id="provider"
-            name="provider"
-            defaultValue="MTN"
-            className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 text-body"
-          >
-            {MOBILE_PROVIDERS.map((provider) => (
-              <option key={provider} value={provider}>
-                {provider}
-              </option>
-            ))}
-          </select>
-        </Field>
+      {isBank ? (
+        <>
+          <Field label="Banque" htmlFor="bankName">
+            <Input id="bankName" name="bankName" required placeholder="Ecobank, UBA…" />
+          </Field>
+          <Field label="Numéro de compte" help="L’IBAN ou le RIB." htmlFor="accountNumber">
+            <Input
+              id="accountNumber"
+              required
+              minLength={4}
+              value={accountNumber}
+              onChange={(event) => setAccountNumber(event.target.value)}
+            />
+          </Field>
+        </>
       ) : (
-        <Field label="Banque" htmlFor="bankName">
-          <Input id="bankName" name="bankName" required placeholder="Ecobank, UBA…" />
+        <Field label="Numéro qui reçoit les fonds" htmlFor="accountNumber">
+          <PhoneInput
+            key={payoutMethods.countryCode}
+            id="accountNumber"
+            countryCode={payoutMethods.countryCode}
+            required
+            onValueChange={(e164, raw) => setAccountNumber(e164 ?? raw)}
+          />
         </Field>
       )}
-
-      <Field
-        label="Numéro de compte"
-        help={type === 'MOBILE_MONEY' ? 'Le numéro qui reçoit les fonds.' : "L'IBAN ou le RIB."}
-        htmlFor="accountNumber"
-      >
-        <Input id="accountNumber" name="accountNumber" required minLength={4} />
-      </Field>
 
       <Field
         label="Titulaire du compte"
@@ -176,6 +221,7 @@ function AddPayoutAccountForm({
         loading={pending}
         loadingLabel="Ajout…"
         className="self-start"
+        disabled={!method}
       >
         Ajouter le compte
       </Button>

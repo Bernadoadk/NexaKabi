@@ -21,6 +21,7 @@ export const eventWithRelations = {
   include: {
     category: true,
     city: true,
+    country: true,
     venue: true,
     organization: true,
     ticketTypes: {
@@ -166,6 +167,8 @@ export function toEventSummary(row: EventRow, now = new Date()): EventSummary {
     categorySlug: row.category.slug,
     categoryColor: row.category.colorToken,
     cityName: row.city?.name ?? null,
+    countryCode: row.countryCode,
+    currency: row.currency,
     venueName: row.venue?.name ?? null,
     latitude: row.venue?.latitude ?? null,
     longitude: row.venue?.longitude ?? null,

@@ -2,7 +2,6 @@
 
 import * as React from 'react';
 import {
-  AffixField,
   BusyOverlay,
   Button,
   Field,
@@ -13,6 +12,7 @@ import {
   Pagination,
   PhoneInput,
   ProgressRing,
+  Select,
   Spinner,
   Surface,
   Textarea,
@@ -58,8 +58,21 @@ export function FormsSection() {
           <MoneyInput id="ds-amount" value={amount} onValueChange={setAmount} />
         </Field>
 
-        <Field label="Catégorie" htmlFor="ds-category">
-          <AffixField id="ds-category" defaultValue="Musique & concerts" readOnly suffix="▾" />
+        <Field label="Catégorie" htmlFor="ds-category" help="La liste déroulante du design system.">
+          <Select
+            id="ds-category"
+            defaultValue="musique"
+            options={[
+              { value: 'musique', label: 'Musique & concerts' },
+              { value: 'festivals', label: 'Festivals' },
+              {
+                value: 'business',
+                label: 'Business',
+                description: 'Conférences, salons, networking',
+              },
+              { value: 'sport', label: 'Sport', disabled: true },
+            ]}
+          />
         </Field>
 
         <Field
@@ -164,9 +177,8 @@ export function WaitingSection() {
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h2 className="font-display text-[20px] font-bold tracking-[-0.02em]">Attentes</h2>
         <p className="max-w-[520px] text-body-s text-text-2">
-          Le squelette reste la règle pour du contenu dont on connaît la forme. Ces trois-là
-          servent aux attentes qui n’en ont pas : la navigation, l’envoi d’un fichier, l’action en
-          cours.
+          Le squelette reste la règle pour du contenu dont on connaît la forme. Ces trois-là servent
+          aux attentes qui n’en ont pas : la navigation, l’envoi d’un fichier, l’action en cours.
         </p>
       </div>
 

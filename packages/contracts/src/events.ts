@@ -377,6 +377,9 @@ export const eventSummarySchema = z.object({
   categorySlug: z.string(),
   categoryColor: z.string(),
   cityName: z.string().nullable(),
+  /** Pays de l'événement — fixe la devise et les moyens de paiement du tunnel. */
+  countryCode: z.string(),
+  currency: z.string(),
   venueName: z.string().nullable(),
   /** Coordonnées du lieu, quand il a été localisé. */
   latitude: z.number().nullable(),

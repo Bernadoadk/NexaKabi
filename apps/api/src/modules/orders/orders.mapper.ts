@@ -62,6 +62,7 @@ export function toOrder(order: OrderWithRelations): OrderContract {
     buyerFeeAmount: order.buyerFeeAmount,
     totalAmount: order.totalAmount,
     currency: order.currency,
+    countryCode: order.countryCode,
 
     expiresAt: order.expiresAt?.toISOString() ?? null,
     paidAt: order.paidAt?.toISOString() ?? null,

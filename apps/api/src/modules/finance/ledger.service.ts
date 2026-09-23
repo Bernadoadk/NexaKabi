@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
-  DEFAULT_COMMISSION_POLICY,
   LEDGER_ENTRY_LABELS,
   isValidLedgerAmount,
   planRelease,
@@ -10,13 +9,17 @@ import {
   type LedgerEntry,
   type LedgerEntryType,
 } from '@nexakabi/contracts';
+import { resolveCurrency } from '@nexakabi/utils';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import type { Prisma } from '../../generated/prisma/client';
+import { CommissionService } from './commission.service';
 
 export interface WriteEntryInput {
   readonly organizationId: string;
   readonly type: LedgerEntryType;
   readonly amount: number;
+  /** Devise de l'écriture. Absente : celle du pays de l'organisation. */
+  readonly currency?: string;
   readonly description: string;
   readonly balanceState?: BalanceState;
   readonly availableAt?: Date | null;
@@ -48,7 +51,10 @@ export interface WriteEntryInput {
 export class LedgerService {
   private readonly logger = new Logger(LedgerService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly commission: CommissionService,
+  ) {}
 
   /**
    * Écrit une ligne au grand livre.
@@ -67,11 +73,16 @@ export class LedgerService {
       );
     }
 
+    // Une écriture porte la devise de l'organisation : un grand livre ne
+    // mélange jamais deux devises, et un montant sans devise ne veut rien dire.
+    const currency = input.currency ?? (await this.currencyOf(tx, input.organizationId));
+
     await tx.ledgerEntry.create({
       data: {
         organizationId: input.organizationId,
         type: input.type,
         amount: input.amount,
+        currency,
         balanceState: input.balanceState ?? 'AVAILABLE',
         availableAt: input.availableAt ?? null,
         eventId: input.eventId,
@@ -83,6 +94,15 @@ export class LedgerService {
         metadata: input.metadata,
       },
     });
+  }
+
+  private async currencyOf(tx: Prisma.TransactionClient, organizationId: string): Promise<string> {
+    const organization = await tx.organization.findUnique({
+      where: { id: organizationId },
+      select: { country: { select: { currency: true } } },
+    });
+
+    return resolveCurrency(organization?.country.currency).code;
   }
 
   /**
@@ -350,28 +370,37 @@ export class LedgerService {
         completedEventsCount: true,
         payoutFrozen: true,
         payoutFrozenReason: true,
+        countryCode: true,
+        country: { select: { currency: true } },
       },
     });
+
+    // Le minimum de retrait est celui de la politique de l'organisation — de
+    // son pays à défaut — et s'exprime dans SA devise, pas en FCFA par réflexe.
+    const policy = await this.commission.resolveForOrganization(organizationId);
+    const currency = resolveCurrency(organization.country.currency);
 
     const blocked = this.payoutBlockedReason({
       available,
       isVerified: organization.verificationStatus === 'VERIFIED',
       frozen: organization.payoutFrozen,
       frozenReason: organization.payoutFrozenReason,
+      minPayoutAmount: policy.minPayoutAmount,
+      currencySymbol: currency.symbol,
     });
 
     return {
       availableAmount: available,
       pendingAmount: pending,
       totalAmount: available + pending,
-      currency: 'XOF',
+      currency: currency.code,
       grossSales,
       platformFees,
       providerFees,
       refunds,
       paidOut,
       nextReleaseAt: nextRelease === null ? null : (nextRelease as Date).toISOString(),
-      minPayoutAmount: DEFAULT_COMMISSION_POLICY.minPayoutAmount,
+      minPayoutAmount: policy.minPayoutAmount,
       canRequestPayout: blocked === null,
       payoutBlockedReason: blocked,
     };
@@ -389,6 +418,8 @@ export class LedgerService {
     isVerified: boolean;
     frozen: boolean;
     frozenReason: string | null;
+    minPayoutAmount: number;
+    currencySymbol: string;
   }): string | null {
     if (!input.isVerified) {
       return 'Fais vérifier ton identité pour débloquer les retraits. Cela prend moins de 24 h.';
@@ -401,8 +432,8 @@ export class LedgerService {
       );
     }
 
-    if (input.available < DEFAULT_COMMISSION_POLICY.minPayoutAmount) {
-      return `Le montant minimum d’un retrait est de ${DEFAULT_COMMISSION_POLICY.minPayoutAmount} FCFA.`;
+    if (input.available < input.minPayoutAmount) {
+      return `Le montant minimum d’un retrait est de ${input.minPayoutAmount} ${input.currencySymbol}.`;
     }
 
     return null;

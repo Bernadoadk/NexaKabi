@@ -23,6 +23,14 @@ export {
   type AffixFieldProps,
 } from './components/input';
 export { PhoneInput, type PhoneInputProps } from './components/phone-input';
+export {
+  Select,
+  type SelectGroup,
+  type SelectOption,
+  type SelectProps,
+  type SelectSize,
+  type SelectVariant,
+} from './components/select';
 export { MoneyInput, type MoneyInputProps } from './components/money-input';
 export { OtpInput, type OtpInputProps } from './components/otp-input';
 export {
@@ -74,7 +82,12 @@ export {
 } from './components/table';
 export { SectionNav, type SectionNavEntry, type SectionNavProps } from './components/section-nav';
 export { ConsoleShell, type ConsoleShellProps } from './components/console-shell';
-export { Dialog, SuccessDialog, type DialogProps, type SuccessDialogProps } from './components/dialog';
+export {
+  Dialog,
+  SuccessDialog,
+  type DialogProps,
+  type SuccessDialogProps,
+} from './components/dialog';
 export { ToastProvider, useToast, type ToastTone } from './components/toast';
 export {
   SimpleBarChart,
@@ -98,6 +111,10 @@ export {
   type CategoryIconProps,
   type CategoryMarkProps,
 } from './components/category-icon';
+export {
+  PaymentMethodLogo,
+  type PaymentMethodLogoProps,
+} from './components/payment-method-logo';
 export {
   BottomTabBar,
   BOTTOM_TAB_BAR_HEIGHT,

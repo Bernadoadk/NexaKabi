@@ -2,10 +2,12 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/session';
 import {
+  fetchPayoutMethods,
   getOrganization,
   listPayoutAccounts,
   resolveActiveOrganization,
 } from '@/lib/organizations';
+import { fetchCountries } from '@/lib/countries';
 import { OrganizationSettingsForm } from './organization-settings-form';
 import { PayoutAccountsSection } from './payout-accounts-section';
 
@@ -29,9 +31,11 @@ export default async function OrganizationSettingsPage() {
   const { active } = await resolveActiveOrganization();
   if (!active) redirect('/pro');
 
-  const [organization, accounts] = await Promise.all([
+  const [organization, accounts, payoutMethods, countries] = await Promise.all([
     getOrganization(active.id),
     listPayoutAccounts(active.id),
+    fetchPayoutMethods(active.id),
+    fetchCountries(),
   ]);
 
   if (!organization) redirect('/pro');
@@ -40,8 +44,16 @@ export default async function OrganizationSettingsPage() {
     <div className="flex flex-col gap-6">
       <h1 className="font-display text-h1 font-bold">Paramètres</h1>
 
-      <OrganizationSettingsForm organizationId={active.id} organization={organization} />
-      <PayoutAccountsSection organizationId={active.id} accounts={accounts} />
+      <OrganizationSettingsForm
+        organizationId={active.id}
+        organization={organization}
+        countries={countries}
+      />
+      <PayoutAccountsSection
+        organizationId={active.id}
+        accounts={accounts}
+        payoutMethods={payoutMethods}
+      />
     </div>
   );
 }

@@ -46,7 +46,7 @@ export function OrderSummary({
             <span className="text-body-s">
               <span className="font-semibold">{item.quantity} ×</span> {item.ticketTypeName}
             </span>
-            <Money amount={item.subtotal} size="small" />
+            <Money amount={item.subtotal} currency={order.currency} size="small" />
           </li>
         ))}
       </ul>
@@ -54,25 +54,30 @@ export function OrderSummary({
       {showBreakdown ? (
         <dl className="flex flex-col gap-2 px-5 py-4">
           <Line label={`Sous-total · ${ticketCount} billet${ticketCount > 1 ? 's' : ''}`}>
-            <Money amount={order.subtotalAmount} size="small" />
+            <Money amount={order.subtotalAmount} currency={order.currency} size="small" />
           </Line>
 
           {order.discountAmount > 0 ? (
             <Line label="Réduction">
-              <Money amount={-order.discountAmount} size="small" showSign />
+              <Money
+                amount={-order.discountAmount}
+                currency={order.currency}
+                size="small"
+                showSign
+              />
             </Line>
           ) : null}
 
           {/* Les frais sont nommés et chiffrés. Jamais « frais divers ». */}
           <Line label="Frais de service Nexa-Kabi">
-            <Money amount={order.buyerFeeAmount} size="small" />
+            <Money amount={order.buyerFeeAmount} currency={order.currency} size="small" />
           </Line>
 
           <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-3">
             <dt className="text-body font-bold">Total à payer</dt>
             <dd>
               {/* 32 px : c'est le chiffre que l'acheteur doit retenir. */}
-              <Money amount={order.totalAmount} size="hero" />
+              <Money amount={order.totalAmount} currency={order.currency} size="hero" />
             </dd>
           </div>
         </dl>

@@ -6,12 +6,15 @@ import {
   type LedgerEntry,
   type OrganizationStats,
   type Payout,
+  type PayoutMethods,
 } from '@nexakabi/contracts';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/guards/session.guard';
 import { CurrentOrg } from '../organizations/decorators/current-org.decorator';
 import { RequirePermission } from '../organizations/decorators/require-permission.decorator';
 import type { OrgContext } from '../organizations/guards/org-member.guard';
+import { PaymentRoutingService } from '../payments/payment-routing.service';
+import { PrismaService } from '../../infra/prisma/prisma.service';
 import { LedgerService } from './ledger.service';
 import { PayoutsService } from './payouts.service';
 import { StatsService } from './stats.service';
@@ -32,7 +35,28 @@ export class FinanceController {
     private readonly ledger: LedgerService,
     private readonly payouts: PayoutsService,
     private readonly stats: StatsService,
+    private readonly routing: PaymentRoutingService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  /**
+   * Moyens de réception que cette organisation peut enregistrer.
+   *
+   * Ceux que SON pays autorise en versement — et rien d'autre. Un organisateur
+   * ivoirien voit Wave et Orange Money, pas Celtiis : la liste vient de la
+   * configuration du pays, jamais d'une constante.
+   */
+  @RequirePermission('finance:read')
+  @Get('payout-methods')
+  @ApiOperation({ summary: 'Moyens de réception disponibles pour les retraits' })
+  async payoutMethods(@CurrentOrg() context: OrgContext): Promise<PayoutMethods> {
+    const organization = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: context.organizationId },
+      select: { countryCode: true },
+    });
+
+    return this.routing.listPayoutMethods(organization.countryCode);
+  }
 
   @RequirePermission('finance:read')
   @Get('balance')

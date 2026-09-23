@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { formatAmount, getCurrency, type CurrencyCode } from '@nexakabi/utils';
+import { formatAmount, resolveCurrency } from '@nexakabi/utils';
 import { cn } from '../lib/cn';
 
 /**
@@ -29,7 +29,13 @@ const SIZE_STYLES: Record<MoneySize, { amount: string; symbol: string }> = {
 
 export interface MoneyProps extends Omit<React.HTMLAttributes<HTMLSpanElement>, 'children'> {
   amount: number;
-  currency?: CurrencyCode;
+  /**
+   * Code ISO 4217 de la devise. Toute donnée financière en porte un — commande,
+   * billet, écriture, retrait — et c'est lui qu'il faut passer : un montant
+   * ivoirien et un montant béninois s'écrivent tous deux en FCFA, mais un
+   * montant ghanéen non. Absent : la devise par défaut de la plateforme.
+   */
+  currency?: string | null;
   size?: MoneySize;
   /** Masque le suffixe de devise, quand la colonne l'indique déjà. */
   hideSymbol?: boolean;
@@ -39,7 +45,7 @@ export interface MoneyProps extends Omit<React.HTMLAttributes<HTMLSpanElement>, 
 
 export function Money({
   amount,
-  currency = 'XOF',
+  currency,
   size = 'default',
   hideSymbol = false,
   showSign = false,
@@ -47,8 +53,9 @@ export function Money({
   ...props
 }: MoneyProps) {
   const styles = SIZE_STYLES[size];
-  const formatted = formatAmount(amount, currency);
-  const symbol = getCurrency(currency).symbol;
+  const definition = resolveCurrency(currency);
+  const formatted = formatAmount(amount, definition.code);
+  const symbol = definition.symbol;
   const sign = showSign && amount > 0 ? '+' : '';
 
   return (

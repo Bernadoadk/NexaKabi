@@ -6,6 +6,7 @@ export * from './auth.js';
 export * from './organizations.js';
 export * from './verification-documents.js';
 export * from './events.js';
+export * from './payments.js';
 export * from './orders.js';
 export * from './tickets.js';
 export * from './checkin.js';

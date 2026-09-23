@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { documentSpec, type DocumentType } from '@nexakabi/contracts';
+import { documentSpec, getPaymentMethodDefinition, type DocumentType } from '@nexakabi/contracts';
 import { formatPhoneSafe } from '@nexakabi/utils';
 import { Alert, Badge, Surface } from '@nexakabi/ui';
 import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
@@ -28,7 +28,8 @@ interface VerificationDetail {
     owner: { fullName: string; phone: string; email: string | null };
     payoutAccounts: {
       type: string;
-      provider: string | null;
+      methodCode: string;
+      countryCode: string;
       accountNumber: string;
       accountHolderName: string;
       isDefault: boolean;
@@ -68,7 +69,8 @@ export default async function VerificationDetailPage({
 }) {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
-  if (!hasAdminAccess(user, 'verifications')) return <AccessDenied user={user} space="verifications" />;
+  if (!hasAdminAccess(user, 'verifications'))
+    return <AccessDenied user={user} space="verifications" />;
   const canAct = hasAdminAccess(user, 'verifications', 'act');
 
   const { id } = await params;
@@ -136,7 +138,7 @@ export default async function VerificationDetailPage({
                   label="Compte de retrait"
                   value={
                     payoutAccount
-                      ? `${payoutAccount.provider ?? payoutAccount.type} · ${payoutAccount.accountNumber}`
+                      ? `${getPaymentMethodDefinition(payoutAccount.methodCode)?.label ?? payoutAccount.type} (${payoutAccount.countryCode}) · ${payoutAccount.accountNumber}`
                       : '—'
                   }
                   emphasis
@@ -168,9 +170,9 @@ export default async function VerificationDetailPage({
 
               {request.documents.length === 0 ? (
                 <p className="text-body-s text-text-2">
-                  Aucune pièce déposée. Par défaut, aucune n’est demandée : le rapprochement avec
-                  le titulaire du compte de retrait suffit. Utilise « Demander une pièce » si un
-                  doute précis l’exige.
+                  Aucune pièce déposée. Par défaut, aucune n’est demandée : le rapprochement avec le
+                  titulaire du compte de retrait suffit. Utilise « Demander une pièce » si un doute
+                  précis l’exige.
                 </p>
               ) : (
                 <ul className="flex flex-col gap-2">

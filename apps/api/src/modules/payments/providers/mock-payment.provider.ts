@@ -8,6 +8,8 @@ import {
   WebhookSignatureError,
   type InitiatePaymentInput,
   type InitiatePaymentResult,
+  type MerchantMethod,
+  type NormalizedPaymentWebhook,
   type NormalizedWebhookEvent,
   type PayoutInput,
   type PayoutResult,
@@ -19,19 +21,26 @@ import {
 } from './payment-provider';
 
 /**
- * Opérateur simulé.
+ * Prestataire simulé.
  *
- * Ce n'est pas un utilitaire de test : c'est un LIVRABLE de premier plan. La
- * contractualisation avec MTN et Moov prend des semaines et constitue le
- * principal risque de calendrier du projet. Avec ce fournisseur, l'intégralité
- * du produit — tunnel d'achat, émission des billets, grand livre, retraits,
- * contrôle à l'entrée — se construit et se vérifie sans attendre personne.
+ * Ce n'est pas un utilitaire de test : c'est un LIVRABLE de premier plan. Le
+ * compte marchand chez un prestataire réel se négocie et se valide en
+ * semaines ; avec ce fournisseur, l'intégralité du produit — tunnel d'achat,
+ * émission des billets, grand livre, retraits, contrôle à l'entrée — se
+ * construit et se vérifie sans attendre personne.
  *
- * Il simule tout ce qui rend un paiement Mobile Money difficile :
- * l'asynchronisme, les échecs, les délais, les webhooks tardifs, dupliqués ou
- * hors séquence. Et il répond EXACTEMENT dans les formes du contrat
- * `PaymentProvider` : le jour où l'opérateur réel prend sa place, aucun
- * service, aucun écran ne change.
+ * Il simule tout ce qui rend un paiement difficile : l'asynchronisme, les
+ * échecs, les délais, les webhooks tardifs, dupliqués ou hors séquence, et la
+ * redirection d'un paiement par carte. Et il répond EXACTEMENT dans les
+ * formes du contrat `PaymentProvider` : le jour où le prestataire réel prend
+ * sa place, aucun service, aucun écran ne change.
+ *
+ * ── Un seul prestataire, tous les moyens, tous les pays ─────────────────────
+ * Le simulateur ne se fait plus passer pour un opérateur : il est un
+ * PRESTATAIRE, comme Bictorys, et traite le moyen qu'on lui passe — MTN au
+ * Bénin, Wave au Sénégal, la carte partout. C'est le routage par pays qui le
+ * désigne, hors production, pour tout moyen dont le prestataire réel n'est
+ * pas configuré.
  *
  * ── Les scénarios se choisissent par le numéro ──────────────────────────────
  * Le numéro du payeur (encaissement) ou du bénéficiaire (versement) pilote le
@@ -40,45 +49,35 @@ import {
  *   · se termine par 11 → jamais de réponse : reste en attente jusqu'à expiration
  *   · se termine par 22 → succès immédiat, sans attente
  *   · sinon             → succès après un court délai, comme une validation USSD
+ * Une carte n'a pas de numéro : le participant est envoyé sur une page de
+ * paiement simulée, servie par l'API, dont les boutons produisent le webhook
+ * — succès ou refus — avant de le renvoyer au tunnel, exactement comme la
+ * page hébergée d'un prestataire réel.
  *
  * ── Pourquoi il n'a pas de mémoire ──────────────────────────────────────────
- * Une première version gardait ses transactions dans une `Map`. En
- * développement, `nest --watch` redémarre l'API à chaque fichier enregistré :
- * un paiement en attente devenait « inconnu de l'opérateur », donc échoué, dès
- * qu'on touchait au code. Le scénario et l'instant d'émission sont désormais
- * ENCODÉS dans la référence : n'importe quelle instance, à n'importe quel
- * moment, peut répondre — c'est aussi le comportement d'un vrai opérateur, qui
- * ne perd pas une transaction parce que notre serveur a redémarré.
+ * Le scénario et l'instant d'émission sont ENCODÉS dans la référence :
+ * n'importe quelle instance, à n'importe quel moment, peut répondre — c'est
+ * aussi le comportement d'un vrai prestataire, qui ne perd pas une transaction
+ * parce que notre serveur a redémarré.
  */
 @Injectable()
 export class MockPaymentProvider extends PaymentProvider {
-  /**
-   * Code sous lequel ce simulateur se présente.
-   *
-   * Il peut endosser l'identité d'un opérateur réel — `mtn_momo`, `moov_money`,
-   * `celtiis_cash` — tant que le contrat correspondant n'est pas signé. C'est
-   * ce qui permet de construire et de vérifier l'écran de choix du moyen de
-   * paiement tel que le prototype le décrit, sans attendre personne.
-   *
-   * Le jour où MTN est branché, sa vraie implémentation prend simplement sa
-   * place dans l'annuaire : aucun écran, aucun service métier ne bouge.
-   */
-  readonly code: PaymentProviderCode;
+  readonly code: PaymentProviderCode = 'mock';
 
   readonly capabilities = {
     refund: true,
     partialRefund: true,
     payout: true,
     statusPolling: true,
+    verifyWebhookByFetch: false,
   };
 
   private readonly logger = new Logger(MockPaymentProvider.name);
   private readonly secret: string;
+  private readonly publicApiUrl: string;
 
-  constructor(config: ConfigService<Env, true>, code: PaymentProviderCode = 'mock') {
+  constructor(config: ConfigService<Env, true>) {
     super();
-
-    this.code = code;
 
     if (config.get('NODE_ENV', { infer: true }) === 'production') {
       throw new Error(
@@ -87,6 +86,7 @@ export class MockPaymentProvider extends PaymentProvider {
     }
 
     this.secret = config.get('OTP_PEPPER', { infer: true });
+    this.publicApiUrl = config.get('PUBLIC_API_URL', { infer: true });
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -94,12 +94,40 @@ export class MockPaymentProvider extends PaymentProvider {
   // ───────────────────────────────────────────────────────────────────────────
 
   async initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
-    const scenario = scenarioFor(input.payerPhone);
     const now = Date.now();
+
+    // Une carte n'a pas de numéro : le participant est envoyé sur une page de
+    // paiement simulée, et revient. C'est le même parcours qu'avec la page
+    // hébergée d'un prestataire réel — c'est ce que le tunnel doit savoir gérer.
+    // Le scénario « timeout » garantit que SEUL le geste sur cette page conclut
+    // le paiement, par un webhook : jamais l'interrogation toute seule.
+    if (input.method.kind === 'CARD') {
+      const providerReference = encodeReference('MOCK', 'timeout', now);
+      const redirectUrl = new URL(`${this.publicApiUrl}/webhooks/payments/mock/checkout`);
+      redirectUrl.searchParams.set('ref', providerReference);
+      redirectUrl.searchParams.set('amount', String(input.amount));
+      redirectUrl.searchParams.set('currency', input.currency);
+      redirectUrl.searchParams.set('success', input.returnUrls.success);
+      redirectUrl.searchParams.set('error', input.returnUrls.error);
+
+      this.logger.warn(
+        `[mock] Paiement par carte ${providerReference} · ${input.amount} ${input.currency} · page simulée`,
+      );
+
+      return {
+        providerReference,
+        status: 'PENDING',
+        expiresAt: new Date(now + 10 * 60 * 1000),
+        redirectUrl: redirectUrl.toString(),
+        rawResponse: { scenario: 'card_redirect' },
+      };
+    }
+
+    const scenario = scenarioFor(input.payerPhone ?? '');
     const providerReference = encodeReference('MOCK', scenario, now);
 
     this.logger.warn(
-      `[${this.code} · simulé] Paiement ${providerReference} · ${input.amount} ${input.currency} · scénario « ${scenario} »`,
+      `[mock] Paiement ${providerReference} · ${input.method.code} · ${input.countryCode} · ${input.amount} ${input.currency} · scénario « ${scenario} »`,
     );
 
     if (scenario === 'immediate_failure') {
@@ -151,11 +179,12 @@ export class MockPaymentProvider extends PaymentProvider {
           failureReason: 'En attente de la validation du client.',
         };
       case 'instant_success':
-        return { status: 'SUCCEEDED' };
+        return { status: 'SUCCEEDED', providerFeeAmount: 0 };
       case 'delayed_success':
         // Le succès différé imite le temps réel de validation USSD.
         return {
           status: Date.now() >= decoded.issuedAt + SETTLEMENT_DELAY_MS ? 'SUCCEEDED' : 'PENDING',
+          providerFeeAmount: 0,
         };
     }
   }
@@ -169,6 +198,7 @@ export class MockPaymentProvider extends PaymentProvider {
     this.assertSignature(raw.rawBody, signature);
 
     const payload = JSON.parse(raw.rawBody) as {
+      kind?: 'payment' | 'payout';
       eventId?: string;
       providerReference?: string;
       status?: string;
@@ -181,10 +211,23 @@ export class MockPaymentProvider extends PaymentProvider {
       throw new Error('Charge utile de webhook incomplète.');
     }
 
+    // À défaut d'identifiant d'événement, on en dérive un déterministe :
+    // rejouer le même webhook doit produire la même clé d'idempotence.
+    const externalId = payload.eventId ?? `${payload.providerReference}:${payload.status}`;
+
+    if (payload.kind === 'payout') {
+      return {
+        kind: 'payout',
+        externalId,
+        providerReference: payload.providerReference,
+        status: normalizePayoutStatus(payload.status),
+        failureReason: payload.failureReason,
+      };
+    }
+
     return {
-      // À défaut d'identifiant d'événement, on en dérive un déterministe :
-      // rejouer le même webhook doit produire la même clé d'idempotence.
-      externalId: payload.eventId ?? `${payload.providerReference}:${payload.status}`,
+      kind: 'payment',
+      externalId,
       providerReference: payload.providerReference,
       status: normalizeStatus(payload.status),
       failureCode: payload.failureCode,
@@ -194,7 +237,9 @@ export class MockPaymentProvider extends PaymentProvider {
   }
 
   async refund(input: RefundInput): Promise<RefundResult> {
-    this.logger.warn(`[mock] Remboursement de ${input.amount} sur ${input.providerReference}`);
+    this.logger.warn(
+      `[mock] Remboursement de ${input.amount} ${input.currency} sur ${input.providerReference}`,
+    );
 
     return {
       providerReference: `MOCKREF-${randomBytes(4).toString('hex').toUpperCase()}`,
@@ -209,8 +254,8 @@ export class MockPaymentProvider extends PaymentProvider {
   /**
    * Verse les recettes à un organisateur — en simulation.
    *
-   * Même contrat que FedaPay : l'opérateur accuse réception (`PROCESSING`) et
-   * l'argent part ensuite. Le numéro du compte de retrait choisit le scénario,
+   * Même contrat qu'un prestataire réel : accusé de réception (`PROCESSING`),
+   * puis l'argent part. Le numéro du compte de réception choisit le scénario,
    * comme le numéro du payeur pour un encaissement : un retrait vers un numéro
    * finissant par 22 arrive tout de suite, par 00 est refusé, par 11 reste en
    * cours — c'est ainsi qu'on vérifie l'écran des retraits dans tous ses états.
@@ -220,7 +265,7 @@ export class MockPaymentProvider extends PaymentProvider {
     const providerReference = encodeReference('MOCKPAY', scenario, Date.now());
 
     this.logger.warn(
-      `[${this.code} · simulé] Versement ${providerReference} · ${input.amount} ${input.currency} → ${input.accountHolderName} · scénario « ${scenario} »`,
+      `[mock] Versement ${providerReference} · ${input.method.code} · ${input.countryCode} · ${input.amount} ${input.currency} → ${input.accountHolderName} · scénario « ${scenario} »`,
     );
 
     if (scenario === 'immediate_failure') {
@@ -249,6 +294,14 @@ export class MockPaymentProvider extends PaymentProvider {
           status: Date.now() >= decoded.issuedAt + SETTLEMENT_DELAY_MS ? 'PAID' : 'PROCESSING',
         };
     }
+  }
+
+  /**
+   * Le simulateur sait tout faire partout : c'est ce que la synchronisation
+   * doit constater pour qu'aucune ligne configurée sur lui ne se ferme.
+   */
+  override async listMerchantMethods(): Promise<MerchantMethod[]> {
+    return [];
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -329,23 +382,31 @@ function decodeReference(
   return { scenario, issuedAt };
 }
 
-function normalizeStatus(status: string): NormalizedWebhookEvent['status'] {
-  const known: Record<string, NormalizedWebhookEvent['status']> = {
-    SUCCESS: 'SUCCEEDED',
-    SUCCEEDED: 'SUCCEEDED',
-    FAILED: 'FAILED',
-    FAILURE: 'FAILED',
-    PROCESSING: 'PROCESSING',
-    EXPIRED: 'EXPIRED',
-  };
-
-  const normalized = known[status.toUpperCase()];
-
-  if (!normalized) {
-    throw new Error(`Statut de webhook inconnu : ${status}`);
+function normalizeStatus(status: string): NormalizedPaymentWebhook['status'] {
+  switch (status.toUpperCase()) {
+    case 'SUCCEEDED':
+    case 'SUCCESS':
+      return 'SUCCEEDED';
+    case 'FAILED':
+      return 'FAILED';
+    case 'EXPIRED':
+      return 'EXPIRED';
+    default:
+      return 'PROCESSING';
   }
+}
 
-  return normalized;
+function normalizePayoutStatus(status: string): 'PROCESSING' | 'PAID' | 'FAILED' {
+  switch (status.toUpperCase()) {
+    case 'PAID':
+    case 'SUCCEEDED':
+    case 'SUCCESS':
+      return 'PAID';
+    case 'FAILED':
+      return 'FAILED';
+    default:
+      return 'PROCESSING';
+  }
 }
 
 function firstHeader(value: string | string[] | undefined): string | undefined {

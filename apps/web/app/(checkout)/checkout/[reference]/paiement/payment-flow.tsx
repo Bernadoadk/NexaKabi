@@ -3,14 +3,15 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Lock } from 'lucide-react';
+import { Check, ExternalLink, Lock } from 'lucide-react';
 import {
   isPaymentPending,
   type ApiError,
+  type CheckoutPaymentMethod,
+  type CheckoutPaymentMethods,
   type Order,
-  type PaymentMethod,
+  type PaymentMethodCode,
   type PaymentState,
-  type PaymentProviderCode,
 } from '@nexakabi/contracts';
 import { formatShortCountdown } from '@nexakabi/utils';
 import {
@@ -19,6 +20,7 @@ import {
   Button,
   Field,
   Money,
+  PaymentMethodLogo,
   PhoneInput,
   ProgressRing,
   Surface,
@@ -37,10 +39,17 @@ import {
  * ── La règle qui gouverne cet écran ─────────────────────────────────────────
  * **Un paiement en attente n'est jamais présenté comme un échec.** Le Mobile
  * Money est asynchrone : l'acheteur quitte l'écran pour valider sur son
- * téléphone, la connexion peut tomber, l'onglet peut se fermer. Seul
- * l'opérateur tranche. Le compte à rebours n'annonce donc pas un échec — il
- * annonce le moment où la demande sera abandonnée par l'opérateur, ce qui n'est
- * pas la même chose et ne se dit pas de la même façon.
+ * téléphone, la connexion peut tomber, l'onglet peut se fermer. Seul le
+ * prestataire tranche. Le compte à rebours n'annonce donc pas un échec — il
+ * annonce le moment où la demande sera abandonnée, ce qui n'est pas la même
+ * chose et ne se dit pas de la même façon.
+ *
+ * ── Ce que l'écran ne sait pas ─────────────────────────────────────────────
+ * Quel prestataire traite le paiement. Il reçoit les MOYENS ouverts dans le
+ * pays de la commande — « MTN MoMo », « Wave », « Carte bancaire » — et
+ * demande un numéro quand le moyen l'exige, ou envoie l'acheteur sur une
+ * page de paiement quand le moyen le veut. Un pays de plus n'ajoute pas une
+ * ligne ici.
  */
 
 /** Cadence d'interrogation. Assez rapide pour paraître instantané, assez lente
@@ -50,13 +59,14 @@ const POLL_INTERVAL_MS = 3_000;
 export function PaymentFlow({
   order,
   methods,
-  notice,
   initialPayment,
+  returnedFromProvider = false,
 }: {
   order: Order;
-  methods: PaymentMethod[];
-  notice: string;
+  methods: CheckoutPaymentMethods;
   initialPayment: PaymentState | null;
+  /** Vrai quand l'acheteur revient d'une page de paiement hébergée. */
+  returnedFromProvider?: boolean;
 }) {
   const router = useRouter();
 
@@ -64,16 +74,21 @@ export function PaymentFlow({
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
 
-  const available = methods.filter((method) => method.available);
-  const [provider, setProvider] = React.useState<PaymentProviderCode | null>(
-    initialPayment?.provider ?? available[0]?.provider ?? null,
+  const [method, setMethod] = React.useState<PaymentMethodCode | null>(
+    initialPayment?.method ?? methods.methods[0]?.code ?? null,
   );
-  const [payerPhone, setPayerPhone] = React.useState(order.buyerPhone);
+  // Le numéro à débiter appartient au pays de la commande. Celui de
+  // l'acheteur n'est proposé que s'il en relève : un acheteur béninois d'un
+  // événement à Dakar ne paie pas par Wave avec un +229.
+  const [payerPhone, setPayerPhone] = React.useState(
+    order.buyerPhone.startsWith(`+${methods.dialCode}`) ? order.buyerPhone : '',
+  );
 
+  const selected = methods.methods.find((entry) => entry.code === method) ?? null;
   const waiting = payment !== null && isPaymentPending(payment.status);
 
   // Interrogation de l'état pendant l'attente. C'est le serveur qui interroge
-  // l'opérateur : la page ne fait que demander le verdict connu.
+  // le prestataire : la page ne fait que demander le verdict connu.
   React.useEffect(() => {
     if (!payment || !isPaymentPending(payment.status)) return;
 
@@ -94,7 +109,7 @@ export function PaymentFlow({
 
         if (next.status === 'SUCCEEDED') {
           window.clearInterval(timer);
-          // L'acheteur n'a rien cliqué : c'est l'opérateur qui vient de
+          // L'acheteur n'a rien cliqué : c'est le prestataire qui vient de
           // répondre. Sans le filet, l'écran d'attente resterait identique à
           // lui-même pendant que la confirmation se charge — juste au moment
           // où l'argent vient de partir.
@@ -111,7 +126,7 @@ export function PaymentFlow({
   }, [payment, order.reference, router]);
 
   async function initiate() {
-    if (!provider) return;
+    if (!selected) return;
 
     setPending(true);
     setError(null);
@@ -119,30 +134,46 @@ export function PaymentFlow({
     const response = await fetch(`/api/checkout/orders/${order.reference}/payments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, payerPhone }),
+      body: JSON.stringify({
+        method: selected.code,
+        payerPhone: selected.requiresPhone ? payerPhone : undefined,
+      }),
     });
 
     const body: unknown = await response.json().catch(() => null);
-    setPending(false);
 
     if (!response.ok) {
+      setPending(false);
       setError((body as ApiError | null)?.message ?? 'Impossible de lancer le paiement.');
       return;
     }
 
     const state = body as PaymentState;
-    setPayment(state);
 
     if (state.status === 'SUCCEEDED') {
       startRouteProgress();
       router.push(`/commandes/${order.reference}/confirmation`);
+      return;
     }
+
+    // Page du prestataire : on y va, sans rien conclure. Le retour ramène ici
+    // avec l'identifiant du paiement, et l'interrogation dit ce qu'il en est.
+    if (state.redirectUrl && isPaymentPending(state.status)) {
+      startRouteProgress();
+      window.location.assign(state.redirectUrl);
+      return;
+    }
+
+    setPending(false);
+    setPayment(state);
   }
 
   if (waiting && payment) {
     return (
       <WaitingState
         payment={payment}
+        method={selected}
+        returnedFromProvider={returnedFromProvider}
         onChangeMethod={() => {
           // On ne « annule » pas la demande en cours : elle peut encore
           // aboutir. Revenir au choix relancera simplement une demande, et le
@@ -162,6 +193,9 @@ export function PaymentFlow({
         onRetry={() => {
           setPayment(null);
           setError(null);
+          // L'adresse porte encore l'identifiant du paiement échoué : un
+          // rafraîchissement le rechargerait. On revient à l'adresse nue.
+          if (returnedFromProvider) router.replace(`/checkout/${order.reference}/paiement`);
         }}
       />
     );
@@ -171,9 +205,8 @@ export function PaymentFlow({
     <ChooseState
       order={order}
       methods={methods}
-      notice={notice}
-      provider={provider}
-      onProviderChange={setProvider}
+      selected={selected}
+      onMethodChange={setMethod}
       payerPhone={payerPhone}
       onPayerPhoneChange={setPayerPhone}
       error={error}
@@ -190,9 +223,8 @@ export function PaymentFlow({
 function ChooseState({
   order,
   methods,
-  notice,
-  provider,
-  onProviderChange,
+  selected,
+  onMethodChange,
   payerPhone,
   onPayerPhoneChange,
   error,
@@ -200,19 +232,19 @@ function ChooseState({
   onSubmit,
 }: {
   order: Order;
-  methods: PaymentMethod[];
-  notice: string;
-  provider: PaymentProviderCode | null;
-  onProviderChange: (provider: PaymentProviderCode) => void;
+  methods: CheckoutPaymentMethods;
+  selected: CheckoutPaymentMethod | null;
+  onMethodChange: (method: PaymentMethodCode) => void;
   payerPhone: string;
   onPayerPhoneChange: (phone: string) => void;
   error: string | null;
   pending: boolean;
   onSubmit: () => void;
 }) {
-  const mobileMoney = methods.filter((method) => method.group === 'mobile_money');
-  const others = methods.filter((method) => method.group === 'other');
-  const hasAvailable = methods.some((method) => method.available);
+  const mobileMoney = methods.methods.filter((method) => method.group === 'mobile_money');
+  const others = methods.methods.filter((method) => method.group !== 'mobile_money');
+  const hasAvailable = methods.methods.length > 0;
+  const asksPhone = selected !== null && selected.requiresPhone;
 
   return (
     <form
@@ -236,37 +268,63 @@ function ChooseState({
       ) : null}
 
       <Surface variant="panel" padding="none" className="overflow-hidden">
-        <div className="flex items-baseline justify-between border-b border-border-subtle px-5 py-4">
-          <h2 className="text-body font-bold">Mobile Money</h2>
-          <span className="text-micro text-text-3">Recommandé</span>
-        </div>
+        {mobileMoney.length > 0 ? (
+          <>
+            <div className="flex items-baseline justify-between border-b border-border-subtle px-5 py-4">
+              <h2 className="text-body font-bold">Mobile Money</h2>
+              <span className="text-micro text-text-3">Recommandé</span>
+            </div>
 
-        <MethodList
-          methods={mobileMoney}
-          selected={provider}
-          onSelect={onProviderChange}
-          recommendedFirst
-        />
+            <MethodList
+              methods={mobileMoney}
+              selected={selected?.code ?? null}
+              onSelect={onMethodChange}
+              recommendedFirst
+            />
+          </>
+        ) : null}
 
         {others.length > 0 ? (
           <>
-            <div className="border-y border-border-subtle bg-surface-alt px-5 py-2.5">
-              <h2 className="text-body-s font-bold text-text-2">Autres moyens</h2>
+            <div
+              className={cn(
+                'border-b border-border-subtle bg-surface-alt px-5 py-2.5',
+                mobileMoney.length > 0 && 'border-t',
+              )}
+            >
+              <h2 className="text-body-s font-bold text-text-2">
+                {mobileMoney.length > 0 ? 'Autres moyens' : 'Moyens de paiement'}
+              </h2>
             </div>
-            <MethodList methods={others} selected={provider} onSelect={onProviderChange} />
+            <MethodList
+              methods={others}
+              selected={selected?.code ?? null}
+              onSelect={onMethodChange}
+            />
           </>
         ) : null}
       </Surface>
 
-      <Field
-        label="Numéro à débiter"
-        help="Souvent le tien, mais pas forcément : quelqu’un peut payer pour toi."
-      >
-        <PhoneInput
-          defaultValue={payerPhone}
-          onValueChange={(e164, raw) => onPayerPhoneChange(e164 ?? raw)}
-        />
-      </Field>
+      {asksPhone ? (
+        <Field
+          label="Numéro à débiter"
+          help="Souvent le tien, mais pas forcément : quelqu’un peut payer pour toi."
+        >
+          <PhoneInput
+            key={methods.countryCode}
+            countryCode={methods.countryCode}
+            defaultValue={payerPhone}
+            onValueChange={(e164, raw) => onPayerPhoneChange(e164 ?? raw)}
+          />
+        </Field>
+      ) : null}
+
+      {selected?.redirects ? (
+        <Alert tone="info" title="Paiement sur une page sécurisée">
+          Tu vas être dirigé vers la page de paiement, puis ramené ici une fois le paiement validé.
+          Ta réservation reste valable pendant ce temps.
+        </Alert>
+      ) : null}
 
       <div className="flex flex-col gap-3">
         <Button
@@ -275,17 +333,25 @@ function ChooseState({
           size="primary"
           block
           loading={pending}
-          disabled={!provider || !hasAvailable}
+          disabled={!selected || !hasAvailable}
         >
-          Payer <Money amount={order.totalAmount} size="small" className="ml-1" />
+          {selected?.redirects ? 'Continuer vers le paiement' : 'Payer'}{' '}
+          <Money
+            amount={order.totalAmount}
+            currency={order.currency}
+            size="small"
+            className="ml-1"
+          />
         </Button>
 
         {/* Mention non négociable : c'est la protection la plus efficace contre
             l'ingénierie sociale sur ce marché. */}
-        <p className="flex items-start gap-2 rounded-card bg-surface-alt px-4 py-3 text-micro text-text-2">
-          <Lock aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-          {notice}
-        </p>
+        {methods.notice ? (
+          <p className="flex items-start gap-2 rounded-card bg-surface-alt px-4 py-3 text-micro text-text-2">
+            <Lock aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+            {methods.notice}
+          </p>
+        ) : null}
       </div>
     </form>
   );
@@ -297,44 +363,78 @@ function MethodList({
   onSelect,
   recommendedFirst = false,
 }: {
-  methods: PaymentMethod[];
-  selected: PaymentProviderCode | null;
-  onSelect: (provider: PaymentProviderCode) => void;
+  methods: CheckoutPaymentMethod[];
+  selected: PaymentMethodCode | null;
+  onSelect: (method: PaymentMethodCode) => void;
   recommendedFirst?: boolean;
 }) {
   return (
     <ul className="flex flex-col">
       {methods.map((method, index) => {
-        const active = method.provider === selected;
+        const active = method.code === selected;
+        const delayed = method.availability === 'DELAYED';
 
         return (
-          <li key={method.provider}>
+          <li key={method.code}>
             <label
               className={cn(
-                'flex cursor-pointer items-center gap-3 border-b border-border-subtle px-5 py-3.5 transition',
-                active && 'bg-coral-50',
-                !method.available && 'cursor-not-allowed opacity-55',
+                'flex cursor-pointer items-center gap-3 border-b border-border-subtle px-4 py-3 transition last:border-b-0',
+                active ? 'bg-coral-50' : 'hover:bg-surface-alt',
               )}
             >
+              {/* Le logo prend la place de la puce : c'est lui qu'on reconnaît
+                  d'abord. Le bouton radio reste, invisible mais présent, pour
+                  le clavier et les lecteurs d'écran. */}
               <input
                 type="radio"
                 name="payment-method"
-                value={method.provider}
+                value={method.code}
                 checked={active}
-                disabled={!method.available}
-                onChange={() => onSelect(method.provider)}
-                className="size-[18px] shrink-0 accent-coral"
+                onChange={() => onSelect(method.code)}
+                className="peer sr-only"
               />
 
-              <span className="flex flex-1 flex-col">
-                <span className="flex items-center gap-2">
+              <PaymentMethodLogo
+                logo={method.logo}
+                label={method.label}
+                brandColor={method.brandColor}
+                brandColorIsLight={method.brandColorIsLight}
+                className={cn(
+                  'transition',
+                  // L'anneau de focus doit se voir sur le logo, puisque le
+                  // bouton radio ne se voit plus.
+                  'peer-focus-visible:ring-2 peer-focus-visible:ring-coral peer-focus-visible:ring-offset-2',
+                )}
+              />
+
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-body font-semibold">{method.label}</span>
-                  {recommendedFirst && index === 0 && method.available ? (
-                    <Badge tone="accent">Recommandé</Badge>
+                  {recommendedFirst && index === 0 ? <Badge tone="accent">Recommandé</Badge> : null}
+                  {/* Un statut n'est jamais porté par la couleur seule :
+                      toujours un mot. Règle du design system. */}
+                  {delayed ? <Badge tone="warning">Retards en cours</Badge> : null}
+                  {method.redirects ? (
+                    <ExternalLink aria-hidden className="size-3.5 text-text-3" />
                   ) : null}
-                  {method.comingSoon ? <Badge tone="neutral">Bientôt</Badge> : null}
                 </span>
-                <span className="text-micro text-text-3">{method.description}</span>
+                <span className="text-micro text-text-3">
+                  {delayed
+                    ? 'L’opérateur répond plus lentement que d’habitude.'
+                    : method.description}
+                </span>
+              </span>
+
+              {/* Coche de sélection : sans le bouton radio, il faut un repère
+                  qui ne dépende pas du seul fond coloré. */}
+              <span
+                aria-hidden
+                className={cn(
+                  'flex size-5 shrink-0 items-center justify-center rounded-full border transition',
+                  active ? 'border-coral bg-coral text-white' : 'border-border-strong',
+                )}
+              >
+                {active ? <Check className="size-3.5" strokeWidth={3} /> : null}
               </span>
             </label>
           </li>
@@ -350,9 +450,13 @@ function MethodList({
 
 function WaitingState({
   payment,
+  method,
+  returnedFromProvider,
   onChangeMethod,
 }: {
   payment: PaymentState;
+  method: CheckoutPaymentMethod | null;
+  returnedFromProvider: boolean;
   onChangeMethod: () => void;
 }) {
   const [remaining, setRemaining] = React.useState(() =>
@@ -368,6 +472,9 @@ function WaitingState({
   }, [payment.expiresAt]);
 
   const elapsed = payment.expiresAt ? Math.max(0, remaining) : 0;
+  // Un paiement sur page hébergée n'a pas de téléphone à valider : l'attente
+  // dit autre chose, et propose de rouvrir la page si elle a été fermée.
+  const hosted = Boolean(payment.redirectUrl) && !payment.maskedPayerPhone;
 
   return (
     <div className="flex flex-col gap-5">
@@ -375,13 +482,42 @@ function WaitingState({
         {/* Sans `value` : l'anneau tourne au lieu d'afficher un pourcentage.
             Chiffrer une progression mentirait — personne ne sait quand
             l'acheteur composera son code sur son téléphone. */}
-        <ProgressRing size={64} thickness={4} label="Paiement en cours de validation" />
+        {/* Le logo au centre de l'anneau : pendant l'attente, l'acheteur doit
+            reconnaître d'un coup d'œil QUI lui demande de valider — c'est
+            l'application qu'il va ouvrir sur son téléphone. */}
+        <span className="relative flex items-center justify-center">
+          <ProgressRing size={72} thickness={4} label="Paiement en cours de validation" />
+          {method ? (
+            <span className="absolute">
+              <PaymentMethodLogo
+                logo={method.logo}
+                label={method.label}
+                brandColor={method.brandColor}
+                brandColorIsLight={method.brandColorIsLight}
+                size="compact"
+              />
+            </span>
+          ) : null}
+        </span>
 
         <div className="flex flex-col gap-1">
-          <h2 className="text-h3 font-bold">Valide le paiement sur ton téléphone</h2>
+          <h2 className="text-h3 font-bold">
+            {hosted ? 'Confirmation du paiement en cours' : 'Valide le paiement sur ton téléphone'}
+          </h2>
           <p className="text-body-s text-text-2">
-            Une demande de <Money amount={payment.amount} size="small" /> a été envoyée au{' '}
-            <span className="font-semibold">{payment.maskedPayerPhone}</span>.
+            {hosted ? (
+              <>
+                Nous attendons la confirmation de{' '}
+                <Money amount={payment.amount} currency={payment.currency} size="small" /> par{' '}
+                <span className="font-semibold">{method?.label ?? payment.methodLabel}</span>.
+              </>
+            ) : (
+              <>
+                Une demande de{' '}
+                <Money amount={payment.amount} currency={payment.currency} size="small" /> a été
+                envoyée au <span className="font-semibold">{payment.maskedPayerPhone}</span>.
+              </>
+            )}
           </p>
         </div>
 
@@ -401,15 +537,49 @@ function WaitingState({
         </p>
       </Surface>
 
+      {returnedFromProvider && hosted ? (
+        <Alert tone="info" title="Tu es bien revenu">
+          La confirmation arrive parfois quelques secondes après le retour. Rien à faire de ton
+          côté.
+        </Alert>
+      ) : null}
+
       {payment.instructions ? (
         <Alert tone="info" title="Tu n’as rien reçu ?">
           {payment.instructions}
         </Alert>
       ) : null}
 
+      {payment.confirmationUrl ? (
+        <Button asChild variant="primary" size="primary" block>
+          {/* À côté, jamais à la place : cette page reste là et apprend le
+              verdict, que le prestataire renvoie l'acheteur ou non. */}
+          <a
+            href={payment.confirmationUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-center"
+          >
+            Ouvrir la page de validation
+          </a>
+        </Button>
+      ) : null}
+
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Button variant="secondary" size="primary" block onClick={onChangeMethod}>
-          Changer de numéro ou d’opérateur
+        {hosted && payment.redirectUrl ? (
+          <Button asChild variant="secondary" size="primary" block>
+            <a href={payment.redirectUrl} className="text-center">
+              Rouvrir la page de paiement
+            </a>
+          </Button>
+        ) : null}
+        <Button
+          variant={hosted ? 'tertiary' : 'secondary'}
+          size="primary"
+          block
+          onClick={onChangeMethod}
+        >
+          {hosted ? 'Changer de moyen de paiement' : 'Changer de numéro ou d’opérateur'}
         </Button>
         <Button asChild variant="tertiary" size="primary" block>
           <a
@@ -456,7 +626,7 @@ function FailedState({
         {/* Le panier est conservé : c'est l'information qui retient l'acheteur. */}
         <Alert tone="info" title="Tes places sont toujours réservées">
           Ta commande {order.reference} reste valable jusqu’à l’heure indiquée plus haut. Tu peux
-          réessayer avec le même numéro ou en changer.
+          réessayer avec le même moyen ou en changer.
         </Alert>
 
         <div className="flex flex-col gap-2 sm:flex-row">

@@ -3,6 +3,7 @@ import {
   Building2,
   CalendarDays,
   Flag,
+  Globe2,
   KeyRound,
   LayoutDashboard,
   ShieldCheck,
@@ -45,6 +46,7 @@ const ICONS: Record<string, React.ReactNode> = {
   '/organisations': <Building2 />,
   '/utilisateurs': <Users />,
   '/retraits': <Banknote />,
+  '/parametres': <Globe2 />,
   '/equipe': <UsersRound />,
 };
 

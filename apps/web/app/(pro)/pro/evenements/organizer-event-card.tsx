@@ -115,7 +115,11 @@ export function OrganizerEventCard({
           className="absolute inset-0 flex items-center justify-center"
           style={{ background: event.categoryColor }}
         >
-          <CategoryIcon slug={event.categorySlug} className="size-12 text-white/20" strokeWidth={1.5} />
+          <CategoryIcon
+            slug={event.categorySlug}
+            className="size-12 text-white/20"
+            strokeWidth={1.5}
+          />
         </div>
         {event.coverImageUrl ? (
           <CoverImage src={event.coverImageUrl} className="size-full object-cover" />
@@ -167,7 +171,7 @@ export function OrganizerEventCard({
             ) : (
               <>
                 <span className="text-micro text-text-3">Dès</span>
-                <Money amount={event.fromPrice} size="small" />
+                <Money amount={event.fromPrice} currency={event.currency} size="small" />
               </>
             )}
           </span>
@@ -188,7 +192,11 @@ export function OrganizerEventCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-1 border-t border-border bg-surface-alt px-2 py-1.5">
-        <CardAction href={editHref} icon={<Pencil />} label={draftLike ? 'Reprendre' : 'Modifier'} />
+        <CardAction
+          href={editHref}
+          icon={<Pencil />}
+          label={draftLike ? 'Reprendre' : 'Modifier'}
+        />
         <CardAction href={previewHref} icon={<Eye />} label="Aperçu" />
 
         {draftLike ? (
@@ -257,7 +265,12 @@ export function OrganizerEventCard({
           </Alert>
         ) : null}
         <div className="grid grid-cols-2 gap-2">
-          <Button variant="secondary" size="mobile" disabled={pending} onClick={() => setConfirm(null)}>
+          <Button
+            variant="secondary"
+            size="mobile"
+            disabled={pending}
+            onClick={() => setConfirm(null)}
+          >
             Revenir
           </Button>
           {missing && missing.length > 0 ? (
@@ -299,7 +312,12 @@ export function OrganizerEventCard({
           </Alert>
         ) : null}
         <div className="grid grid-cols-2 gap-2">
-          <Button variant="secondary" size="mobile" disabled={pending} onClick={() => setConfirm(null)}>
+          <Button
+            variant="secondary"
+            size="mobile"
+            disabled={pending}
+            onClick={() => setConfirm(null)}
+          >
             Revenir
           </Button>
           <Button
@@ -335,7 +353,12 @@ export function OrganizerEventCard({
           </Alert>
         ) : null}
         <div className="grid grid-cols-2 gap-2">
-          <Button variant="secondary" size="mobile" disabled={pending} onClick={() => setConfirm(null)}>
+          <Button
+            variant="secondary"
+            size="mobile"
+            disabled={pending}
+            onClick={() => setConfirm(null)}
+          >
             Revenir
           </Button>
           <Button

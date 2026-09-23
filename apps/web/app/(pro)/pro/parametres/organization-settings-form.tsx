@@ -2,8 +2,8 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import type { Organization } from '@nexakabi/contracts';
-import { Alert, Button, Field, Input, PhoneInput, Surface, Textarea } from '@nexakabi/ui';
+import type { Country, Organization } from '@nexakabi/contracts';
+import { Alert, Button, Field, Input, PhoneInput, Select, Surface, Textarea } from '@nexakabi/ui';
 import { ImageUploader } from '@/components/image-uploader';
 import { PlaceSearch } from '../place-search';
 import {
@@ -26,9 +26,12 @@ import {
 export function OrganizationSettingsForm({
   organizationId,
   organization,
+  countries,
 }: {
   organizationId: string;
   organization: Organization;
+  /** Pays ouverts. Un seul aujourd'hui : le sélecteur ne s'affiche qu'à partir de deux. */
+  countries: Country[];
 }) {
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
@@ -106,6 +109,29 @@ export function OrganizationSettingsForm({
           >
             <Input id="legalName" name="legalName" defaultValue={organization.legalName ?? ''} />
           </Field>
+
+          {countries.length > 1 ? (
+            <Field
+              label="Pays"
+              help={`Fixe la devise de tes recettes (${organization.currency}) et les moyens de réception de tes retraits. Ne peut plus changer après la première vente.`}
+              htmlFor="countryCode"
+            >
+              <Select
+                id="countryCode"
+                name="countryCode"
+                defaultValue={organization.countryCode}
+                options={countries.map((country) => ({
+                  value: country.code,
+                  label: country.name,
+                  leading: <span aria-hidden="true">{country.flag}</span>,
+                  description: `Devise ${country.currency} · +${country.dialCode}`,
+                  textValue: country.name,
+                }))}
+              />
+            </Field>
+          ) : (
+            <input type="hidden" name="countryCode" value={organization.countryCode} />
+          )}
 
           <Field
             label="Description"

@@ -83,15 +83,15 @@ export default async function PayoutDetailPage({ params }: { params: Promise<{ i
       <Surface variant="panel" padding="none" className="overflow-hidden">
         <div className="border-b border-border-subtle px-5 py-4">
           <p className="eyebrow text-text-3">Montant reçu</p>
-          <Money amount={payout.netAmount} size="hero" />
+          <Money amount={payout.netAmount} currency={payout.currency} size="hero" />
         </div>
 
         <dl className="flex flex-col gap-2 px-5 py-4">
           <Row label="Montant demandé">
-            <Money amount={payout.grossAmount} size="small" />
+            <Money amount={payout.grossAmount} currency={payout.currency} size="small" />
           </Row>
           <Row label="Frais de retrait">
-            <Money amount={-payout.feeAmount} size="small" showSign />
+            <Money amount={-payout.feeAmount} currency={payout.currency} size="small" showSign />
           </Row>
 
           <div className="my-1 h-px bg-border-subtle" />

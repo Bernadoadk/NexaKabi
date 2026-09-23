@@ -775,55 +775,88 @@ l'organisateur, sans incident financier.
 
 ### État : CODE PRÊT — reste le bac à sable et le pilote, qui demandent des clés réelles
 
-**Décision : FedaPay plutôt que trois intégrations directes.** Un seul
-agrégateur couvre MTN MoMo, Moov Money et Celtiis Cash derrière une API unique,
-avec un seul compte marchand et un seul contrat. Les intégrer séparément aurait
-demandé trois négociations commerciales, trois environnements de test et trois
-formats de webhook — pour un MVP qui doit d'abord prouver qu'il vend des billets.
+**Décision (19 septembre 2026) : Bictorys plutôt que FedaPay, et une
+architecture multi-pays plutôt qu'un branchement béninois.** FedaPay a été
+retiré. La première intégration confondait le prestataire et le moyen de
+paiement — `providerCode` valait `mtn_momo`, et un fournisseur était instancié
+par opérateur. Ouvrir un second pays aurait demandé de tout réécrire.
 
-| Livrable                  | État                                                                            |
-| ------------------------- | ------------------------------------------------------------------------------- |
-| Encaissement              | ✅ `FedaPayProvider` : trois appels (`/transactions`, `/token`, `/{mode}`)      |
-| Signature des webhooks    | ✅ HMAC-SHA256 sur `timestamp.body`, tolérance de cinq minutes                  |
-| Interrogation de statut   | ✅ le filet contre le webhook perdu                                             |
-| Remboursements            | ✅ intégraux et partiels                                                        |
-| **Retraits réels**        | ✅ `POST /payouts` puis `PUT /payouts/start` — voir la note ci-dessous          |
-| Tests                     | ✅ 27 tests sur ce que nous contrôlons : signature, statuts, corps des requêtes |
-| Bac à sable FedaPay       | Non fait — demande des clés de test réelles                                     |
-| Pilote 5–10 organisateurs | Non fait                                                                        |
+Le système repose désormais sur trois objets distincts, et une configuration :
 
-### Une capacité annoncée que rien ne fournissait
+```
+country                  BJ ouvert · CI, SN, TG, BF, ML, NE, GN, CM, GH, NG dormants
+country_payment_method   pays × moyen × prestataire · collecte ? · versement ?
+                         + constat synchronisé depuis le compte marchand
+commission_policy        plateforme > pays > organisation · jamais par moyen
+```
 
-`FedaPayProvider.capabilities.payout` valait `true` alors qu'**aucune méthode
-`payout` n'existait**. Le registre annonçait savoir verser ; l'abstraction
-`PaymentProvider` ne déclarait même pas la méthode, donc TypeScript ne pouvait
-rien signaler. Seul un versement réel l'aurait révélé — le jour où un
-organisateur attend son argent.
+`PaymentRoutingService` est le seul endroit qui décide « qui traite quoi où » :
+le tunnel lui demande les moyens du pays de la commande, l'encaissement lui
+demande le prestataire d'un moyen, le retrait lui demande qui verse sur le
+moyen du compte de réception. Aucun service métier ne connaît un prestataire
+par son nom. Un pays s'ouvre depuis la console (« Pays & paiements »), sans code.
 
-Deux corrections : la méthode est implémentée conformément à l'API Payouts de
-FedaPay, et `PaymentProvider` déclare désormais `payout?()`, de sorte qu'un
-fournisseur annonçant la capacité sans l'implémenter devient visible à la
-relecture.
+| Livrable                           | État                                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| Modèle pays / moyens / prestataire | ✅ `Country`, `CountryPaymentMethod`, `CommissionPolicy` ; pays sur organisation, événement, commande, paiement, compte de réception |
+| Encaissement Bictorys              | ✅ Mobile Money par API directe (`POST /pay/v1/charges?payment_type=…`), carte par page hébergée |
+| Webhooks                           | ✅ en-tête `X-Secret-Key` vérifié, puis **relecture** `GET /pay/v1/transactions/{id}` avant tout crédit |
+| Interrogation de statut            | ✅ le filet contre le webhook perdu, inchangé                                              |
+| Remboursements                     | ✅ intégraux (`PUT /transactions/{id}/refund`) ; le partiel est déclaré non supporté      |
+| Retraits réels                     | ✅ `POST /pay/v1/payouts?payment_type=…` avec `idempotency-key`, conclu par webhook `transfer` ou interrogation |
+| Synchronisation du compte marchand | ✅ `GET /onboarding/v1/payment-methods/me` → constat par pays et par moyen               |
+| Simulateur                         | ✅ un seul prestataire `mock`, tous moyens, tous pays ; page de carte simulée avec webhook puis retour |
+| Console « Pays & paiements »       | ✅ ouvrir un pays, collecte/versement par moyen, ajout d'un moyen du catalogue, synchronisation |
+| Bac à sable Bictorys               | Non fait — demande des clés de test réelles                                                |
+| Pilote 5–10 organisateurs          | Non fait                                                                                   |
 
-### Les deux appels de l'API Payouts
+### Le webhook n'est qu'un signal
 
-`POST /payouts` CRÉE le versement sans rien envoyer ; `PUT /payouts/start` le
-déclenche. Oublier le second est l'erreur la plus facile à commettre et la plus
-difficile à diagnostiquer : le versement existe, l'organisateur ne reçoit rien,
-et rien n'a l'air cassé. Un test le vérifie explicitement.
+Bictorys authentifie ses notifications par un secret partagé dans un en-tête,
+sans signature du corps. Un secret peut fuiter ; un corps peut être rejoué
+modifié. `PaymentProvider.capabilities.verifyWebhookByFetch` demande donc au
+service de relire la transaction chez Bictorys avant d'appliquer un succès. Si
+la relecture échoue, la notification reste `RECEIVED` et la réconciliation
+reprend : un billet n'est jamais émis sur la seule foi d'un message entrant.
 
-Si le second appel échoue, l'erreur remonte et le retrait reste `PENDING` : mieux
-vaut un versement à relancer qu'un versement parti sans trace de notre côté.
+### Collecte et versement sont deux capacités
+
+Qu'un moyen sache encaisser ne dit rien de sa capacité à verser. Chaque ligne de
+configuration porte deux drapeaux, et le compte de réception d'un organisateur
+se choisit parmi les moyens ouverts EN VERSEMENT dans son pays — jamais déduit
+du moyen par lequel les participants ont payé. Un virement bancaire n'est
+jamais automatique : il se fait depuis la banque et s'enregistre dans la console.
+
+### Un défaut trouvé en rejouant le retrait
+
+L'exécution d'un retrait relisait `payoutBlockedReason` en entier, minimum de
+retrait compris. Or le montant est débité dès la demande : au moment
+d'exécuter, le disponible est souvent SOUS le minimum, et le versement était
+refusé — précisément pour l'organisateur qui retire tout son solde. Seuls le gel
+et la vérification sont revérifiés à l'exécution.
 
 ### Ce qu'il faut pour finir cette phase
 
-Des clés FedaPay de bac à sable, puis de production. Le code n'a plus besoin de
-rien : `FEDAPAY_SECRET_KEY` renseignée suffit à basculer du simulateur aux vrais
-opérateurs, en sandbox comme en production. Sans clé et hors production, le
-simulateur prend le relais en se faisant passer pour les trois mêmes opérateurs,
-de sorte que les écrans sont ceux du prototype. En production sans clé,
-l'annuaire reste VIDE et le tunnel dit honnêtement qu'aucun moyen de paiement
-n'est disponible — plutôt que d'accepter un paiement qui n'ira nulle part.
+Des clés Bictorys de test, puis de production. `BICTORYS_API_KEY` renseignée
+suffit à basculer du simulateur au prestataire réel, pour tous les moyens que la
+configuration lui confie ; la synchronisation ferme ensuite d'elle-même ce que
+le compte marchand ne sait pas faire. Sans clé et hors production, le
+simulateur prend le relais pour les mêmes moyens, de sorte que les écrans sont
+ceux du prototype. En production sans clé, l'annuaire reste VIDE et le tunnel
+dit honnêtement qu'aucun moyen de paiement n'est disponible.
+
+Les utilisateurs ne sont pas forcément béninois : le sélecteur d'indicatif de
+la connexion et des coordonnées d'achat accepte tous les pays du registre, et
+un numéro inconnu crée son compte comme avant. Une limite assumée : une
+commande se paie dans la devise de son pays — pas de conversion inter-devises.
+
+Chaque pays dormant est livré avec son paysage d'opérateurs (Wave et Orange
+Money à Dakar, Orange Money et MTN à Abidjan, T-Money à Lomé…) : l'ouvrir dans
+la console suffit, la synchronisation Bictorys — au démarrage puis chaque
+heure — ferme ce que le compte marchand ne sait pas traiter. Le simulateur
+n'est plus proposé comme moyen de paiement : il ne s'enregistre que sans clé
+Bictorys, et c'est l'environnement de Bictorys (test ou live) qui dit si
+l'argent est réel.
 
 ---
 

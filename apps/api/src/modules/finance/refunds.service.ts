@@ -11,6 +11,7 @@ import { PaymentProviderRegistry } from '../payments/provider.registry';
 import { TicketsService } from '../tickets/tickets.service';
 import { LedgerService } from './ledger.service';
 import type { PaymentProviderCode } from '@nexakabi/contracts';
+import { formatMoney } from '@nexakabi/utils';
 
 export interface RefundRequest {
   readonly orderReference: string;
@@ -107,16 +108,33 @@ export class RefundsService {
       throw new BadRequestException(
         refundable <= 0
           ? 'Cette commande a déjà été intégralement remboursée.'
-          : `Le montant remboursable est de ${refundable} FCFA au maximum.`,
+          : `Le montant remboursable est de ${formatMoney(refundable, order.currency)} au maximum.`,
       );
     }
 
-    const provider = this.registry.get(payment.providerCode as PaymentProviderCode);
+    const providerCode = payment.providerCode as PaymentProviderCode;
+
+    if (!this.registry.has(providerCode)) {
+      throw new ConflictException(
+        `Le prestataire « ${providerCode} » qui a encaissé ce paiement n'est plus branché. ` +
+          'Le remboursement doit être fait à la main.',
+      );
+    }
+
+    const provider = this.registry.get(providerCode);
+    const isFull = amount >= refundable;
 
     if (!provider.capabilities.refund) {
       throw new ConflictException(
-        `Le moyen de paiement « ${payment.providerCode} » ne permet pas de rembourser automatiquement. ` +
+        `Le prestataire « ${providerCode} » ne permet pas de rembourser automatiquement. ` +
           'Le remboursement doit être fait à la main.',
+      );
+    }
+
+    if (!isFull && !provider.capabilities.partialRefund) {
+      throw new ConflictException(
+        `Le prestataire « ${providerCode} » ne sait rembourser qu'intégralement : ` +
+          `demande ${formatMoney(refundable, order.currency)}, ou fais le remboursement partiel à la main.`,
       );
     }
 
@@ -124,10 +142,9 @@ export class RefundsService {
       paymentId: payment.id,
       providerReference: payment.providerReference,
       amount,
+      currency: order.currency,
       reason: request.reason,
     });
-
-    const isFull = amount >= refundable;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.refund.create({
@@ -189,7 +206,9 @@ export class RefundsService {
       changes: { amount, reason: request.reason, refundFees, isFull },
     });
 
-    this.logger.log(`Remboursement de ${amount} FCFA sur ${order.reference}`);
+    this.logger.log(
+      `Remboursement de ${formatMoney(amount, order.currency)} sur ${order.reference}`,
+    );
 
     return { amount };
   }

@@ -550,51 +550,86 @@ Le lien `/t/:token` donne accès à un billet sans authentification. Trois mesur
 l'utilisateur a quitté la page ou qu'un délai navigateur est écoulé. Cette règle, posée explicitement
 par le prototype, commande toute la conception.
 
-## 6.2 Abstraction PaymentProvider
+## 6.2 Pays, moyens de paiement, prestataires
+
+Le système de paiement repose sur **trois objets distincts**, reliés par une configuration et non par
+du code. Le Bénin est le premier pays, pas le seul : ouvrir la Côte d'Ivoire consiste à ajouter des
+lignes de configuration, jamais un `if (country === 'CI')`.
+
+```
+Country                   BJ · CI · SN · TG · BF · ML · …   devise, indicatif, ouvert ?, par défaut ?
+        │
+CountryPaymentMethod      pays × moyen × prestataire
+        │                 collectionEnabled · payoutEnabled          (décision de l'administrateur)
+        │                 providerCollectionEnabled · providerPayoutEnabled (constat synchronisé)
+        ▼
+PaymentRoutingService     listCollectionMethods(pays)   → écran A3, généré
+                          resolveCollection(pays, moyen) → prestataire qui encaisse
+                          listPayoutMethods(pays)        → formulaire de compte de réception
+                          resolvePayout(pays, moyen)     → prestataire qui verse, ou « manuel »
+                          syncProvider(prestataire)      → relit le compte marchand
+        ▼
+PaymentProvider           bictorys · mock                 une implémentation par PRESTATAIRE
+```
+
+Trois pays interviennent dans une vente, et ils peuvent différer : le pays de l'**événement** (fixe la
+devise et les moyens du tunnel — c'est le pays de paiement de la commande), le pays de
+l'**organisation** (devise de son grand livre, moyens de réception de ses retraits), et le pays du
+**payeur** (connu par son numéro ; un Sénégalais peut payer un concert à Cotonou).
+
+**Collecte et versement sont deux capacités distinctes.** Qu'un moyen sache encaisser ne dit rien de
+sa capacité à verser. Le compte de réception d'un organisateur se choisit parmi les moyens ouverts en
+versement dans son pays, jamais déduit du moyen par lequel les participants ont payé : carte à
+l'achat et MTN à la réception est le cas normal.
+
+**Un moyen n'est proposé que si quatre conditions tiennent** : la ligne existe pour ce pays,
+l'administrateur l'a ouverte, le prestataire ne l'a pas contredite à la dernière synchronisation, et
+le prestataire est branché — sinon, hors production, le simulateur prend sa place ; en production, le
+moyen disparaît de l'écran.
 
 ```typescript
-// packages/contracts + apps/api/src/modules/payments/providers
+// apps/api/src/modules/payments/providers/payment-provider.ts
 
-interface PaymentProvider {
-  readonly code: PaymentProviderCode; // 'mock' | 'mtn_momo' | 'moov_money' | …
+abstract class PaymentProvider {
+  readonly code: PaymentProviderCode; // 'bictorys' | 'mock' — un PRESTATAIRE, jamais un moyen
   readonly capabilities: {
     refund: boolean;
     partialRefund: boolean;
     payout: boolean;
     statusPolling: boolean;
+    /** Le webhook ne prouve rien à lui seul : relire l'état chez le prestataire avant de créditer. */
+    verifyWebhookByFetch: boolean;
   };
 
-  /** Déclenche la demande de paiement côté opérateur. */
-  initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult>;
-
-  /** Interrogation de secours si le webhook tarde. */
+  /** Le moyen et le pays sont PASSÉS à chaque appel : le prestataire n'en porte aucun en dur. */
+  initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult>; // → redirectUrl pour la carte
   getStatus(providerReference: string): Promise<ProviderPaymentStatus>;
-
-  /** Vérifie la signature et normalise la charge utile entrante. */
+  /** Normalise une notification d'ENCAISSEMENT ou de VERSEMENT — `kind: 'payment' | 'payout'`. */
   parseWebhook(raw: RawWebhook): Promise<NormalizedWebhookEvent>;
-
-  /** Remboursement total ou partiel. */
   refund(input: RefundInput): Promise<RefundResult>;
-
-  /** Versement vers un compte organisateur, si l'opérateur le permet. */
   payout?(input: PayoutInput): Promise<PayoutResult>;
+  getPayoutStatus?(providerReference: string): Promise<ProviderPayoutStatus>;
+  /** Ce que le compte marchand sait faire, pays par pays — pour la synchronisation. */
+  listMerchantMethods?(): Promise<MerchantMethod[]>;
 }
 ```
 
-**Implémentations prévues** :
+**Implémentations** :
 
-| Provider              | Phase       | Rôle                                                                                                                                                |
-| --------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MockPaymentProvider` | Phase 7     | Développement et tests : simule succès, échec, timeout, webhook tardif, webhook dupliqué, webhook hors séquence                                     |
-| `MtnMomoProvider`     | Phase 14    | MTN Mobile Money Bénin                                                                                                                              |
-| `MoovMoneyProvider`   | Phase 14    | Moov Money                                                                                                                                          |
-| `CeltiisProvider`     | À confirmer | Voir ambiguïté A8                                                                                                                                   |
-| `AggregatorProvider`  | Alternative | Un agrégateur régional couvrant plusieurs opérateurs derrière une seule intégration — **piste à privilégier** au vu du risque de contractualisation |
-| `CardProvider`        | Post-MVP    | Visa/Mastercard 3D Secure                                                                                                                           |
+| Prestataire           | Rôle                                                                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `BictorysProvider`    | Principal. Mobile Money par API directe (`POST /pay/v1/charges?payment_type=…`), carte par page hébergée, versements (`POST /pay/v1/payouts`), remboursements intégraux, synchronisation du compte marchand |
+| `MockPaymentProvider` | Hors production. Un seul prestataire pour tous les moyens et tous les pays ; scénarios par numéro (`00`/`11`/`22`) ; page de carte simulée qui envoie le webhook PUIS renvoie l'acheteur |
 
-**Le choix du provider est piloté par la configuration**, pas par le code : l'ordre d'affichage, la
-disponibilité par pays et par ville, et les plafonds sont des données. Le prototype le dit :
-« à Cotonou MTN d'abord, à Dakar Wave d'abord ».
+**Le webhook n'est qu'un signal.** Bictorys authentifie ses notifications par un secret partagé
+(`X-Secret-Key`), sans signature du corps. Un succès annoncé est donc **relu** par
+`GET /pay/v1/transactions/{id}` avant d'être appliqué ; si la relecture échoue, la notification
+reste `RECEIVED` et la réconciliation reprend. Un billet n'est jamais émis sur la seule foi d'un
+message entrant.
+
+**La commission ne dépend jamais du moyen de paiement.** `CommissionPolicy` se résout par portée —
+organisation > pays > plateforme — et se fige sur la commande. Les frais du prestataire sont une
+autre ligne (`PROVIDER_FEE`), constatée à l'encaissement avec les `merchantFees` qu'il annonce.
 
 ## 6.3 Machine à états
 

@@ -97,13 +97,52 @@ Retraits — un niveau _consultation_ ou _décision_, et un droit à part pour l
 d'argent. Pas de double authentification : mot de passe seul, blocage après cinq échecs,
 sessions de 8 h révocables, chaque geste tracé dans le journal d'audit.
 
-**Paiements simulés tant qu'aucune clé FedaPay n'est configurée.** Le simulateur prend la place
-des trois opérateurs Mobile Money avec les retours exacts du contrat `PaymentProvider` —
-encaissement, remboursement, versement des retraits — de sorte que brancher l'opérateur réel ne
-change ni écran ni service. Le numéro saisi choisit le scénario : finit par `00` → refus
-immédiat, `11` → jamais de réponse, `22` → succès immédiat, tout autre → succès après quelques
-secondes. Il vaut pour le numéro du payeur à l'achat comme pour le compte Mobile Money d'un
-retrait. Un virement bancaire, lui, se fait à la main et s'enregistre dans la console.
+**Paiements multi-pays : pays → moyens → prestataire.** Le système de paiement repose sur trois
+objets distincts. Le **pays** (table `country`) porte sa devise et son indicatif, et s'ouvre depuis
+la console — le Bénin est ouvert et par défaut, les autres pays d'Afrique de l'Ouest attendent. Le
+**moyen** (`mtn_momo`, `wave`, `card`, `bank_transfer`…) est ce que le participant reconnaît. Le
+**prestataire** (`bictorys`, `mock`) est celui qui traite l'argent, et le participant ne le voit
+jamais. La table `country_payment_method` relie les trois, avec deux drapeaux indépendants par
+ligne — **collecte** (ce que le participant peut payer) et **versement** (ce sur quoi l'organisateur
+peut recevoir) —, plus le constat synchronisé depuis le compte marchand du prestataire. Ouvrir la
+Côte d'Ivoire avec Wave se fait dans l'écran « Pays & paiements » de la console, sans code. Le
+moyen de réception d'un organisateur est choisi parmi ceux de SON pays, jamais déduit du moyen par
+lequel ses acheteurs ont payé : recevoir sur MTN ce qui a été réglé par carte est le cas normal.
+
+**KPay est le seul prestataire du lancement.** Mobile Money au Bénin (MTN, Moov), en Côte
+d'Ivoire (MTN, Orange), au Sénégal (Orange, Free) et au Cameroun (MTN, Orange), en validation sur
+le téléphone. Chez lui le code du moyen porte le pays (`MTN_MOMO_BEN`, `MTN_MOMO_CIV`), et c'est
+le **préfixe de la clé** qui décide si l'argent bouge — `kpay_test_` simule, `kpay_live_` débite ;
+l'API refuse de démarrer si ce préfixe contredit l'environnement. La **carte ne lui est pas
+confiée** : sa page hébergée facture en USD, alors qu'une commande Nexa-Kabi est un entier de
+francs CFA. Il ne rembourse pas par API non plus — cela se fait depuis son tableau de bord.
+
+**L'état des opérateurs se relève chez lui, toutes les cinq minutes.** Un opérateur `CLOSED`
+disparaît de l'écran de choix le temps de la panne ; `DELAYED` reste proposé avec la mention
+« retards en cours ». Un relevé impossible ne ferme rien — notre incident ne doit pas devenir une
+panne de paiement.
+
+**Bictorys est HÉRITÉ.** Son code et ses lignes de configuration restent en place pour relire,
+interroger et rembourser ce qu'il a encaissé, mais il ne reçoit plus aucun paiement neuf : le
+routage l'écarte, la console ne le propose plus. Ajouter un prestataire plus tard — CinetPay,
+FedaPay — consiste à déposer une implémentation de `PaymentProvider` et à le déclarer `ACTIVE` ;
+aucun service financier ni écran d'achat n'a à changer.
+
+Les notifications ne sont qu'un signal : un succès annoncé est **relu chez le prestataire** avant
+de créditer quoi que ce soit, et un montant ou une devise qui ne correspondent pas au paiement
+font refuser la notification. La commission Nexa-Kabi (table `commission_policy`, résolue
+organisation > pays > plateforme) ne dépend jamais du moyen de paiement ; les frais du
+prestataire sont une ligne à part, constatée à l'encaissement.
+
+**Paiements simulés tant qu'aucune clé de prestataire n'est configurée.** Hors production, le
+simulateur prend la place du prestataire pour tous les moyens configurés, avec les retours exacts du contrat
+`PaymentProvider` — encaissement, remboursement, versement des retraits — de sorte que brancher le
+prestataire réel ne change ni écran ni service. Le numéro saisi choisit le scénario : finit par `00`
+→ refus immédiat, `11` → jamais de réponse, `22` → succès immédiat, tout autre → succès après
+quelques secondes. Il vaut pour le numéro du payeur à l'achat comme pour le compte de réception d'un
+retrait. Un paiement par carte simulé ouvre une page où l'on valide ou refuse — le webhook part, puis
+l'acheteur revient, comme chez le vrai prestataire. Un virement bancaire, lui, se fait toujours à la
+main et s'enregistre dans la console.
 
 **Aucune donnée de démonstration, aucune suite de tests automatisés.** Le produit se teste en
 réel, par ses propres écrans, en suivant le cahier de recette ; la vérification automatique se

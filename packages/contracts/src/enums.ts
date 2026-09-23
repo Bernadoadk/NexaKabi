@@ -188,20 +188,70 @@ export const paymentStatusSchema = makeEnum(PAYMENT_STATUSES).schema;
 export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
 
 /**
- * Moyens de paiement. L'ordre d'affichage n'est PAS celui de cette liste :
- * il est piloté par la configuration du back-office, par ville et par pays.
+ * Prestataires de paiement — ceux qui traitent réellement l'argent.
+ *
+ * Un prestataire n'est PAS un moyen de paiement : Bictorys encaisse MTN MoMo,
+ * Wave et la carte derrière la même API. Le participant ne voit jamais ce
+ * code ; il choisit un MOYEN, et la configuration du pays désigne le
+ * prestataire qui le traite. Ajouter un prestataire consiste à déposer une
+ * implémentation de `PaymentProvider` et à ajouter son code ici.
+ *
+ * `mock` est le simulateur, hors production uniquement.
  * Voir docs/TECHNICAL_ARCHITECTURE.md §6.2.
  */
-export const PAYMENT_PROVIDERS = [
-  'mock',
+export const PAYMENT_PROVIDERS = ['bictorys', 'kpay', 'mock'] as const;
+export const paymentProviderSchema = makeEnum(PAYMENT_PROVIDERS).schema;
+export type PaymentProviderCode = z.infer<typeof paymentProviderSchema>;
+
+/**
+ * Nature d'un moyen de paiement. Détermine ce que l'écran demande — un
+ * numéro pour le Mobile Money, une redirection pour la carte — et ce qu'un
+ * organisateur renseigne pour recevoir ses retraits.
+ */
+export const PAYMENT_METHOD_KINDS = [
+  'MOBILE_MONEY',
+  'CARD',
+  'BANK_TRANSFER',
+  'CASH',
+  'DEMO',
+] as const;
+export const paymentMethodKindSchema = makeEnum(PAYMENT_METHOD_KINDS).schema;
+export type PaymentMethodKind = z.infer<typeof paymentMethodKindSchema>;
+
+/**
+ * Moyens de paiement que le produit sait présenter, tous pays confondus.
+ *
+ * L'ordre d'affichage et la DISPONIBILITÉ ne sont pas ici : ils se configurent
+ * pays par pays en base (`CountryPaymentMethod`). Cette liste ne garantit
+ * rien d'autre qu'un libellé et une nature connus — voir `payments.ts`.
+ */
+export const PAYMENT_METHOD_CODES = [
   'mtn_momo',
   'moov_money',
   'celtiis_cash',
+  'orange_money',
+  'wave',
+  'free_money',
+  't_money',
+  'airtel_money',
   'card',
-  'point_of_sale',
+  'bank_transfer',
+  'mock',
 ] as const;
-export const paymentProviderSchema = makeEnum(PAYMENT_PROVIDERS).schema;
-export type PaymentProviderCode = z.infer<typeof paymentProviderSchema>;
+export const paymentMethodCodeSchema = makeEnum(PAYMENT_METHOD_CODES).schema;
+export type PaymentMethodCode = z.infer<typeof paymentMethodCodeSchema>;
+
+/**
+ * État opérationnel d'un moyen de paiement, constaté chez le prestataire.
+ *
+ * Distinct de la DÉCISION d'ouvrir un moyen : un opérateur peut être ouvert
+ * par l'administrateur et en panne chez l'opérateur. `UNKNOWN` tant qu'aucun
+ * constat n'a eu lieu — l'ignorance ne vaut pas panne, et un moyen jamais
+ * constaté reste proposé.
+ */
+export const PAYMENT_AVAILABILITIES = ['OPERATIONAL', 'DELAYED', 'CLOSED', 'UNKNOWN'] as const;
+export const paymentAvailabilitySchema = makeEnum(PAYMENT_AVAILABILITIES).schema;
+export type PaymentAvailability = z.infer<typeof paymentAvailabilitySchema>;
 
 export const TICKET_STATUSES = ['VALID', 'USED', 'CANCELLED', 'REFUNDED', 'EXPIRED'] as const;
 export const ticketStatusSchema = makeEnum(TICKET_STATUSES).schema;

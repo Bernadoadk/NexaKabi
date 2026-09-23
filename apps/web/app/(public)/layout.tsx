@@ -88,7 +88,7 @@ export default async function PublicLayout({ children }: { children: React.React
           <ThemeToggle className="hidden shrink-0 lg:inline-flex" />
 
           {/* La ville : même pastille compacte à toutes les tailles — une
-              épingle, le nom, un chevron ; le \`<select>\` natif est dessous. */}
+              épingle, le nom, un chevron — et le menu du design system. */}
           <VilleSelect cities={cities} compact />
 
           <Link

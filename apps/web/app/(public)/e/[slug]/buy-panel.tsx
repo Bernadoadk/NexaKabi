@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import type { TicketTypeView } from '@nexakabi/contracts';
+import { formatAmount, resolveCurrency } from '@nexakabi/utils';
 import { Badge, Button, Money, Surface } from '@nexakabi/ui';
 import { TicketPicker } from './ticket-picker';
 
@@ -22,6 +23,8 @@ export interface BuyPanelProps {
   soldOut: boolean;
   fromPrice: number | null;
   feeAmount: number | null;
+  /** Devise de l'événement : celle de son pays. */
+  currency: string;
 }
 
 export function BuyPanel(props: BuyPanelProps) {
@@ -67,6 +70,7 @@ export function BuyPanel(props: BuyPanelProps) {
               eventId={props.eventId}
               ticketTypes={props.ticketTypes}
               maxTicketsPerOrder={props.maxTicketsPerOrder}
+              currency={props.currency}
             />
           )}
         </Surface>
@@ -76,7 +80,11 @@ export function BuyPanel(props: BuyPanelProps) {
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-surface px-5 py-3 shadow-sheet lg:hidden">
         <div className="mx-auto flex max-w-[1440px] items-center gap-4">
           <div className="flex-1">
-            <PriceLine fromPrice={props.fromPrice} feeAmount={props.feeAmount} />
+            <PriceLine
+              fromPrice={props.fromPrice}
+              feeAmount={props.feeAmount}
+              currency={props.currency}
+            />
           </div>
           <Button
             variant="primary"
@@ -112,6 +120,7 @@ export function BuyPanel(props: BuyPanelProps) {
               eventId={props.eventId}
               ticketTypes={props.ticketTypes}
               maxTicketsPerOrder={props.maxTicketsPerOrder}
+              currency={props.currency}
               onClose={() => setSheetOpen(false)}
             />
           </div>
@@ -140,18 +149,23 @@ function BlockedPanel({ cancelled }: { cancelled: boolean }) {
 function PriceLine({
   fromPrice,
   feeAmount,
+  currency,
 }: {
   fromPrice: number | null;
   feeAmount: number | null;
+  currency: string;
 }) {
   if (fromPrice === null) return <span className="text-body-s text-text-2">Sur invitation</span>;
   if (fromPrice === 0) return <Badge tone="accent">Gratuit</Badge>;
 
+  const definition = resolveCurrency(currency);
+
   return (
     <span className="flex items-baseline gap-1.5">
-      <Money amount={fromPrice} size="default" hideSymbol />
+      <Money amount={fromPrice} currency={definition.code} size="default" hideSymbol />
       <span className="text-[12px] text-text-2">
-        FCFA{feeAmount ? ` + ${feeAmount} de frais` : ''}
+        {definition.symbol}
+        {feeAmount ? ` + ${formatAmount(feeAmount, definition.code)} de frais` : ''}
       </span>
     </span>
   );

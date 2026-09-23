@@ -74,6 +74,7 @@ export async function updateOrganizationAction(
   const payload = {
     name: String(formData.get('name') ?? '').trim(),
     legalName: emptyToUndefined(formData.get('legalName')),
+    countryCode: emptyToUndefined(formData.get('countryCode')),
     cityName: emptyToUndefined(formData.get('cityName')),
     address: emptyToUndefined(formData.get('address')),
     description: emptyToUndefined(formData.get('description')),
@@ -155,7 +156,7 @@ export async function addPayoutAccountAction(
 
   const payload = {
     type,
-    provider: emptyToUndefined(formData.get('provider')),
+    methodCode: String(formData.get('methodCode') ?? ''),
     accountNumber: String(formData.get('accountNumber') ?? '').trim(),
     accountHolderName: String(formData.get('accountHolderName') ?? '').trim(),
     bankName: emptyToUndefined(formData.get('bankName')),

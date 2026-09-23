@@ -3,25 +3,34 @@
  */
 
 import { z } from 'zod';
-import { isValidSlug, tryNormalizePhone } from '@nexakabi/utils';
+import {
+  CURRENCY_CODES,
+  isValidSlug,
+  tryNormalizeInternationalPhone,
+  tryNormalizePhone,
+} from '@nexakabi/utils';
 
 /** Identifiant technique (CUID2 / UUID). Opaque : jamais interprété côté client. */
 export const idSchema = z.string().min(8).max(64);
 
 /**
- * Numéro de téléphone. Le schéma NORMALISE en E.164 pendant la validation :
- * un numéro saisi à l'ancien format à 8 chiffres ressort au nouveau format.
+ * Numéro de téléphone. Le schéma NORMALISE en E.164 pendant la validation.
+ *
+ * Multi-pays : un numéro qui annonce son indicatif (`+221 77…`) suit la règle
+ * de son pays ; un numéro sans indicatif est béninois — l'ancien format à
+ * 8 chiffres ressort au nouveau format. Les utilisateurs ne sont pas
+ * forcément béninois : un participant sénégalais se connecte avec son +221.
  * Voir docs/PROJECT_ANALYSIS.md §8, ambiguïté A2.
  */
 export const phoneSchema = z
   .string()
   .trim()
   .transform((value, ctx) => {
-    const normalized = tryNormalizePhone(value);
+    const normalized = tryNormalizeInternationalPhone(value, tryNormalizePhone);
     if (normalized === null) {
       ctx.addIssue({
         code: 'custom',
-        message: 'Numéro de téléphone béninois invalide',
+        message: 'Numéro de téléphone invalide',
       });
       return z.NEVER;
     }
@@ -56,7 +65,11 @@ export const isoDateSchema = z.iso
   .datetime({ offset: true, local: true })
   .transform((value) => new Date(value));
 
-export const currencySchema = z.literal('XOF').default('XOF');
+/**
+ * Devise d'un montant. Le Bénin reste le défaut ; chaque pays actif porte la
+ * sienne, et c'est le pays de l'événement qui la fixe pour toute la chaîne.
+ */
+export const currencySchema = z.enum(CURRENCY_CODES).default('XOF');
 
 /** Code à 6 chiffres envoyé par SMS ou WhatsApp. */
 export const otpCodeSchema = z

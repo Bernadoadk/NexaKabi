@@ -21,6 +21,7 @@ import type { Prisma } from '../../generated/prisma/client';
 import { orderWithRelations, toOrder, type OrderWithRelations } from './orders.mapper';
 import { StockService } from './stock.service';
 import { TicketsService } from '../tickets/tickets.service';
+import { CommissionService } from '../finance/commission.service';
 import { LedgerService } from '../finance/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -64,6 +65,7 @@ export class OrdersService {
     private readonly audit: AuditService,
     private readonly events: EventEmitter2,
     private readonly notifications: NotificationsService,
+    private readonly commission: CommissionService,
   ) {}
 
   /**
@@ -76,11 +78,22 @@ export class OrdersService {
   async create(input: CreateOrderInput, context: OrderContext): Promise<OrderWithRelations> {
     const event = await this.prisma.event.findFirst({
       where: { id: input.eventId, deletedAt: null },
-      include: { ticketTypes: { where: { deletedAt: null } } },
+      include: {
+        ticketTypes: { where: { deletedAt: null } },
+        country: { select: { code: true, currency: true, isActive: true, name: true } },
+      },
     });
 
     if (!event) {
       throw new NotFoundException("Cet événement n'existe pas ou n'est plus disponible.");
+    }
+
+    // Le pays de l'événement est le pays de PAIEMENT : il fixe la devise et,
+    // plus loin, les moyens proposés. Un pays fermé entre-temps ferme la vente.
+    if (!event.country.isActive) {
+      throw new BadRequestException(
+        `La billetterie n'est pas disponible pour ${event.country.name} pour le moment.`,
+      );
     }
 
     if (event.status !== 'PUBLISHED') {
@@ -104,8 +117,17 @@ export class OrdersService {
       );
     }
 
+    // La politique de commission se résout ICI et se fige sur la commande :
+    // celle de l'organisation, sinon celle du pays, sinon celle de la
+    // plateforme. Elle ne dépend jamais du moyen de paiement.
+    const commission = await this.commission.resolve({
+      organizationId: event.organizationId,
+      countryCode: event.countryCode,
+    });
+
     const breakdown = computeFeeBreakdown({
       lines: lines.map((line) => ({ unitPrice: line.unitPrice, quantity: line.quantity })),
+      policy: commission.policy,
     });
 
     const now = new Date();
@@ -132,7 +154,9 @@ export class OrdersService {
           organizerFeeAmount: breakdown.organizerFeeAmount,
           totalAmount: breakdown.totalAmount,
           organizerNetAmount: breakdown.organizerNetAmount,
-          currency: 'XOF',
+          currency: event.currency,
+          countryCode: event.countryCode,
+          commissionPolicyId: commission.id,
           expiresAt,
           ipAddress: context.ipAddress,
           userAgent: context.userAgent,

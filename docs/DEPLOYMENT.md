@@ -258,11 +258,11 @@ refuse de démarrer si un fournisseur simulé est en jeu. Or aujourd'hui :
 
 - le seul fournisseur SMS existant est `console` (`ConsoleSmsProvider` lève une erreur en
   production) ;
-- sans clés FedaPay, le paiement passe par le simulateur (`MockPaymentProvider`, interdit en
-  production) — et avec `FEDAPAY_SECRET_KEY` vide en production, il n'y a **aucun** moyen de
+- sans clé Bictorys, le paiement passe par le simulateur (`MockPaymentProvider`, interdit en
+  production) — et avec `BICTORYS_API_KEY` vide en production, il n'y a **aucun** moyen de
   paiement.
 
-Tant que l'app n'est pas branchée à un opérateur SMS et à FedaPay, la mise en ligne tourne donc en
+Tant que l'app n'est pas branchée à un opérateur SMS et à Bictorys, la mise en ligne tourne donc en
 mode développement. Ce que cela implique, concrètement :
 
 | Comportement en `development`                       | Conséquence sur la mise en ligne actuelle                                                             |
@@ -276,11 +276,15 @@ mode développement. Ce que cela implique, concrètement :
 **Passer en production**, le jour venu :
 
 1. Brancher un fournisseur SMS réel (à implémenter : `SMS_PROVIDER` n'accepte que `console`).
-2. Renseigner `FEDAPAY_SECRET_KEY` **et** `FEDAPAY_WEBHOOK_SECRET`, `FEDAPAY_ENVIRONMENT=live`,
-   et déclarer le webhook `https://<api>/api/webhooks/payments/<opérateur>` chez FedaPay.
-3. `CORS_ORIGINS` et `PUBLIC_API_URL` en `https://` uniquement, `SWAGGER_ENABLED=false`.
+2. Renseigner `BICTORYS_API_KEY` **et** `BICTORYS_WEBHOOK_SECRET` (plus
+   `BICTORYS_PAYOUT_SECRET_CODE` pour les versements), `BICTORYS_ENVIRONMENT=live`, et déclarer
+   le webhook `https://<api>/api/webhooks/payments/bictorys` sur le tableau de bord Bictorys.
+   Puis, dans la console, « Pays & paiements » → **Synchroniser** : les moyens que le compte
+   marchand ne sait pas traiter se ferment d'eux-mêmes.
+3. `PUBLIC_WEB_URL`, `CORS_ORIGINS` et `PUBLIC_API_URL` en `https://` uniquement,
+   `SWAGGER_ENABLED=false`. `PUBLIC_WEB_URL` est l'adresse de retour d'un paiement par carte.
 4. Mettre `NODE_ENV=production` sur le projet API, redéployer. La validation de démarrage
-   vérifie tout le reste (secrets restés à l'exemple, Cloudinary complet, cohérence FedaPay) et
+   vérifie tout le reste (secrets restés à l'exemple, Cloudinary complet, cohérence Bictorys) et
    refuse net si quelque chose manque — c'est voulu.
 
 `installCommand: pnpm install --prod=false` est déjà en place pour ce moment-là : sans lui,

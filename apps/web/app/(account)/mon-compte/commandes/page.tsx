@@ -61,7 +61,7 @@ export default async function MyOrdersPage() {
 
                   <div className="flex shrink-0 items-center gap-3">
                     <OrderStatusBadge status={order.status} />
-                    <Money amount={order.totalAmount} size="small" />
+                    <Money amount={order.totalAmount} currency={order.currency} size="small" />
                   </div>
                 </Link>
               </Surface>

@@ -1,6 +1,12 @@
 import 'server-only';
 import { cookies } from 'next/headers';
-import type { Member, Organization, OrganizationSummary, PayoutAccount } from '@nexakabi/contracts';
+import type {
+  Member,
+  Organization,
+  OrganizationSummary,
+  PayoutAccount,
+  PayoutMethods,
+} from '@nexakabi/contracts';
 import { apiFetchAuthenticated } from './session';
 import type { ApiResult } from './api';
 
@@ -98,6 +104,20 @@ export async function listPayoutAccounts(organizationId: string): Promise<Payout
     '/organizer/organizations/current/payout-accounts',
   );
   return result.ok ? result.data : [];
+}
+
+/**
+ * Moyens de réception ouverts pour le pays de l'organisation.
+ *
+ * C'est cette liste — et rien d'autre — que le formulaire de compte de
+ * réception propose : un organisateur béninois voit MTN et Moov, un
+ * organisateur sénégalais Wave et Orange Money.
+ */
+export async function fetchPayoutMethods(organizationId: string): Promise<PayoutMethods> {
+  const result = await orgFetch<PayoutMethods>(organizationId, '/organizer/finance/payout-methods');
+  return result.ok
+    ? result.data
+    : { countryCode: 'BJ', currency: 'XOF', dialCode: '229', methods: [] };
 }
 
 export { ACTIVE_ORG_COOKIE, orgFetch };

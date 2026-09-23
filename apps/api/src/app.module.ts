@@ -22,6 +22,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { CronModule } from './modules/cron/cron.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { PlacesModule } from './modules/places/places.module';
+import { CountriesModule } from './modules/countries/countries.module';
 
 /**
  * Journaux lisibles (pino-pretty) ou JSON.
@@ -79,6 +80,7 @@ function prettyLogs(): boolean {
     PrismaModule,
     SchedulingModule,
     AuditModule,
+    CountriesModule,
     NotificationsModule,
     AuthModule,
     OrganizationsModule,

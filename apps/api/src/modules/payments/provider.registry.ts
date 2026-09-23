@@ -3,18 +3,30 @@ import type { PaymentProviderCode } from '@nexakabi/contracts';
 import { PaymentProvider } from './providers/payment-provider';
 
 /**
- * Annuaire des moyens de paiement branchés.
+ * Annuaire des PRESTATAIRES branchés.
  *
- * Le reste du code ne connaît jamais un opérateur par son nom : il demande
- * celui dont le code correspond. Brancher Wave ou Orange Money consiste à
- * déposer une implémentation de plus dans le module — aucun service métier,
- * aucun écran à modifier.
+ * Indexé par prestataire — `bictorys`, `mock` — et non par moyen de paiement :
+ * un prestataire en traite plusieurs, dans plusieurs pays. Qui traite quel
+ * moyen où est une question de configuration, tranchée par
+ * `PaymentRoutingService` ; ici, on ne fait que retrouver une implémentation
+ * par son code.
  */
 @Injectable()
 export class PaymentProviderRegistry {
   private readonly providers: ReadonlyMap<PaymentProviderCode, PaymentProvider>;
 
   constructor(providers: PaymentProvider[]) {
+    for (const provider of providers) {
+      // Une capacité annoncée sans méthode pour la fournir a déjà existé : le
+      // registre disait « sait verser », et rien ne versait. Refuser de
+      // démarrer est le seul moment où l'écart se voit avant un vrai retrait.
+      if (provider.capabilities.payout && (!provider.payout || !provider.getPayoutStatus)) {
+        throw new Error(
+          `Le prestataire ${provider.code} annonce savoir verser sans implémenter payout() et getPayoutStatus().`,
+        );
+      }
+    }
+
     this.providers = new Map(providers.map((provider) => [provider.code, provider]));
   }
 
@@ -28,11 +40,11 @@ export class PaymentProviderRegistry {
   }
 
   /**
-   * Renvoie le fournisseur demandé.
+   * Renvoie le prestataire demandé.
    *
-   * Échoue explicitement plutôt que de renvoyer `undefined` : un moyen de
-   * paiement absent doit se voir au moment du clic, pas produire un plantage
-   * trois appels plus loin.
+   * Échoue explicitement plutôt que de renvoyer `undefined` : un prestataire
+   * absent doit se voir au moment du clic, pas produire un plantage trois
+   * appels plus loin.
    */
   get(code: PaymentProviderCode): PaymentProvider {
     const provider = this.providers.get(code);

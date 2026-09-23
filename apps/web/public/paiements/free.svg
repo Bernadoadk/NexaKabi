@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Free Money">
+  <rect width="64" height="64" rx="14" fill="#CD1719"/>
+  <text x="32" y="31" text-anchor="middle" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="17" font-weight="900" fill="#FFFFFF" letter-spacing="-0.5">free</text>
+  <text x="32" y="45" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" fill="#FFFFFF">Money</text>
+</svg>

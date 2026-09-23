@@ -33,7 +33,18 @@ const prisma = new PrismaClient({
 });
 
 /** Tables jamais vidées. Noms PostgreSQL, tels que `@@map` les déclare. */
-const KEPT_TABLES = new Set(['category', 'city', 'user', 'admin_credential', '_prisma_migrations']);
+const KEPT_TABLES = new Set([
+  'category',
+  'city',
+  // Pays, moyens de paiement et politiques de commission : de la configuration,
+  // pas des données d'usage. Les vider casserait toute vente au redémarrage.
+  'country',
+  'country_payment_method',
+  'commission_policy',
+  'user',
+  'admin_credential',
+  '_prisma_migrations',
+]);
 
 const confirmed = process.argv.includes('--confirmer');
 
@@ -91,7 +102,7 @@ async function main(): Promise<void> {
   console.log(
     `${superadmins.length} propriétaire(s) conservé(s) : ${superadmins.map((user) => user.email ?? user.id).join(', ')}`,
   );
-  console.log('Catégories et villes conservées.');
+  console.log('Catégories, villes, pays et moyens de paiement conservés.');
   console.log('');
 
   if (superadmins.length === 0) {
@@ -114,6 +125,28 @@ async function main(): Promise<void> {
 
   const { count } = await prisma.user.deleteMany({
     where: { NOT: { id: { in: superadmins.map((user) => user.id) } } },
+  });
+
+  // `commission_policy` référence `organization` : la cascade l'a vidée avec
+  // elle, politique de plateforme comprise. Sans cette ligne, le code retombe
+  // sur sa constante — rien ne casse — mais la configuration ne serait plus
+  // visible ni modifiable dans la console.
+  await prisma.commissionPolicy.upsert({
+    where: { id: 'policy_platform_default' },
+    create: {
+      id: 'policy_platform_default',
+      validFrom: new Date('2026-01-01T00:00:00Z'),
+      name: 'Défaut plateforme',
+      percentageBps: 500,
+      fixedAmountPerTicket: 0,
+      minFeePerOrder: 100,
+      buyerSharePercent: 100,
+      appliesToFreeTickets: false,
+      payoutFeeBps: 100,
+      payoutFeeMax: 2000,
+      minPayoutAmount: 5000,
+    },
+    update: {},
   });
 
   console.log('');

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
-import { fetchPaymentMethods } from '@/lib/checkout';
+import { fetchPaymentMethods, fetchPaymentState } from '@/lib/checkout';
 import { CheckoutStepper } from '../stepper';
 import { loadOrder } from '../order-gate';
 import { OrderSummary } from '../order-summary';
@@ -21,18 +21,35 @@ export const metadata: Metadata = {
  */
 export default async function CheckoutPaymentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ reference: string }>;
+  searchParams: Promise<{ paiement?: string; retour?: string }>;
 }) {
   const { reference } = await params;
+  const query = await searchParams;
   const [gate, methods] = await Promise.all([
     loadOrder(reference.toUpperCase()),
-    fetchPaymentMethods(),
+    fetchPaymentMethods(reference.toUpperCase()),
   ]);
 
   if (gate.kind === 'terminal') return gate.render;
 
   const { order } = gate;
+
+  // Retour d'une page de paiement hébergée (carte) : le paiement a peut-être
+  // déjà été confirmé par le prestataire pendant la redirection. On relit son
+  // état — jamais le paramètre `retour`, qui n'est qu'une indication.
+  const resumed = query.paiement ? await fetchPaymentState(order.reference, query.paiement) : null;
+  const initialPayment = resumed?.ok ? resumed.data : null;
+
+  if (
+    initialPayment?.status === 'SUCCEEDED' ||
+    order.status === 'PAID' ||
+    order.status === 'COMPLETED'
+  ) {
+    redirect(`/commandes/${order.reference}/confirmation`);
+  }
 
   if (order.status !== 'AWAITING_PAYMENT') {
     redirect(`/checkout/${order.reference}/recapitulatif`);
@@ -55,9 +72,9 @@ export default async function CheckoutPaymentPage({
 
         <PaymentFlow
           order={order}
-          methods={methods.methods}
-          notice={methods.notice}
-          initialPayment={null}
+          methods={methods}
+          initialPayment={initialPayment}
+          returnedFromProvider={query.retour === 'succes' || query.retour === 'echec'}
         />
       </div>
     </>

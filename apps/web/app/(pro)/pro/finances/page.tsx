@@ -10,6 +10,7 @@ import {
   type LedgerEntry,
   type OrganizationStats,
   type Payout,
+  type PayoutAccount,
 } from '@nexakabi/contracts';
 import { formatDateShort, formatEventCaptionWithTime } from '@nexakabi/utils';
 import { Alert, Badge, Money, SimpleBarChart, Stat, Surface } from '@nexakabi/ui';
@@ -18,15 +19,6 @@ import { orgFetch, resolveActiveOrganization } from '@/lib/organizations';
 import { PayoutRequestForm } from './payout-form';
 
 export const metadata: Metadata = { title: 'Finances' };
-
-interface PayoutAccount {
-  id: string;
-  type: string;
-  provider: string | null;
-  bankName: string | null;
-  accountNumber: string;
-  isDefault: boolean;
-}
 
 /**
  * Écran O11 — finances.
@@ -92,19 +84,24 @@ export default async function FinancesPage() {
       <Surface variant="panel" padding="comfortable" className="flex flex-col gap-5">
         <div className="flex flex-col gap-1">
           <p className="eyebrow text-text-3">Solde disponible</p>
-          <Money amount={balance.availableAmount} size="large" />
+          <Money amount={balance.availableAmount} currency={balance.currency} size="large" />
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
           <Stat
             label="En attente de déblocage"
-            value={<Money amount={balance.pendingAmount} size="medium" />}
+            value={
+              <Money amount={balance.pendingAmount} currency={balance.currency} size="medium" />
+            }
           />
           <Stat
             label="Total encaissé"
-            value={<Money amount={balance.grossSales} size="medium" />}
+            value={<Money amount={balance.grossSales} currency={balance.currency} size="medium" />}
           />
-          <Stat label="Déjà retiré" value={<Money amount={balance.paidOut} size="medium" />} />
+          <Stat
+            label="Déjà retiré"
+            value={<Money amount={balance.paidOut} currency={balance.currency} size="medium" />}
+          />
         </div>
 
         {balance.nextReleaseAt ? (
@@ -125,31 +122,41 @@ export default async function FinancesPage() {
         </div>
         <dl className="flex flex-col gap-2 px-5 py-4">
           <Line label="Encaissé auprès des participants">
-            <Money amount={balance.grossSales} size="small" />
+            <Money amount={balance.grossSales} currency={balance.currency} size="small" />
           </Line>
           <Line label="Commission Nexa-Kabi">
-            <Money amount={-balance.platformFees} size="small" showSign />
+            <Money
+              amount={-balance.platformFees}
+              currency={balance.currency}
+              size="small"
+              showSign
+            />
           </Line>
           {balance.providerFees > 0 ? (
             <Line label="Frais opérateur Mobile Money">
-              <Money amount={-balance.providerFees} size="small" showSign />
+              <Money
+                amount={-balance.providerFees}
+                currency={balance.currency}
+                size="small"
+                showSign
+              />
             </Line>
           ) : null}
           {balance.refunds > 0 ? (
             <Line label="Remboursements">
-              <Money amount={-balance.refunds} size="small" showSign />
+              <Money amount={-balance.refunds} currency={balance.currency} size="small" showSign />
             </Line>
           ) : null}
           {balance.paidOut > 0 ? (
             <Line label="Retraits effectués">
-              <Money amount={-balance.paidOut} size="small" showSign />
+              <Money amount={-balance.paidOut} currency={balance.currency} size="small" showSign />
             </Line>
           ) : null}
 
           <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-3">
             <dt className="text-body font-bold">Solde total</dt>
             <dd>
-              <Money amount={balance.totalAmount} size="default" />
+              <Money amount={balance.totalAmount} currency={balance.currency} size="default" />
             </dd>
           </div>
         </dl>
@@ -165,7 +172,9 @@ export default async function FinancesPage() {
               label: formatDateShort(new Date(point.date)),
               value: point.ticketCount,
               valueLabel: `${point.ticketCount} billet${point.ticketCount > 1 ? 's' : ''}`,
-              secondaryValue: <Money amount={point.grossAmount} size="small" />,
+              secondaryValue: (
+                <Money amount={point.grossAmount} currency={balance.currency} size="small" />
+              ),
             }))}
           />
         </Surface>
@@ -194,7 +203,7 @@ export default async function FinancesPage() {
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
                     <PayoutBadge status={payout.status} />
-                    <Money amount={payout.netAmount} size="small" />
+                    <Money amount={payout.netAmount} currency={payout.currency} size="small" />
                   </div>
                 </Link>
               </li>
@@ -235,6 +244,7 @@ export default async function FinancesPage() {
                 </div>
                 <Money
                   amount={entry.amount}
+                  currency={entry.currency}
                   size="small"
                   showSign
                   className={entry.amount < 0 ? 'text-text-2' : undefined}
@@ -272,7 +282,13 @@ function PayoutSection({ balance, accounts }: { balance: Balance; accounts: Payo
     );
   }
 
-  return <PayoutRequestForm accounts={accounts} availableAmount={balance.availableAmount} />;
+  return (
+    <PayoutRequestForm
+      accounts={accounts}
+      availableAmount={balance.availableAmount}
+      currency={balance.currency}
+    />
+  );
 }
 
 function PayoutBadge({ status }: { status: Payout['status'] }) {

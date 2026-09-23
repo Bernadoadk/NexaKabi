@@ -87,7 +87,9 @@ export function EventPageView({ event, mode = 'public', className }: EventPageVi
       <div
         className={cn(
           'mx-auto grid max-w-[1440px] gap-8 px-5 py-8',
-          preview ? 'md:grid-cols-[1fr_320px] md:items-start' : 'lg:grid-cols-[1fr_360px] lg:items-start',
+          preview
+            ? 'md:grid-cols-[1fr_320px] md:items-start'
+            : 'lg:grid-cols-[1fr_360px] lg:items-start',
         )}
       >
         <div className="flex flex-col gap-8">
@@ -158,8 +160,8 @@ export function EventPageView({ event, mode = 'public', className }: EventPageVi
                     </a>
                   ) : preview ? (
                     <p className="mt-1 text-micro text-amber-700">
-                      Lieu sans position : l’événement n’apparaîtra pas sur la carte. Localise-le
-                      à l’étape « Lieu ».
+                      Lieu sans position : l’événement n’apparaîtra pas sur la carte. Localise-le à
+                      l’étape « Lieu ».
                     </p>
                   ) : null}
                 </div>
@@ -256,6 +258,7 @@ export function EventPageView({ event, mode = 'public', className }: EventPageVi
             soldOut={event.isSoldOut}
             fromPrice={event.fromPrice}
             feeAmount={event.feeAmount}
+            currency={event.currency}
           />
         )}
       </div>
@@ -274,7 +277,9 @@ function Info({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function describeRefundPolicy(event: Pick<EventDetail, 'refundPolicy' | 'refundDeadlineDays'>): string {
+export function describeRefundPolicy(
+  event: Pick<EventDetail, 'refundPolicy' | 'refundDeadlineDays'>,
+): string {
   switch (event.refundPolicy) {
     case 'UNTIL_DAYS_BEFORE':
       return `Jusqu’à ${event.refundDeadlineDays ?? 7} jours avant`;
@@ -333,7 +338,7 @@ function PreviewTicketsPanel({ event }: { event: EventDetail }) {
                   {ticket.price === 0 ? (
                     <Badge tone="accent">Gratuit</Badge>
                   ) : (
-                    <Money amount={ticket.price} size="small" />
+                    <Money amount={ticket.price} currency={event.currency} size="small" />
                   )}
                 </div>
               </li>

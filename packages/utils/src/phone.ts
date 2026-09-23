@@ -13,6 +13,8 @@
  * ⚠️ Le plan de numérotation doit être confirmé auprès de l'ARCEP-Bénin.
  */
 
+import { splitE164 } from './phone-country.js';
+
 export const BENIN_COUNTRY_CODE = '229';
 export const BENIN_NATIONAL_PREFIX = '01';
 /** Longueur du numéro national béninois, préfixe « 01 » compris. */
@@ -162,9 +164,41 @@ export function formatPhone(
   e164: string,
   style: 'international' | 'national' = 'international',
 ): string {
-  const national = toNationalDigits(e164);
-  const grouped = national.replace(/(\d{2})(?=\d)/g, '$1 ').trim();
-  return style === 'international' ? `+${BENIN_COUNTRY_CODE} ${grouped}` : grouped;
+  // Un numéro d'un autre pays — payeur Mobile Money, compte de réception d'un
+  // organisateur — s'affiche avec son propre indicatif, groupé par deux : le
+  // rendu béninois reste strictement identique.
+  const foreign = splitForeign(e164);
+  const dialCode = foreign?.dialCode ?? BENIN_COUNTRY_CODE;
+  const national = foreign?.national ?? toNationalDigits(e164);
+  const grouped = groupDigits(national);
+  return style === 'international' ? `+${dialCode} ${grouped}` : grouped;
+}
+
+/**
+ * Groupe les chiffres par deux ; un numéro de longueur impaire commence par
+ * un groupe de trois — « 773 88 43 32 » pour un numéro sénégalais — plutôt
+ * que de finir sur un chiffre orphelin.
+ */
+function groupDigits(national: string): string {
+  const head = national.length % 2 === 1 ? national.slice(0, 3) : '';
+  const rest = national
+    .slice(head.length)
+    .replace(/(\d{2})(?=\d)/g, '$1 ')
+    .trim();
+  return head ? `${head} ${rest}`.trim() : rest;
+}
+
+/**
+ * Indicatif et chiffres nationaux d'un E.164 NON béninois, `null` sinon.
+ *
+ * Volontairement limité aux indicatifs du registre `phone-country.ts` : un
+ * numéro inconnu continue de passer par la règle béninoise, qui lève — c'est
+ * le comportement historique, et c'est celui qu'attend la saisie stricte.
+ */
+function splitForeign(e164: string): { dialCode: string; national: string } | null {
+  const split = splitE164(e164);
+  if (!split || split.dialCode === BENIN_COUNTRY_CODE) return null;
+  return split;
 }
 
 /**
@@ -194,10 +228,12 @@ export function formatPhoneSafe(
  * @example maskPhone('+2290197441208') === '+229 01 •• •• 12 08'
  */
 export function maskPhone(e164: string): string {
-  const national = toNationalDigits(e164);
+  const foreign = splitForeign(e164);
+  const dialCode = foreign?.dialCode ?? BENIN_COUNTRY_CODE;
+  const national = foreign?.national ?? toNationalDigits(e164);
   const head = national.slice(0, 2);
   const tail = national.slice(-4);
-  return `+${BENIN_COUNTRY_CODE} ${head} •• •• ${tail.slice(0, 2)} ${tail.slice(2)}`;
+  return `+${dialCode} ${head} •• •• ${tail.slice(0, 2)} ${tail.slice(2)}`;
 }
 
 /**

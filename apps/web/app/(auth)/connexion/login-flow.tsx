@@ -8,7 +8,7 @@ import {
   type RequestOtpResponse,
   type SessionUser,
 } from '@nexakabi/contracts';
-import { formatShortCountdown, tryNormalizePhone } from '@nexakabi/utils';
+import { formatShortCountdown } from '@nexakabi/utils';
 import {
   Alert,
   Button,
@@ -98,7 +98,9 @@ export function LoginFlow({
                 const payload: unknown = await response.json().catch(() => null);
 
                 if (!response.ok) {
-                  setError((payload as ApiError | null)?.message ?? 'Impossible d’envoyer le code.');
+                  setError(
+                    (payload as ApiError | null)?.message ?? 'Impossible d’envoyer le code.',
+                  );
                   return;
                 }
 
@@ -137,7 +139,9 @@ export function LoginFlow({
                 const payload: unknown = await response.json().catch(() => null);
 
                 if (!response.ok) {
-                  setError((payload as ApiError | null)?.message ?? 'Impossible de renvoyer le code.');
+                  setError(
+                    (payload as ApiError | null)?.message ?? 'Impossible de renvoyer le code.',
+                  );
                   return;
                 }
                 setChallenge(payload as RequestOtpResponse);
@@ -243,8 +247,10 @@ function PhoneStep({
   pending: boolean;
   onSubmit: (phone: string) => Promise<void>;
 }) {
-  const [value, setValue] = React.useState('');
-  const normalized = tryNormalizePhone(value);
+  // Le numéro, déjà normalisé en E.164 par le champ — pour le pays choisi.
+  // Les utilisateurs ne sont pas forcément béninois : le sélecteur d'indicatif
+  // est là, le Bénin en premier parce que c'est le pays par défaut.
+  const [normalized, setNormalized] = React.useState<string | null>(null);
 
   return (
     <form
@@ -265,7 +271,13 @@ function PhoneStep({
       </div>
 
       <Field label="Numéro de téléphone" htmlFor="phone">
-        <PhoneInput id="phone" autoFocus required onValueChange={(_e164, raw) => setValue(raw)} />
+        <PhoneInput
+          id="phone"
+          autoFocus
+          required
+          selectableCountry
+          onValueChange={(e164) => setNormalized(e164)}
+        />
       </Field>
 
       <Button

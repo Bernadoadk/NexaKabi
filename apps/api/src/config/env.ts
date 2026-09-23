@@ -110,17 +110,49 @@ const envSchema = z.object({
   PUBLIC_API_URL: z.string().url().default('http://localhost:4000/api'),
 
   /**
-   * FedaPay — agrégateur Mobile Money ouest-africain.
+   * URL publique de l'application web.
    *
-   * `sandbox` tant que le compte n'est pas validé. Les deux environnements ont
-   * des HÔTES différents, pas seulement des clés : viser le mauvais avec les
-   * bonnes clés échoue à l'authentification, ce qui est le bon comportement.
+   * Sert à construire les adresses de RETOUR d'un paiement sur une page
+   * hébergée par le prestataire (carte bancaire) : le participant en revient
+   * sur l'écran d'attente de sa commande. À défaut, la première origine CORS
+   * tient le rôle.
    */
-  FEDAPAY_ENVIRONMENT: z.enum(['sandbox', 'live']).default('sandbox'),
-  /** Clé secrète. Vide = FedaPay n'est pas branché, et n'apparaît pas au checkout. */
-  FEDAPAY_SECRET_KEY: z.string().default(''),
-  /** Secret de signature des webhooks. Propre à chaque point de terminaison. */
-  FEDAPAY_WEBHOOK_SECRET: z.string().default(''),
+  PUBLIC_WEB_URL: z.string().url().optional(),
+
+  /**
+   * Bictorys — prestataire de paiement principal : carte et Mobile Money,
+   * collecte et versement, dans plusieurs pays d'Afrique de l'Ouest.
+   *
+   * `test` tant que le compte marchand n'est pas activé. Les deux
+   * environnements ont des HÔTES différents, pas seulement des clés : viser le
+   * mauvais avec les bonnes clés échoue à l'authentification, ce qui est le bon
+   * comportement.
+   */
+  BICTORYS_ENVIRONMENT: z.enum(['test', 'live']).default('test'),
+  /** Clé d'API. Vide = Bictorys n'est pas branché ; hors production, le simulateur prend sa place. */
+  BICTORYS_API_KEY: z.string().default(''),
+  /** Secret de webhook, celui renseigné sur le tableau de bord Bictorys (en-tête `X-Secret-Key`). */
+  BICTORYS_WEBHOOK_SECRET: z.string().default(''),
+  /** Code secret marchand exigé par Bictorys pour ordonner un versement. */
+  BICTORYS_PAYOUT_SECRET_CODE: z.string().default(''),
+
+  /**
+   * KPay — Mobile Money au Bénin, en Côte d'Ivoire et au Sénégal.
+   *
+   * ── Pas de variable d'environnement, contrairement à Bictorys ───────────
+   * KPay expose UNE seule adresse : c'est le PRÉFIXE DE LA CLÉ qui décide si
+   * l'argent bouge (`kpay_test_` → bac à sable, `kpay_live_` → production).
+   * Ajouter un réglage `KPAY_ENVIRONMENT` ferait croire qu'on peut viser le
+   * bac à sable avec une clé de production : on ne peut pas, et le prétendre
+   * serait la pire des confusions sur un système de paiement.
+   */
+  KPAY_API_URL: z.string().url().default('https://admin.kpay.site'),
+  /** Clé d'API, en-tête `X-API-Key`. Vide = KPay n'est pas branché. */
+  KPAY_API_KEY: z.string().default(''),
+  /** Clé secrète, en-tête `X-Secret-Key`. Accompagne toujours la clé d'API. */
+  KPAY_SECRET_KEY: z.string().default(''),
+  /** Secret de signature des notifications (HMAC-SHA256, en-tête `X-KPAY-Signature`). */
+  KPAY_WEBHOOK_SECRET: z.string().default(''),
 
   /**
    * Fournisseur d'envoi des codes.
@@ -261,14 +293,59 @@ function assertConsistency(env: Env, addIssue: (path: string, message: string) =
     }
   }
 
-  // Une clé FedaPay sans secret de webhook fait calculer la signature avec une
-  // clé VIDE : n'importe qui peut alors déclarer un paiement réussi.
-  if (env.FEDAPAY_SECRET_KEY && !env.FEDAPAY_WEBHOOK_SECRET) {
+  // Une clé Bictorys sans secret de webhook accepterait n'importe quelle
+  // notification : n'importe qui pourrait alors déclarer un paiement réussi.
+  // La relecture chez Bictorys avant tout crédit limite le dégât, mais un
+  // secret vide reste une porte ouverte qu'on refuse d'ouvrir.
+  if (env.BICTORYS_API_KEY && !env.BICTORYS_WEBHOOK_SECRET) {
     addIssue(
-      'FEDAPAY_WEBHOOK_SECRET',
-      'FEDAPAY_WEBHOOK_SECRET est obligatoire dès que FEDAPAY_SECRET_KEY est renseignée : ' +
-        'sans lui, la signature des webhooks est calculée avec une clé vide, donc forgeable.',
+      'BICTORYS_WEBHOOK_SECRET',
+      'BICTORYS_WEBHOOK_SECRET est obligatoire dès que BICTORYS_API_KEY est renseignée : ' +
+        'sans lui, aucune notification ne peut être authentifiée.',
     );
+  }
+
+  // Les trois valeurs KPay vont ensemble. Une clé d'API sans clé secrète
+  // échouerait à chaque appel ; une clé sans secret de webhook accepterait
+  // n'importe quelle notification, donc n'importe qui pourrait déclarer un
+  // paiement réussi. La relecture systématique chez KPay avant tout crédit
+  // limite le dégât, mais un secret vide reste une porte ouverte.
+  if (env.KPAY_API_KEY) {
+    if (!env.KPAY_SECRET_KEY) {
+      addIssue(
+        'KPAY_SECRET_KEY',
+        'KPAY_SECRET_KEY est obligatoire dès que KPAY_API_KEY est renseignée : ' +
+          'KPay authentifie chaque appel par la PAIRE de clés.',
+      );
+    }
+
+    if (!env.KPAY_WEBHOOK_SECRET) {
+      addIssue(
+        'KPAY_WEBHOOK_SECRET',
+        'KPAY_WEBHOOK_SECRET est obligatoire dès que KPAY_API_KEY est renseignée : ' +
+          'sans lui, aucune notification ne peut être authentifiée.',
+      );
+    }
+
+    // Le préfixe de la clé EST l'environnement. Une clé de bac à sable en
+    // production n'encaisserait rien, et personne ne s'en apercevrait avant
+    // le premier billet non payé ; une clé de production sur un poste de
+    // développement débiterait de vrais acheteurs dès le premier essai.
+    if (isProduction && env.KPAY_API_KEY.startsWith('kpay_test_')) {
+      addIssue(
+        'KPAY_API_KEY',
+        'Clé KPay de bac à sable (kpay_test_…) en production : aucun paiement ne serait ' +
+          'réellement encaissé. Utilise la clé kpay_live_… du tableau de bord.',
+      );
+    }
+
+    if (!isProduction && env.KPAY_API_KEY.startsWith('kpay_live_')) {
+      addIssue(
+        'KPAY_API_KEY',
+        'Clé KPay de PRODUCTION (kpay_live_…) hors production : le premier essai débiterait ' +
+          'de vrais acheteurs. Utilise la clé kpay_test_… du tableau de bord.',
+      );
+    }
   }
 
   // En mode `http`, les tâches ne tournent QUE si quelqu'un les appelle — et

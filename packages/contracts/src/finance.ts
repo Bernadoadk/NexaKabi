@@ -341,6 +341,15 @@ export const payoutSchema = z.object({
   accountType: payoutAccountTypeSchema,
   accountLabel: z.string(),
   accountMaskedNumber: z.string(),
+  /** Moyen et pays de réception, tels que le compte les porte. */
+  methodCode: z.string(),
+  countryCode: z.string(),
+  /**
+   * Vrai si un prestataire branché sait exécuter ce versement. Faux : le
+   * virement se fait à la main et s'enregistre — l'écran d'administration
+   * propose le bon geste.
+   */
+  automatic: z.boolean(),
 
   failureReason: z.string().nullable(),
   requestedAt: z.string(),

@@ -17,7 +17,7 @@ import { CHECKOUT_COOKIE, checkoutCookieOptions, checkoutHeaders } from '@/lib/c
 
 /** Segments autorisés. Une liste fermée : ce relais n'ouvre pas toute l'API. */
 const ALLOWED =
-  /^orders(\/[A-Za-z0-9-]+(\/(buyer|confirm|cancel|tickets|payments(\/[A-Za-z0-9_-]+)?))?)?$/;
+  /^orders(\/[A-Za-z0-9-]+(\/(buyer|confirm|cancel|tickets|payment-methods|payments(\/[A-Za-z0-9_-]+)?))?)?$/;
 
 async function proxy(request: NextRequest, path: string[]): Promise<NextResponse> {
   const target = path.join('/');

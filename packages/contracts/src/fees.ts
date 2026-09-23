@@ -27,7 +27,42 @@
  * Voir docs/PROJECT_ANALYSIS.md §8 (A1) et docs/TECHNICAL_ARCHITECTURE.md §6.7.
  */
 
+import { z } from 'zod';
 import { applyBasisPoints, clampAmount } from '@nexakabi/utils';
+
+/**
+ * Politique de commission, telle qu'elle se configure.
+ *
+ * ── Indépendante du moyen de paiement ───────────────────────────────────────
+ * La commission rémunère la plateforme, pas le prestataire : elle ne varie
+ * jamais selon que le participant a payé par carte ou par Mobile Money. Les
+ * frais du prestataire sont une autre ligne, constatée à l'encaissement.
+ *
+ * ── Résolue par portée, jamais codée par pays ───────────────────────────────
+ * Une politique porte une PORTÉE : la plateforme entière, un pays, une
+ * organisation. À la commande, la plus spécifique l'emporte :
+ * organisation > pays > plateforme. Ouvrir un pays avec des frais différents
+ * consiste à créer une politique pour ce pays — aucun `if` nulle part.
+ */
+export const commissionPolicySchema = z
+  .object({
+    percentageBps: z.number().int().min(0).max(10_000),
+    fixedAmountPerTicket: z.number().int().min(0),
+    minFeePerOrder: z.number().int().min(0).optional(),
+    maxFeePerOrder: z.number().int().min(0).optional(),
+    buyerSharePercent: z.number().int().min(0).max(100),
+    appliesToFreeTickets: z.boolean(),
+    payoutFeeBps: z.number().int().min(0).max(10_000),
+    payoutFeeMax: z.number().int().min(0),
+    minPayoutAmount: z.number().int().min(0),
+  })
+  .refine(
+    (value) =>
+      value.maxFeePerOrder === undefined ||
+      value.minFeePerOrder === undefined ||
+      value.maxFeePerOrder >= value.minFeePerOrder,
+    { message: 'Le plafond doit dépasser le plancher', path: ['maxFeePerOrder'] },
+  );
 
 export interface CommissionPolicy {
   /** Commission plateforme, en points de base (500 = 5 %). */
@@ -200,9 +235,10 @@ export function validatePayoutRequest(
   grossAmount: number,
   availableBalance: number,
   policy: CommissionPolicy = DEFAULT_COMMISSION_POLICY,
+  currencySymbol = 'FCFA',
 ): string | null {
   if (grossAmount < policy.minPayoutAmount) {
-    return `Le montant minimum d’un retrait est de ${policy.minPayoutAmount} FCFA.`;
+    return `Le montant minimum d’un retrait est de ${policy.minPayoutAmount} ${currencySymbol}.`;
   }
   if (grossAmount > availableBalance) {
     return 'Le montant demandé dépasse votre solde disponible.';

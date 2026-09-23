@@ -78,6 +78,11 @@ export const ADMIN_SPACES = [
     label: 'Retraits',
     description: 'Demandes de retrait des organisateurs et leur exécution.',
   },
+  {
+    key: 'settings',
+    label: 'Pays & paiements',
+    description: 'Pays ouverts, moyens de paiement et de réception, prestataires.',
+  },
 ] as const;
 
 export type AdminSpace = (typeof ADMIN_SPACES)[number]['key'];

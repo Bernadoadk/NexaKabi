@@ -5,24 +5,30 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
-  PAYMENT_METHOD_CATALOGUE,
   canTransitionPayment,
+  getPaymentMethodDefinition,
   isPaymentPending,
+  paymentMethodRequiresPhone,
+  type CheckoutPaymentMethods,
   type InitiatePaymentInput,
-  type PaymentMethod,
+  type PaymentMethodCode,
   type PaymentState,
   type PaymentStatus,
   type PaymentProviderCode,
 } from '@nexakabi/contracts';
 import { maskPhone } from '@nexakabi/utils';
+import type { Env } from '../../config/env';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { CountriesService } from '../countries/countries.service';
 import { OrdersService } from '../orders/orders.service';
 import type { Prisma } from '../../generated/prisma/client';
+import { PaymentRoutingService } from './payment-routing.service';
 import { PaymentProviderRegistry } from './provider.registry';
-import type { NormalizedWebhookEvent } from './providers/payment-provider';
+import type { NormalizedPaymentWebhook } from './providers/payment-provider';
 
 /** Origine d'un changement d'état, conservée pour le diagnostic. */
 export type OutcomeSource = 'initiate' | 'webhook' | 'poll' | 'expiry';
@@ -44,47 +50,60 @@ export type OutcomeResult = 'applied' | 'ignored' | 'unchanged';
  * La partie la plus risquée du produit. Trois faits gouvernent sa conception :
  *
  *  1. **Le Mobile Money est asynchrone.** L'utilisateur quitte l'écran pour
- *     valider sur son téléphone. Le navigateur ne sait rien ; seul l'opérateur
- *     sait. Aucun délai côté client ne doit donc conclure à l'échec.
- *  2. **Les opérateurs rejouent leurs webhooks**, parfois dans le désordre.
+ *     valider sur son téléphone. Le navigateur ne sait rien ; seul le
+ *     prestataire sait. Aucun délai côté client ne doit donc conclure à l'échec.
+ *  2. **Les prestataires rejouent leurs webhooks**, parfois dans le désordre.
  *     L'idempotence n'est pas une précaution, c'est une condition de
  *     fonctionnement.
  *  3. **Un webhook se perd.** La réconciliation par interrogation n'est pas un
  *     filet de secours facultatif : sans elle, un client payé reste sans billet.
+ *
+ * ── Ce que ce service ne sait pas ───────────────────────────────────────────
+ * Quel prestataire traite quel moyen dans quel pays. Il le demande au routage
+ * à chaque fois, et enregistre la réponse sur le paiement — `providerCode`
+ * pour retrouver l'implémentation, `methodCode` pour le dire au participant.
  *
  * Voir docs/TECHNICAL_ARCHITECTURE.md §6.
  */
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
+  private readonly webUrl: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly registry: PaymentProviderRegistry,
+    private readonly routing: PaymentRoutingService,
+    private readonly countries: CountriesService,
     private readonly orders: OrdersService,
     private readonly audit: AuditService,
     private readonly events: EventEmitter2,
-  ) {}
+    config: ConfigService<Env, true>,
+  ) {
+    this.webUrl =
+      config.get('PUBLIC_WEB_URL', { infer: true }) ??
+      config.get('CORS_ORIGINS', { infer: true })[0] ??
+      'http://localhost:3000';
+  }
 
   /**
-   * Moyens de paiement à proposer.
+   * Moyens de paiement à proposer pour une commande.
    *
-   * `available` reflète les fournisseurs réellement branchés : mieux vaut
-   * masquer un moyen que le laisser échouer après la saisie du numéro.
+   * Générés depuis la configuration du PAYS de la commande : à Cotonou MTN
+   * d'abord, à Dakar Wave d'abord — et jamais un moyen que le prestataire ne
+   * sait pas traiter.
    */
-  listMethods(): PaymentMethod[] {
-    return PAYMENT_METHOD_CATALOGUE.map((method) => ({
-      ...method,
-      available: !method.comingSoon && this.registry.has(method.provider),
-    })).filter((method) => method.available || method.comingSoon);
+  async listMethods(reference: string): Promise<CheckoutPaymentMethods> {
+    const order = await this.orders.requireOrder(reference);
+    return this.routing.listCollectionMethods(order.countryCode);
   }
 
   /**
    * Déclenche une demande de paiement.
    *
    * Idempotent sur le double-clic : tant qu'une demande est en cours pour cette
-   * commande, la même est renvoyée. Sans cela, deux appels opérateur partiraient
-   * et l'acheteur pourrait être débité deux fois.
+   * commande, la même est renvoyée. Sans cela, deux appels prestataire
+   * partiraient et l'acheteur pourrait être débité deux fois.
    */
   async initiate(reference: string, input: InitiatePaymentInput): Promise<PaymentState> {
     const order = await this.orders.requireOrder(reference);
@@ -113,6 +132,21 @@ export class PaymentsService {
       );
     }
 
+    // Le routage tranche AVANT toute écriture : un moyen fermé, un pays non
+    // ouvert ou un prestataire absent se voient au clic, pas trois appels plus loin.
+    const route = await this.routing.resolveCollection(order.countryCode, input.method);
+    const country = await this.countries.requireActive(order.countryCode);
+
+    // Le numéro appartient au pays de paiement, pas à celui de l'identifiant
+    // de connexion : un payeur sénégalais donne un numéro en +221.
+    const payerPhone = paymentMethodRequiresPhone(route.method.kind)
+      ? this.countries.normalizePhone(input.payerPhone ?? '', country)
+      : null;
+
+    if (paymentMethodRequiresPhone(route.method.kind) && !payerPhone) {
+      throw new BadRequestException('Indique le numéro Mobile Money à débiter.');
+    }
+
     const inFlight = await this.prisma.payment.findFirst({
       where: { orderId: order.id, status: { in: ['INITIATED', 'PENDING', 'PROCESSING'] } },
       orderBy: { createdAt: 'desc' },
@@ -120,9 +154,9 @@ export class PaymentsService {
 
     if (inFlight) {
       // Une demande identique en cours : on renvoie la même, sans rappeler
-      // l'opérateur. Une demande sur un AUTRE numéro ou opérateur suppose que
+      // le prestataire. Une demande sur un AUTRE numéro ou moyen suppose que
       // la première a échoué côté client — elle est abandonnée explicitement.
-      if (inFlight.providerCode === input.provider && inFlight.payerPhone === input.payerPhone) {
+      if (inFlight.methodCode === input.method && inFlight.payerPhone === payerPhone) {
         return this.toState(inFlight, reference);
       }
 
@@ -133,7 +167,7 @@ export class PaymentsService {
       });
     }
 
-    const provider = this.registry.get(input.provider);
+    const { provider } = route;
 
     /**
      * Rang de la tentative, compté sur les demandes DÉJÀ TERMINÉES.
@@ -161,13 +195,15 @@ export class PaymentsService {
         data: {
           orderId: order.id,
           providerCode: provider.code,
+          methodCode: route.method.code,
+          countryCode: route.countryCode,
           // Clé déterministe : deux appels simultanés calculent le même rang et
           // se heurtent à l'index unique. C'est voulu — l'un crée le paiement,
           // l'autre est renvoyé vers celui-là.
           idempotencyKey,
           amount: order.totalAmount,
           currency: order.currency,
-          payerPhone: input.payerPhone,
+          payerPhone,
           status: 'INITIATED',
         },
       });
@@ -196,15 +232,28 @@ export class PaymentsService {
         orderReference: order.reference,
         amount: order.totalAmount,
         currency: order.currency,
-        payerPhone: input.payerPhone,
+        countryCode: route.countryCode,
+        method: route.method,
+        payerPhone: payerPhone ?? undefined,
+        customer: {
+          name: order.buyerName,
+          phone: order.buyerPhone,
+          email: order.buyerEmail ?? undefined,
+        },
         description: `Nexa-Kabi · ${order.event.title}`,
+        returnUrls: this.returnUrls(order.reference, payment.id),
       });
 
       await this.prisma.paymentAttempt.create({
         data: {
           paymentId: payment.id,
           kind: 'INITIATE',
-          requestPayload: { provider: provider.code, amount: order.totalAmount },
+          requestPayload: {
+            provider: provider.code,
+            method: route.method.code,
+            country: route.countryCode,
+            amount: order.totalAmount,
+          },
           responsePayload: toJson(result.rawResponse),
           durationMs: Date.now() - startedAt,
         },
@@ -216,6 +265,9 @@ export class PaymentsService {
           providerReference: result.providerReference,
           status: result.status,
           expiresAt: result.expiresAt,
+          // Une seule colonne pour le lien du prestataire ; sa nature — page
+          // où l'on va, ou lien à ouvrir à côté — se déduit du moyen.
+          redirectUrl: result.redirectUrl ?? result.confirmationUrl ?? null,
           providerPayload: toJson(result.rawResponse),
           failureCode: result.failureCode ?? null,
           failureReason: result.failureReason ?? null,
@@ -229,7 +281,13 @@ export class PaymentsService {
         entityId: payment.id,
         actorType: 'USER',
         actorUserId: order.userId ?? undefined,
-        changes: { provider: provider.code, amount: order.totalAmount, status: result.status },
+        changes: {
+          provider: provider.code,
+          method: route.method.code,
+          country: route.countryCode,
+          amount: order.totalAmount,
+          status: result.status,
+        },
       });
 
       return this.toState(updated, reference, result.instructions);
@@ -243,7 +301,7 @@ export class PaymentsService {
         },
       });
 
-      // L'opérateur n'a pas répondu. Le paiement reste INITIATED, donc en
+      // Le prestataire n'a pas répondu. Le paiement reste INITIATED, donc en
       // attente : la réconciliation tranchera. Déclarer l'échec ici risquerait
       // de contredire un débit réellement passé.
       this.logger.error({ err: error, paymentId: payment.id }, "Échec d'initiation du paiement");
@@ -258,8 +316,8 @@ export class PaymentsService {
    * État d'un paiement, avec rattrapage.
    *
    * L'écran d'attente appelle cette route en boucle. Si le webhook tarde, on
-   * interroge l'opérateur : c'est ce qui empêche un acheteur débité de rester
-   * bloqué sur un anneau de progression.
+   * interroge le prestataire : c'est ce qui empêche un acheteur débité de
+   * rester bloqué sur un anneau de progression.
    */
   async getState(reference: string, paymentId: string): Promise<PaymentState> {
     const payment = await this.prisma.payment.findFirst({
@@ -285,18 +343,29 @@ export class PaymentsService {
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Traite un événement reçu d'un opérateur.
+   * Traite une notification d'encaissement reçue d'un prestataire.
    *
    * L'index unique `(providerCode, externalId)` porte l'idempotence. Un rejeu
    * est reconnu et ignoré ; un rejeu d'un événement dont le traitement avait
    * échoué est en revanche REPRIS, sinon la panne se figerait définitivement.
+   *
+   * ── La notification n'est pas la vérité ─────────────────────────────────
+   * Quand le prestataire n'authentifie ses webhooks que par un secret partagé
+   * (`capabilities.verifyWebhookByFetch`), un SUCCÈS annoncé est relu chez
+   * lui avant d'être appliqué. Si la relecture échoue, la notification reste
+   * `RECEIVED` et la réconciliation reprendra : un billet n'est jamais émis
+   * sur la seule foi d'un message entrant.
    */
   async handleWebhook(
     providerCode: PaymentProviderCode,
-    event: NormalizedWebhookEvent,
+    event: NormalizedPaymentWebhook,
     rawBody: string,
     signature?: string,
-  ): Promise<{ received: true; duplicate: boolean; outcome: OutcomeResult | 'unknown_payment' }> {
+  ): Promise<{
+    received: true;
+    duplicate: boolean;
+    outcome: OutcomeResult | 'unknown_payment' | 'unverified';
+  }> {
     const existing = await this.prisma.webhookEvent.findUnique({
       where: { providerCode_externalId: { providerCode, externalId: event.externalId } },
     });
@@ -317,9 +386,9 @@ export class PaymentsService {
     });
 
     if (!payment) {
-      // Peut arriver légitimement : l'opérateur notifie parfois avant que notre
-      // propre transaction d'initiation ait été validée. On laisse la ligne en
-      // RECEIVED pour que la réconciliation la reprenne.
+      // Peut arriver légitimement : le prestataire notifie parfois avant que
+      // notre propre transaction d'initiation ait été validée. On laisse la
+      // ligne en RECEIVED pour que la réconciliation la reprenne.
       await this.prisma.webhookEvent.update({
         where: { id: record.id },
         data: {
@@ -343,26 +412,100 @@ export class PaymentsService {
       },
     });
 
-    const outcome = await this.applyOutcome(payment.id, {
+    /**
+     * Le montant annoncé doit être celui du paiement.
+     *
+     * Une notification authentique — signature valide — qui annonce un autre
+     * montant ou une autre devise ne peut désigner que deux choses : une
+     * erreur du prestataire, ou une notification d'une AUTRE transaction
+     * amenée jusqu'ici. Émettre les billets serait la mauvaise réponse aux
+     * deux. On refuse d'appliquer, on consigne, et la réconciliation ira lire
+     * l'état à la source — qui, elle, ne se trompe pas de montant.
+     */
+    const mismatch = describeAmountMismatch(payment, event);
+
+    if (mismatch) {
+      await this.prisma.webhookEvent.update({
+        where: { id: record.id },
+        data: { status: 'FAILED', paymentId: payment.id, error: mismatch },
+      });
+
+      await this.audit.record({
+        action: AUDIT_ACTIONS.paymentWebhookIgnored,
+        entityType: 'payment',
+        entityId: payment.id,
+        actorType: 'SYSTEM',
+        changes: { providerCode, reason: mismatch },
+      });
+
+      this.logger.error(
+        `Webhook ${providerCode}/${event.externalId} incohérent avec le paiement ${payment.id} : ${mismatch}`,
+      );
+
+      return { received: true, duplicate: Boolean(existing), outcome: 'ignored' };
+    }
+
+    let outcome: PaymentOutcome = {
       status: event.status,
       failureCode: event.failureCode,
       failureReason: event.failureReason,
       providerFeeAmount: event.providerFeeAmount,
       source: 'webhook',
       rawPayload: event,
-    });
+    };
+
+    const provider = this.registry.get(providerCode);
+
+    if (provider.capabilities.verifyWebhookByFetch && event.status === 'SUCCEEDED') {
+      try {
+        const verified = await provider.getStatus(event.providerReference);
+
+        outcome = {
+          status: verified.status,
+          failureCode: verified.failureCode,
+          failureReason: verified.failureReason,
+          providerFeeAmount: verified.providerFeeAmount ?? event.providerFeeAmount,
+          source: 'webhook',
+          rawPayload: verified.rawResponse ?? event,
+        };
+
+        if (verified.status !== 'SUCCEEDED') {
+          this.logger.warn(
+            `Webhook ${providerCode}/${event.externalId} annonce un succès que le prestataire ne confirme pas (${verified.status})`,
+          );
+        }
+      } catch (error) {
+        await this.prisma.webhookEvent.update({
+          where: { id: record.id },
+          data: {
+            status: 'RECEIVED',
+            paymentId: payment.id,
+            error: `Relecture impossible : ${error instanceof Error ? error.message : String(error)}`,
+          },
+        });
+
+        this.logger.warn(
+          { err: error, paymentId: payment.id },
+          'Webhook reçu, relecture chez le prestataire impossible — la réconciliation reprendra',
+        );
+
+        return { received: true, duplicate: Boolean(existing), outcome: 'unverified' };
+      }
+    }
+
+    const result = await this.applyOutcome(payment.id, outcome);
 
     await this.prisma.webhookEvent.update({
       where: { id: record.id },
       data: {
-        status: outcome === 'applied' ? 'PROCESSED' : 'IGNORED',
+        status: result === 'applied' ? 'PROCESSED' : 'IGNORED',
         paymentId: payment.id,
         processedAt: new Date(),
         error: null,
       },
     });
 
-    return { received: true, duplicate: Boolean(existing), outcome };
+    return { received: true, duplicate: Boolean(existing), outcome: result };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -370,7 +513,7 @@ export class PaymentsService {
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Applique un verdict d'opérateur.
+   * Applique un verdict de prestataire.
    *
    * Point de passage UNIQUE de tout changement d'état d'un paiement : webhook,
    * interrogation, expiration, abandon. Centraliser ici garantit qu'aucun
@@ -432,6 +575,10 @@ export class PaymentsService {
             confirmedAt: outcome.status === 'SUCCEEDED' ? now : undefined,
             failedAt: outcome.status === 'FAILED' || outcome.status === 'EXPIRED' ? now : undefined,
             webhookReceivedAt: outcome.source === 'webhook' ? now : undefined,
+            // Les frais réels du prestataire, tels qu'il les annonce : c'est
+            // cette valeur que le grand livre consigne en `PROVIDER_FEE`.
+            providerFeeAmount:
+              outcome.status === 'SUCCEEDED' ? (outcome.providerFeeAmount ?? 0) : undefined,
             providerPayload:
               outcome.rawPayload === undefined ? undefined : toJson(outcome.rawPayload),
           },
@@ -443,7 +590,7 @@ export class PaymentsService {
 
         // Un échec ne touche PAS à la commande : elle reste en AWAITING_PAYMENT
         // et ses places restent réservées jusqu'à l'expiration, pour que
-        // l'acheteur puisse réessayer avec un autre numéro ou un autre opérateur.
+        // l'acheteur puisse réessayer avec un autre numéro ou un autre moyen.
         // « Aucun montant n'a été débité · panier conservé » (écran A6).
 
         return { orderId: current.orderId } as const;
@@ -456,18 +603,9 @@ export class PaymentsService {
          * l'événement, création du compte silencieux, émission des billets, trois
          * écritures au grand livre, et la notification de confirmation.
          *
-         * Elle tournait pourtant avec les valeurs par défaut de Prisma — 2 s pour
-         * obtenir une connexion, 5 s pour finir — alors que la simple RÉSERVATION
-         * disposait déjà de vingt secondes. L'incohérence a été révélée par le
-         * test de vente flash : sur cinq cents acheteurs simultanés, 143 paiements
-         * restaient en `PROCESSING` avec « Unable to start a transaction in the
-         * given time », pendant que l'argent était bel et bien encaissé chez
-         * l'opérateur.
-         *
-         * La réconciliation périodique les rattrape à la minute suivante — rien
-         * n'est perdu — mais 143 acheteurs sur 200 voyaient « paiement en cours »
-         * au lieu de leur billet, à l'entrée d'un concert. Attendre une connexion
-         * vaut mieux qu'échouer.
+         * Le test de vente flash l'a montré : avec les délais par défaut, 143
+         * paiements sur 200 restaient en `PROCESSING` pendant que l'argent était
+         * encaissé. Attendre une connexion vaut mieux qu'échouer.
          */
         maxWait: 20_000,
         timeout: 20_000,
@@ -493,7 +631,7 @@ export class PaymentsService {
   }
 
   /**
-   * Interroge l'opérateur sur un paiement en attente.
+   * Interroge le prestataire sur un paiement en attente.
    *
    * C'est le filet contre le webhook perdu. Renvoie `true` si l'état a changé.
    */
@@ -502,6 +640,12 @@ export class PaymentsService {
 
     if (!payment || !payment.providerReference || !isPaymentPending(payment.status)) {
       return false;
+    }
+
+    if (!this.registry.has(payment.providerCode as PaymentProviderCode)) {
+      // Le prestataire de ce paiement n'est plus branché — clé retirée, ou
+      // simulateur en production. Rien à interroger : l'expiration conclura.
+      return this.expireIfDue(payment);
     }
 
     const provider = this.registry.get(payment.providerCode as PaymentProviderCode);
@@ -524,8 +668,8 @@ export class PaymentsService {
         },
       });
 
-      // L'expiration est décidée par NOUS, pas par l'opérateur : passé le délai
-      // annoncé à l'acheteur, une demande toujours en attente est abandonnée.
+      // L'expiration est décidée par NOUS, pas par le prestataire : passé le
+      // délai annoncé à l'acheteur, une demande toujours en attente est abandonnée.
       const expired =
         isPaymentPending(status.status) &&
         payment.expiresAt !== null &&
@@ -534,13 +678,14 @@ export class PaymentsService {
       const outcome: PaymentOutcome = expired
         ? {
             status: 'EXPIRED',
-            failureReason: "La demande n'a pas été validée à temps sur ton téléphone.",
+            failureReason: "La demande n'a pas été validée à temps.",
             source: 'expiry',
           }
         : {
             status: status.status,
             failureCode: status.failureCode,
             failureReason: status.failureReason,
+            providerFeeAmount: status.providerFeeAmount,
             source: 'poll',
             rawPayload: status.rawResponse,
           };
@@ -553,7 +698,7 @@ export class PaymentsService {
 
       if (applied === 'applied' && outcome.source === 'poll' && outcome.status === 'SUCCEEDED') {
         // Le webhook ne nous est jamais parvenu : l'écart est consigné, il
-        // alimente le KPI de fiabilité de l'opérateur.
+        // alimente le KPI de fiabilité du prestataire.
         await this.audit.record({
           action: AUDIT_ACTIONS.paymentReconciled,
           entityType: 'payment',
@@ -574,12 +719,41 @@ export class PaymentsService {
         },
       });
 
-      this.logger.warn({ err: error, paymentId }, "Interrogation de l'opérateur en échec");
+      this.logger.warn({ err: error, paymentId }, 'Interrogation du prestataire en échec');
       return false;
     }
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+
+  private async expireIfDue(payment: { id: string; expiresAt: Date | null }): Promise<boolean> {
+    if (payment.expiresAt === null || payment.expiresAt.getTime() >= Date.now()) return false;
+
+    const applied = await this.applyOutcome(payment.id, {
+      status: 'EXPIRED',
+      failureReason: "La demande n'a pas été validée à temps.",
+      source: 'expiry',
+    });
+
+    return applied === 'applied';
+  }
+
+  /**
+   * Adresses de retour d'une page de paiement hébergée.
+   *
+   * Les deux ramènent sur l'écran d'attente de la commande, avec l'identifiant
+   * du paiement : c'est l'interrogation qui dit ensuite ce qu'il en est. Le
+   * paramètre `retour` n'est qu'une indication d'affichage — jamais une preuve.
+   */
+  private returnUrls(reference: string, paymentId: string): { success: string; error: string } {
+    const base = `${this.webUrl}/checkout/${encodeURIComponent(reference)}/paiement`;
+    const query = `paiement=${encodeURIComponent(paymentId)}`;
+
+    return {
+      success: `${base}?${query}&retour=succes`,
+      error: `${base}?${query}&retour=echec`,
+    };
+  }
 
   private async afterTransition(
     paymentId: string,
@@ -616,20 +790,26 @@ export class PaymentsService {
     payment: {
       id: string;
       providerCode: string;
+      methodCode: string;
       status: PaymentStatus;
       amount: number;
       currency: string;
       payerPhone: string | null;
       expiresAt: Date | null;
       failureReason: string | null;
+      redirectUrl: string | null;
     },
     reference: string,
     instructions?: string,
   ): PaymentState {
+    const method = payment.methodCode as PaymentMethodCode;
+
     return {
       paymentId: payment.id,
       orderReference: reference,
       status: payment.status,
+      method,
+      methodLabel: getPaymentMethodDefinition(method)?.label ?? method,
       provider: payment.providerCode as PaymentProviderCode,
       amount: payment.amount,
       currency: payment.currency,
@@ -638,9 +818,45 @@ export class PaymentsService {
       maskedPayerPhone: payment.payerPhone ? maskPhone(payment.payerPhone) : '',
       expiresAt: payment.expiresAt?.toISOString() ?? null,
       instructions: instructions ?? null,
+      // Le lien du prestataire n'a de sens que tant que le paiement attend.
+      // Pour la carte, c'est la page où le tunnel ENVOIE l'acheteur ; pour le
+      // Mobile Money, un lien de validation à ouvrir à côté de l'écran d'attente.
+      redirectUrl:
+        isPaymentPending(payment.status) && getPaymentMethodDefinition(method)?.kind === 'CARD'
+          ? payment.redirectUrl
+          : null,
+      confirmationUrl:
+        isPaymentPending(payment.status) && getPaymentMethodDefinition(method)?.kind !== 'CARD'
+          ? payment.redirectUrl
+          : null,
       failureReason: payment.failureReason,
     };
   }
+}
+
+/**
+ * Écart entre ce qu'annonce une notification et ce que porte le paiement.
+ *
+ * `null` quand tout concorde — ou quand la notification ne dit rien du
+ * montant, ce qui est le cas de plusieurs prestataires et n'a rien de
+ * suspect. On ne contrôle que ce qui est affirmé.
+ */
+function describeAmountMismatch(
+  payment: { amount: number; currency: string },
+  event: NormalizedPaymentWebhook,
+): string | null {
+  if (event.amount !== undefined && event.amount !== payment.amount) {
+    return `montant annoncé ${event.amount}, attendu ${payment.amount}`;
+  }
+
+  if (
+    event.currency !== undefined &&
+    event.currency.toUpperCase() !== payment.currency.toUpperCase()
+  ) {
+    return `devise annoncée ${event.currency}, attendue ${payment.currency}`;
+  }
+
+  return null;
 }
 
 function isUniqueViolation(error: unknown): boolean {

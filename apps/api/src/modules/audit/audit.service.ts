@@ -119,6 +119,17 @@ export const AUDIT_ACTIONS = {
   adminFundsUnfrozen: 'admin.funds.unfrozen',
   adminUserSuspended: 'admin.user.suspended',
   adminUserReactivated: 'admin.user.reactivated',
+  /**
+   * Configuration des pays et des moyens de paiement.
+   *
+   * Un geste ici change ce que des milliers de participants voient au moment
+   * de payer, et par où l'argent des organisateurs transite : il est tracé
+   * comme un mouvement d'argent.
+   */
+  settingsCountryUpdated: 'settings.country.updated',
+  settingsPaymentMethodUpdated: 'settings.payment_method.updated',
+  settingsPaymentMethodRemoved: 'settings.payment_method.removed',
+  settingsProviderSynced: 'settings.provider.synced',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

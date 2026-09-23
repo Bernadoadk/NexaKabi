@@ -90,9 +90,12 @@ export function BuyerForm({
 
       <Field label="Numéro de téléphone" help="C’est sur ce numéro que ton billet sera envoyé.">
         {/* Non contrôlé : le champ reformate la saisie à chaque frappe, et lui
-            réinjecter la valeur normalisée déplacerait le curseur. */}
+            réinjecter la valeur normalisée déplacerait le curseur. Le pays est
+            au choix de l'acheteur : un Sénégalais achète un billet à Cotonou
+            avec son +221, et c'est là que son billet arrive. */}
         <PhoneInput
           defaultValue={phone}
+          selectableCountry
           onValueChange={(e164, raw) => setPhone(e164 ?? raw)}
           autoFocus={!phone}
           required

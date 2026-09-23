@@ -7,7 +7,13 @@
 
 import { z } from 'zod';
 import { emailSchema, idSchema, orderReferenceSchema, phoneSchema } from './common.js';
-import { orderStatusSchema, paymentProviderSchema, paymentStatusSchema } from './enums.js';
+import {
+  orderStatusSchema,
+  paymentMethodCodeSchema,
+  paymentProviderSchema,
+  paymentStatusSchema,
+} from './enums.js';
+import { countryCodeSchema } from './payments.js';
 
 /** Durée pendant laquelle les places restent bloquées. */
 export const RESERVATION_TTL_MINUTES = 30;
@@ -101,6 +107,8 @@ export const orderSchema = z.object({
   buyerFeeAmount: z.number().int(),
   totalAmount: z.number().int(),
   currency: z.string(),
+  /** Pays de paiement : celui de l'événement. Fixe la devise et les moyens proposés. */
+  countryCode: countryCodeSchema,
 
   /** Fin de la réservation des places. */
   expiresAt: z.string().nullable(),
@@ -117,10 +125,18 @@ export type Order = z.infer<typeof orderSchema>;
 // Paiement
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Demande de paiement.
+ *
+ * Le participant choisit un MOYEN — jamais un prestataire. Le numéro n'est
+ * exigé que pour le Mobile Money, et il appartient au pays de la commande :
+ * un payeur sénégalais donne un numéro en +221. Sa validation se fait donc
+ * côté serveur, contre la règle du pays, pas ici où le pays est inconnu.
+ */
 export const initiatePaymentSchema = z.object({
-  provider: paymentProviderSchema,
+  method: paymentMethodCodeSchema,
   /** Numéro Mobile Money à débiter. Souvent celui de l'acheteur, pas toujours. */
-  payerPhone: phoneSchema,
+  payerPhone: z.string().trim().max(32).optional(),
 });
 
 export type InitiatePaymentInput = z.infer<typeof initiatePaymentSchema>;
@@ -129,6 +145,10 @@ export const paymentStateSchema = z.object({
   paymentId: idSchema,
   orderReference: orderReferenceSchema,
   status: paymentStatusSchema,
+  /** Moyen choisi par le participant. */
+  method: paymentMethodCodeSchema,
+  methodLabel: z.string(),
+  /** Prestataire qui traite — information de diagnostic, jamais mise en avant. */
   provider: paymentProviderSchema,
   amount: z.number().int(),
   currency: z.string(),
@@ -137,6 +157,17 @@ export const paymentStateSchema = z.object({
   expiresAt: z.string().nullable(),
   /** Consigne opérateur : « Compose *880# … ». */
   instructions: z.string().nullable(),
+  /**
+   * Page du prestataire où le paiement se poursuit — carte bancaire. Le
+   * tunnel y envoie le participant, qui revient ensuite sur l'écran d'attente.
+   */
+  redirectUrl: z.string().nullable(),
+  /**
+   * Lien de validation d'un Mobile Money qui ne passe pas par USSD (Wave,
+   * simulateur du bac à sable) : proposé sur l'écran d'attente, ouvert à
+   * côté — l'écran reste là et interroge l'état.
+   */
+  confirmationUrl: z.string().nullable(),
   /**
    * Cause probable d'un échec, en français.
    * Le prototype interdit d'afficher un code brut seul.
@@ -147,83 +178,10 @@ export const paymentStateSchema = z.object({
 export type PaymentState = z.infer<typeof paymentStateSchema>;
 
 /**
- * Moyens de paiement proposés.
- *
- * L'ordre est piloté par le back-office, jamais figé dans le code :
- * à Cotonou MTN d'abord, à Dakar Wave d'abord.
+ * Les moyens de paiement proposés au participant ne sont plus un catalogue
+ * figé : ils se génèrent depuis la configuration du pays de la commande.
+ * Voir `checkoutPaymentMethodsSchema` dans `payments.ts`.
  */
-export const paymentMethodSchema = z.object({
-  provider: paymentProviderSchema,
-  label: z.string(),
-  description: z.string(),
-  /** Groupe d'affichage : « Mobile Money · recommandé », « Autres moyens ». */
-  group: z.enum(['mobile_money', 'other']),
-  available: z.boolean(),
-  /** Mention « Bientôt » sur un moyen prévu mais pas encore ouvert. */
-  comingSoon: z.boolean(),
-});
-
-export type PaymentMethod = z.infer<typeof paymentMethodSchema>;
-
-/**
- * Catalogue par défaut des moyens de paiement.
- *
- * L'ordre reproduit celui de l'écran A3 du prototype. Il constitue un DÉFAUT,
- * pas une règle : le back-office pourra le réordonner par ville et par pays,
- * puisque l'opérateur dominant change d'un marché à l'autre.
- *
- * `available` n'est pas figé ici : il dépend des fournisseurs réellement
- * enregistrés côté serveur. Un moyen annoncé mais non branché s'afficherait
- * sinon comme utilisable, et échouerait au moment le plus coûteux du parcours.
- */
-export const PAYMENT_METHOD_CATALOGUE: readonly Omit<PaymentMethod, 'available'>[] = [
-  {
-    provider: 'mtn_momo',
-    label: 'MTN MoMo',
-    description: 'Recommandé · validation par code USSD',
-    group: 'mobile_money',
-    comingSoon: false,
-  },
-  {
-    provider: 'moov_money',
-    label: 'Moov Money',
-    description: 'Validation par code USSD',
-    group: 'mobile_money',
-    comingSoon: false,
-  },
-  {
-    provider: 'celtiis_cash',
-    label: 'Celtiis Cash',
-    description: 'Validation par code USSD',
-    group: 'mobile_money',
-    comingSoon: false,
-  },
-  {
-    provider: 'card',
-    label: 'Carte bancaire',
-    description: 'Visa · Mastercard',
-    group: 'other',
-    // Annoncée comme « Bientôt » : la carte suppose un contrat avec un
-    // prestataire agréé, au même titre que les opérateurs Mobile Money. La
-    // montrer comme disponible avant ce contrat ferait échouer le paiement au
-    // moment le plus coûteux du parcours.
-    comingSoon: true,
-  },
-  {
-    provider: 'point_of_sale',
-    label: 'Point de vente physique',
-    description: 'Payer en espèces chez un revendeur agréé',
-    group: 'other',
-    comingSoon: true,
-  },
-  {
-    provider: 'mock',
-    label: 'Paiement de démonstration',
-    description: 'Environnement de test · aucun montant réel n’est débité',
-    group: 'other',
-    comingSoon: false,
-  },
-];
 
 /**
  * Le code secret Mobile Money ne transite JAMAIS par Nexa-Kabi.

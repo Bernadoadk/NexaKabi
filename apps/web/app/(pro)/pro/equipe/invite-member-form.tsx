@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { ORG_ROLE_DEFINITIONS } from '@nexakabi/contracts';
-import { Alert, Button, Field, Input, Surface, useToast } from '@nexakabi/ui';
+import { Alert, Button, Field, Input, Select, Surface, useToast } from '@nexakabi/ui';
 import { inviteMemberAction } from '../actions';
 
 const ROLES = ['ADMIN', 'MANAGER', 'SCANNER', 'ANALYST'] as const;
@@ -63,19 +63,19 @@ export function InviteMemberForm({ organizationId }: { organizationId: string })
         </Field>
 
         <Field label="Rôle" htmlFor="role" help={ORG_ROLE_DEFINITIONS[role].description}>
-          <select
+          {/* Chaque rôle est décrit par une phrase, dans le menu même : on
+              choisit en sachant, pas en devinant d'après un mot. */}
+          <Select
             id="role"
             name="role"
             value={role}
-            onChange={(event) => setRole(event.target.value as (typeof ROLES)[number])}
-            className="min-h-[var(--tap-min)] w-full rounded-field border border-border-field bg-surface px-3 text-[14px]"
-          >
-            {ROLES.map((value) => (
-              <option key={value} value={value}>
-                {ORG_ROLE_DEFINITIONS[value].label}
-              </option>
-            ))}
-          </select>
+            onValueChange={(value) => setRole(value as (typeof ROLES)[number])}
+            options={ROLES.map((value) => ({
+              value,
+              label: ORG_ROLE_DEFINITIONS[value].label,
+              description: ORG_ROLE_DEFINITIONS[value].description,
+            }))}
+          />
         </Field>
 
         {role === 'SCANNER' ? (

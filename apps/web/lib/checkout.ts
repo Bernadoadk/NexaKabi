@@ -1,6 +1,6 @@
 import 'server-only';
 import { cookies } from 'next/headers';
-import type { Order, PaymentMethod, PaymentState, Ticket } from '@nexakabi/contracts';
+import type { CheckoutPaymentMethods, Order, PaymentState, Ticket } from '@nexakabi/contracts';
 import { apiFetch, type ApiResult } from './api';
 import { readAccessToken } from './session';
 
@@ -55,19 +55,24 @@ export async function fetchOrder(reference: string): Promise<ApiResult<Order>> {
   });
 }
 
-export interface PaymentMethodsResponse {
-  methods: PaymentMethod[];
-  notice: string;
-}
-
-export async function fetchPaymentMethods(): Promise<PaymentMethodsResponse> {
-  const result = await apiFetch<PaymentMethodsResponse>('/checkout/payment-methods', {
-    revalidate: 60,
-  });
+/**
+ * Moyens de paiement d'une commande — ceux de SON pays.
+ *
+ * Servis par commande, jamais globalement : un événement à Dakar propose
+ * Wave, un événement à Cotonou MTN. La réponse porte aussi l'indicatif et la
+ * devise du pays, pour le champ du numéro et les montants.
+ */
+export async function fetchPaymentMethods(reference: string): Promise<CheckoutPaymentMethods> {
+  const result = await apiFetch<CheckoutPaymentMethods>(
+    `/checkout/orders/${encodeURIComponent(reference)}/payment-methods`,
+    { headers: await checkoutHeaders() },
+  );
 
   // Une liste vide vaut mieux qu'une page en erreur : l'écran affichera alors
   // qu'aucun moyen de paiement n'est disponible, ce qui est l'information utile.
-  return result.ok ? result.data : { methods: [], notice: '' };
+  return result.ok
+    ? result.data
+    : { countryCode: 'BJ', currency: 'XOF', dialCode: '229', methods: [], notice: '' };
 }
 
 /** Dernier paiement d'une commande, pour reprendre un écran d'attente interrompu. */

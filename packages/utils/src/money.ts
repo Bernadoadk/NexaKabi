@@ -1,9 +1,19 @@
 /**
  * Montants monétaires.
  *
- * Règle absolue du projet : un montant est TOUJOURS un entier, dans l'unité
- * entière de la devise. Le franc CFA (XOF) n'a pas de sous-unité — aucun
- * nombre à virgule flottante ne doit jamais représenter de l'argent.
+ * Règle absolue du projet : un montant est TOUJOURS un entier, dans la plus
+ * petite unité de la devise. Le franc CFA (XOF, XAF) n'a pas de sous-unité :
+ * 5 000 FCFA se stocke `5000`. Une devise à deux décimales (GHS, NGN) se
+ * stocke en centimes : 12,50 GHS se stocke `1250`. Aucun nombre à virgule
+ * flottante ne doit jamais représenter de l'argent.
+ *
+ * ── Pourquoi un registre et pas une constante ─────────────────────────────
+ * Le Bénin est le premier pays, pas le seul. Chaque pays d'Afrique de l'Ouest
+ * porte sa devise, et c'est la devise du PAYS DE L'ÉVÉNEMENT qui gouverne une
+ * commande, un billet, une écriture au grand livre et un retrait. Ajouter un
+ * pays ne doit jamais demander de toucher à ce fichier autrement qu'en
+ * ajoutant une ligne au registre — et la plupart des pays cibles partagent
+ * déjà le XOF.
  *
  * Voir docs/DATABASE_PROPOSAL.md §1.
  */
@@ -11,28 +21,57 @@
 /** Espace insécable U+00A0, séparateur de milliers imposé par la direction artistique. */
 export const NBSP = ' ';
 
-export type CurrencyCode = 'XOF';
+/** Devises prises en charge — ISO 4217. */
+export const CURRENCY_CODES = ['XOF', 'XAF', 'GNF', 'NGN', 'GHS'] as const;
 
-interface CurrencyDefinition {
+export type CurrencyCode = (typeof CURRENCY_CODES)[number];
+
+export interface CurrencyDefinition {
   readonly code: CurrencyCode;
-  /** Nombre de décimales de la devise. XOF : 0. */
+  /** Nombre de décimales de la devise. XOF : 0, GHS : 2. */
   readonly decimals: number;
   /** Suffixe affiché à l'utilisateur. */
   readonly symbol: string;
+  /** Nom complet, pour les écrans d'administration. */
+  readonly name: string;
 }
 
 const CURRENCIES: Record<CurrencyCode, CurrencyDefinition> = {
-  XOF: { code: 'XOF', decimals: 0, symbol: 'FCFA' },
+  XOF: { code: 'XOF', decimals: 0, symbol: 'FCFA', name: 'Franc CFA (UEMOA)' },
+  XAF: { code: 'XAF', decimals: 0, symbol: 'FCFA', name: 'Franc CFA (CEMAC)' },
+  GNF: { code: 'GNF', decimals: 0, symbol: 'GNF', name: 'Franc guinéen' },
+  NGN: { code: 'NGN', decimals: 2, symbol: '₦', name: 'Naira nigérian' },
+  GHS: { code: 'GHS', decimals: 2, symbol: 'GH₵', name: 'Cedi ghanéen' },
 };
 
 export const DEFAULT_CURRENCY: CurrencyCode = 'XOF';
 
-export function getCurrency(code: CurrencyCode = DEFAULT_CURRENCY): CurrencyDefinition {
-  const currency = CURRENCIES[code];
+export function isCurrencyCode(value: string): value is CurrencyCode {
+  return (CURRENCY_CODES as readonly string[]).includes(value);
+}
+
+export function getCurrency(code: string = DEFAULT_CURRENCY): CurrencyDefinition {
+  const currency = isCurrencyCode(code) ? CURRENCIES[code] : undefined;
   if (!currency) {
     throw new Error(`Devise non prise en charge : ${code}`);
   }
   return currency;
+}
+
+/**
+ * Devise à utiliser pour un code venu de la base ou d'une API.
+ *
+ * Une commande porte toujours sa devise ; un code inconnu — donnée d'avant
+ * une migration, prestataire qui renvoie autre chose — ne doit pas faire
+ * tomber un écran. Il retombe sur la devise par défaut, ce qui reste visible
+ * puisque le code affiché ne correspond alors pas au montant attendu.
+ */
+export function resolveCurrency(code: string | null | undefined): CurrencyDefinition {
+  return code && isCurrencyCode(code) ? CURRENCIES[code] : CURRENCIES[DEFAULT_CURRENCY];
+}
+
+export function listCurrencies(): readonly CurrencyDefinition[] {
+  return CURRENCY_CODES.map((code) => CURRENCIES[code]);
 }
 
 /**
@@ -41,7 +80,7 @@ export function getCurrency(code: CurrencyCode = DEFAULT_CURRENCY): CurrencyDefi
  * @example formatAmount(15000) === '15 000'   (espace insécable)
  * @example formatAmount(-212125) === '−212 125'  (moins typographique U+2212)
  */
-export function formatAmount(amount: number, currency: CurrencyCode = DEFAULT_CURRENCY): string {
+export function formatAmount(amount: number, currency: string = DEFAULT_CURRENCY): string {
   assertValidAmount(amount);
 
   const { decimals } = getCurrency(currency);
@@ -64,7 +103,7 @@ export function formatAmount(amount: number, currency: CurrencyCode = DEFAULT_CU
  *
  * @example formatMoney(15000) === '15 000 FCFA'
  */
-export function formatMoney(amount: number, currency: CurrencyCode = DEFAULT_CURRENCY): string {
+export function formatMoney(amount: number, currency: string = DEFAULT_CURRENCY): string {
   return `${formatAmount(amount, currency)}${NBSP}${getCurrency(currency).symbol}`;
 }
 
@@ -72,17 +111,14 @@ export function formatMoney(amount: number, currency: CurrencyCode = DEFAULT_CUR
  * Analyse une saisie utilisateur (« 15 000 », « 15000 », « 15 000 FCFA ») en entier.
  * Renvoie `null` si la saisie n'est pas un montant valide.
  */
-export function parseAmount(
-  input: string,
-  currency: CurrencyCode = DEFAULT_CURRENCY,
-): number | null {
+export function parseAmount(input: string, currency: string = DEFAULT_CURRENCY): number | null {
   const { decimals } = getCurrency(currency);
 
   // `\s` couvre en JavaScript les espaces Unicode, dont U+00A0 et U+202F.
   const cleaned = input
     .replace(/\s/g, '')
     .replace(/[−–—]/g, '-')
-    .replace(/FCFA|XOF/gi, '')
+    .replace(/FCFA|XOF|XAF|GNF|NGN|GHS|GH₵|₦/gi, '')
     .replace(',', '.')
     .trim();
 

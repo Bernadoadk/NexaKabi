@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { formatAmount, formatEventCaptionWithTime } from '@nexakabi/utils';
+import { formatAmount, formatEventCaptionWithTime, resolveCurrency } from '@nexakabi/utils';
 import { cn } from '../lib/cn';
 import { Badge } from './badge';
 import { Button } from './button';
@@ -38,6 +38,8 @@ export interface EventCardData {
   fromPrice?: number;
   /** Frais annoncés dès la carte : « 5 000 FCFA + 250 de frais ». */
   feeAmount?: number;
+  /** Devise de l'événement. Absente : celle par défaut de la plateforme. */
+  currency?: string | null;
   remainingSeats?: number;
   isSoldOut?: boolean;
   isAlmostSoldOut?: boolean;
@@ -101,13 +103,21 @@ function PriceLabel({ event, className }: { event: EventCardData; className?: st
     );
   }
 
+  const currency = resolveCurrency(event.currency);
+
   return (
     <span className={cn('flex items-baseline gap-1.5', className)}>
-      <Money amount={event.fromPrice} size="default" hideSymbol />
+      <Money amount={event.fromPrice} currency={currency.code} size="default" hideSymbol />
       <span className="text-[12px] text-text-2">
         {/* « 5 000 FCFA + 250 de frais » — les frais sont annoncés dès la carte,
             jamais découverts au récapitulatif. */}
-        {event.feeAmount ? <>FCFA + {formatAmount(event.feeAmount)} de frais</> : 'FCFA'}
+        {event.feeAmount ? (
+          <>
+            {currency.symbol} + {formatAmount(event.feeAmount, currency.code)} de frais
+          </>
+        ) : (
+          currency.symbol
+        )}
       </span>
     </span>
   );

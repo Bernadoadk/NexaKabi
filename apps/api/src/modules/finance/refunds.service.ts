@@ -22,10 +22,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import type { Prisma } from '../../generated/prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { PaymentProviderRegistry } from '../payments/provider.registry';
-import type {
-  NormalizedRefundWebhook,
-  RefundResult,
-} from '../payments/providers/payment-provider';
+import type { NormalizedRefundWebhook, RefundResult } from '../payments/providers/payment-provider';
 import { TicketsService } from '../tickets/tickets.service';
 import { LedgerService } from './ledger.service';
 
@@ -72,7 +69,9 @@ const LIST_LIMIT = 200;
 type RefundForExecution = Prisma.RefundGetPayload<{
   include: {
     payment: true;
-    order: { select: { reference: true; currency: true; event: { select: { organizationId: true } } } };
+    order: {
+      select: { reference: true; currency: true; event: { select: { organizationId: true } } };
+    };
   };
 }>;
 
@@ -791,7 +790,9 @@ export class RefundsService {
         },
       });
 
-      this.logger.warn(`Notification de remboursement ${providerCode}/${event.externalId} sans remboursement`);
+      this.logger.warn(
+        `Notification de remboursement ${providerCode}/${event.externalId} sans remboursement`,
+      );
 
       return { duplicate: Boolean(existing), applied: false };
     }
@@ -1033,7 +1034,8 @@ export class RefundsService {
         buyerName: row.order.buyerName,
         payerPhone: reveal ? phone : safeMask(phone),
         payerPhoneMasked: !reveal,
-        methodLabel: getPaymentMethodDefinition(row.payment.methodCode)?.label ?? row.payment.methodCode,
+        methodLabel:
+          getPaymentMethodDefinition(row.payment.methodCode)?.label ?? row.payment.methodCode,
         amount: row.amount,
         currency: row.order.currency,
         feesRefunded: row.feesRefunded,

@@ -84,7 +84,7 @@ export default async function AdminHomePage() {
     hasAdminAccess(user, 'finance') && (
       <ActionTile
         key="refunds"
-        href="/remboursements"
+        href="/finance/remboursements"
         label="Remboursements à faire"
         value={data.refundsToProcess}
         hint={`${formatMoney(data.refundsToProcessAmount)} dus aux participants`}

@@ -12,6 +12,7 @@ import {
   type NormalizedWebhookEvent,
   type PayoutInput,
   type ProviderAvailability,
+  type ProviderBalance,
   type PayoutResult,
   type ProviderPaymentStatus,
   type ProviderPayoutStatus,
@@ -55,6 +56,7 @@ import {
  *   Rembourser     POST /api/v1/payments/:id/refund
  *   Versement      POST /api/v1/payments/withdraw
  *   Statut versem. GET  /api/v1/payments/withdraw/:id
+ *   Solde          GET  /api/v1/payments/balance        (rapprochement)
  *   Compte         GET  /api/v1/payments/me             (diagnostic des clés)
  *
  * ── Le webhook est signé, et pourtant relu ──────────────────────────────────
@@ -586,6 +588,32 @@ export class KpayProvider extends PaymentProvider {
     }
 
     return result;
+  }
+
+  /**
+   * Solde du wallet KPay : `GET /api/v1/payments/balance`.
+   *
+   * Un encaissement abouti y crédite son montant NET de la commission KPay ;
+   * un retrait ou un remboursement en cours y est « réservé ».
+   */
+  override async getBalance(): Promise<ProviderBalance[]> {
+    const response = await this.request<{
+      currency?: string;
+      balance?: number;
+      reservedBalance?: number;
+      availableBalance?: number;
+    }>('GET', '/api/v1/payments/balance');
+
+    if (!response.currency) return [];
+
+    return [
+      {
+        currency: response.currency,
+        balance: response.balance ?? 0,
+        reserved: response.reservedBalance ?? 0,
+        available: response.availableBalance ?? 0,
+      },
+    ];
   }
 
   /** KPay nomme sa référence `paymentId` — `payoutId` pour un versement. */

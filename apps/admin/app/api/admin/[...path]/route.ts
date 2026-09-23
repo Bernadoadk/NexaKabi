@@ -41,6 +41,10 @@ const ALLOWED: readonly RegExp[] = [
   /^orders\/[\w-]+\/refunds$/,
   /^refunds\/[\w-]+\/retry$/,
   /^refunds\/[\w-]+\/record$/,
+  /^finance\/(payments|ledger|report)\.csv$/,
+  /^finance\/reconciliation\/run$/,
+  /^finance\/commissions$/,
+  /^finance\/commissions\/[\w-]+\/close$/,
   /^organizations\/[\w-]+\/freeze$/,
   /^organizations\/[\w-]+\/unfreeze$/,
   /^settings\/countries$/,
@@ -64,8 +68,10 @@ async function relay(
 
   const token = await readAdminToken();
   const body = method === 'GET' || method === 'DELETE' ? undefined : await request.text();
+  // Les filtres d'une lecture suivent : un export CSV porte ceux de l'écran.
+  const search = method === 'GET' ? request.nextUrl.search : '';
 
-  const upstream = await fetch(`${API_URL}/admin/${target}`, {
+  const upstream = await fetch(`${API_URL}/admin/${target}${search}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -74,6 +80,20 @@ async function relay(
     body,
     cache: 'no-store',
   });
+
+  // Un export se télécharge tel quel, sous un nom qui dit ce qu'il contient.
+  if (upstream.ok && target.endsWith('.csv')) {
+    const name = target.split('/').pop()?.replace('.csv', '') ?? 'export';
+    const day = new Date().toISOString().slice(0, 10);
+
+    return new Response(await upstream.text(), {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="nexa-kabi-${name}-${day}.csv"`,
+        'Cache-Control': 'no-store',
+      },
+    });
+  }
 
   const payload: unknown = await upstream.json().catch(() => null);
 

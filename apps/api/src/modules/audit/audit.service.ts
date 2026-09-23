@@ -74,6 +74,9 @@ export const AUDIT_ACTIONS = {
   payoutFailed: 'payout.failed',
   /** Correction manuelle du grand livre. Motif obligatoire. */
   ledgerAdjusted: 'ledger.adjusted',
+  /** Nouvelle version d'une politique de commission : elle ferme la précédente. */
+  commissionPolicyPublished: 'commission_policy.published',
+  commissionPolicyClosed: 'commission_policy.closed',
 
   /** Remboursement décidé : inscrit au grand livre, pas encore exécuté. */
   refundRequested: 'refund.requested',

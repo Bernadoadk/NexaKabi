@@ -745,9 +745,17 @@ une erreur.
 
 Le plan prévoit BullMQ pour l'expiration des réservations et la réconciliation.
 Redis n'étant pas déployé, ces deux tâches tournent en processus via
-`@nestjs/schedule`, protégées par `pg_try_advisory_lock` : une seule instance
-exécute chaque passage, les autres passent leur tour. La garantie d'exécution
-unique en multi-instance est donc préservée sans infrastructure supplémentaire.
+`@nestjs/schedule`, protégées par un verrou consultatif PostgreSQL : une seule
+instance exécute chaque passage, les autres passent leur tour. La garantie
+d'exécution unique en multi-instance est donc préservée sans infrastructure
+supplémentaire.
+
+Le verrou est un verrou de TRANSACTION (`pg_try_advisory_xact_lock`), pris et
+relâché par la même transaction, ouverte le temps de la tâche. Un verrou de
+session (`pg_try_advisory_lock`, la première version) se relâchait par une
+seconde requête, partie sur n'importe quelle connexion du pool — et, derrière le
+pooler de Neon, sur une connexion serveur partagée : il pouvait rester accroché
+et faire sauter les passes au hasard, réconciliation des paiements comprise.
 
 Ce choix reste transitoire. Il devra être révisé dès que l'une de ces trois
 conditions apparaît : une tâche dépassant la minute, un besoin de réessai avec

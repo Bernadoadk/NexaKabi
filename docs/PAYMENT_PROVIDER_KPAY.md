@@ -46,9 +46,30 @@ endpoint par endpoint dans sa documentation.
 | Contrôle montant/devise | Une notification qui ne concorde pas est refusée et consignée |
 | **Correctif F7** | Les webhooks orphelins sont enfin repris (défaut silencieux de l'existant) |
 
-**Ce qui reste volontairement hors périmètre** : la carte par KPay (facturée en USD, §G.0) et
-l'administration financière complète (§J) — tableau de bord, transactions, grand livre,
-rapprochement, rapports.
+**Ce qui reste volontairement hors périmètre** : la carte par KPay (facturée en USD, §G.0).
+
+### Espace Finance de la console (23 septembre 2026)
+
+L'administration financière du §J est livrée, sous l'espace **Finance** (droit `finance` en
+consultation ; décision pour lancer une passe de rapprochement ; `canMoveMoney` en plus pour
+rembourser et changer une commission) :
+
+| Écran | Ce qu'il répond |
+| ----- | --------------- |
+| Vue d'ensemble | La cascade des ventes de la période — brut, frais de l'opérateur, commission, net organisateurs —, ce qui s'est passé après (remboursements, retraits), et ce que la plateforme doit à date |
+| Transactions | Chaque paiement, filtrable ; son détail en chronologie (échanges avec KPay, notifications, commande, billets, écritures, remboursements) |
+| Paiements échoués | Causes, taux d'échec par moyen, ventes rattrapées et ventes perdues |
+| Remboursements | Voir « Remboursements » ci-dessus |
+| Grand livre | Soldes recalculés par organisation, écritures filtrables |
+| Rapprochement | Écarts à traiter (paiement jamais tranché, notification sans objet, montant incohérent, commande payée hors grand livre, retrait ou remboursement bloqué) et solde du wallet KPay face aux écritures |
+| Rapports | La cascade par organisation, événement, pays ou mois |
+| Commissions | Versions successives ; publier une version ferme la précédente de même portée |
+
+Exports CSV (point-virgule, BOM : lisibles tels quels dans Excel) pour les transactions, le
+grand livre et les rapports. Tout se recalcule depuis les faits ; aucun compteur n'est tenu à
+part. KPay ne publiant pas la liste de ses transactions, une transaction inconnue ne se
+découvre que par sa notification ou par l'écart du solde de son wallet
+(`GET /api/v1/payments/balance`) — les deux figurent au rapprochement.
 
 **Décisions prises en cours d'intégration, toutes fondées sur sa documentation :**
 

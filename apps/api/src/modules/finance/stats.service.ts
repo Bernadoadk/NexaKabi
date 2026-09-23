@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { EventStats, OrganizationStats } from '@nexakabi/contracts';
+import { toCsv } from '../../common/csv';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
 /**
@@ -344,27 +345,6 @@ export class StatsService {
       ticket.checkIns[0]?.gate ?? '',
     ]);
 
-    return BOM + [header, ...rows].map(toCsvLine).join(LINE_BREAK);
+    return toCsv(header, rows);
   }
-}
-
-/**
- * Marque d'ordre des octets.
- *
- * Écrite par son code plutôt que par le caractère lui-même : un U+FEFF littéral
- * est invisible dans un éditeur, disparaît au premier copier-coller, et se fait
- * signaler comme « espace irrégulier » par les analyseurs. Nommée, elle dit ce
- * qu'elle fait — apprendre à Excel que le fichier est en UTF-8, sans quoi
- * « Yélé » s'affiche « YÃ©lÃ© ».
- */
-const BOM = String.fromCharCode(0xfeff);
-
-/** Fin de ligne CSV. Excel attend CRLF, y compris sous macOS. */
-const LINE_BREAK = String.fromCharCode(13, 10);
-
-/** Échappe une ligne CSV : guillemets doublés, champ cité s'il le faut. */
-function toCsvLine(cells: readonly string[]): string {
-  return cells
-    .map((cell) => (/[;"\r\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell))
-    .join(';');
 }

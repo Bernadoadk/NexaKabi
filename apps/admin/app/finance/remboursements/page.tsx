@@ -11,8 +11,8 @@ import {
 import { formatEventCaptionWithTime } from '@nexakabi/utils';
 import { Alert, Badge, EmptyState, Money, Surface } from '@nexakabi/ui';
 import { adminFetch, canMoveMoney, getAdminUser, hasAdminAccess } from '@/lib/session';
-import { AccessDenied, ReadOnlyNotice } from '../access';
-import { AdminShell } from '../shell';
+import { AccessDenied, ReadOnlyNotice } from '../../access';
+import { FilterPill, FinancePage } from '../finance-page';
 import { NewRefundForm } from './new-refund-form';
 import { RecordRefundForm } from './record-form';
 import { RetryButton } from './retry-button';
@@ -70,60 +70,51 @@ export default async function RefundsPage({
   );
 
   return (
-    <AdminShell user={user}>
-      <div className="flex flex-col gap-5">
-        <header className="flex flex-col gap-1">
-          <h1 className="font-display text-h1 font-bold tracking-[-0.02em]">Remboursements</h1>
-          <p className="text-body-s text-text-2">
-            Un remboursement décidé quitte aussitôt le solde de l’organisateur. L’opérateur s’en
-            charge quand il le peut — la totalité du paiement, dans les 7 jours ; sinon, il se fait
-            à la main, puis s’enregistre ici.
-          </p>
-        </header>
+    <FinancePage
+      user={user}
+      title="Remboursements"
+      description="Un remboursement décidé quitte aussitôt le solde de l’organisateur. L’opérateur s’en charge quand il le peut — la totalité du paiement, dans les 7 jours ; sinon, il se fait à la main, puis s’enregistre ici."
+    >
+      {allowed ? (
+        <NewRefundForm />
+      ) : (
+        <ReadOnlyNotice what="rembourser ni enregistrer un remboursement" />
+      )}
 
-        {allowed ? (
-          <NewRefundForm />
-        ) : (
-          <ReadOnlyNotice what="rembourser ni enregistrer un remboursement" />
-        )}
-
-        <div className="flex flex-wrap items-center gap-2">
-          {QUEUES.map(([value, label]) => (
-            <Link
-              key={value}
-              href={value === 'todo' ? '/remboursements' : `/remboursements?file=${value}`}
-              className={
-                queue === value
-                  ? 'rounded-full bg-ink px-3 py-1.5 text-body-s font-semibold text-white'
-                  : 'rounded-full border border-border-field bg-surface px-3 py-1.5 text-body-s font-semibold text-text-2 hover:bg-paper'
-              }
-            >
-              {label}
-            </Link>
-          ))}
-        </div>
-
-        {!result.ok ? (
-          <Alert tone="danger" title="Liste indisponible">
-            {result.message}
-          </Alert>
-        ) : result.data.length === 0 ? (
-          <EmptyState
-            icon={<CircleCheck size={26} />}
-            title="Rien dans cette file"
-            description={EMPTY_MESSAGES[queue]}
-          />
-        ) : (
-          <Surface variant="panel" padding="none" className="overflow-hidden">
-            <ul>
-              {result.data.map((refund) => (
-                <RefundRow key={refund.id} refund={refund} allowed={allowed} />
-              ))}
-            </ul>
-          </Surface>
-        )}
+      <div className="flex flex-wrap items-center gap-2">
+        {QUEUES.map(([value, label]) => (
+          <FilterPill
+            key={value}
+            href={
+              value === 'todo' ? '/finance/remboursements' : `/finance/remboursements?file=${value}`
+            }
+            active={queue === value}
+          >
+            {label}
+          </FilterPill>
+        ))}
       </div>
-    </AdminShell>
+
+      {!result.ok ? (
+        <Alert tone="danger" title="Liste indisponible">
+          {result.message}
+        </Alert>
+      ) : result.data.length === 0 ? (
+        <EmptyState
+          icon={<CircleCheck size={26} />}
+          title="Rien dans cette file"
+          description={EMPTY_MESSAGES[queue]}
+        />
+      ) : (
+        <Surface variant="panel" padding="none" className="overflow-hidden">
+          <ul>
+            {result.data.map((refund) => (
+              <RefundRow key={refund.id} refund={refund} allowed={allowed} />
+            ))}
+          </ul>
+        </Surface>
+      )}
+    </FinancePage>
   );
 }
 
@@ -181,7 +172,9 @@ function RefundRow({ refund, allowed }: { refund: AdminRefund; allowed: boolean 
             payerPhone={refund.payerPhone}
             payerPhoneMasked={refund.payerPhoneMasked}
             methodLabel={refund.methodLabel}
-            label={refund.status === 'PROCESSING' ? 'Conclure à la main' : 'Enregistrer le remboursement'}
+            label={
+              refund.status === 'PROCESSING' ? 'Conclure à la main' : 'Enregistrer le remboursement'
+            }
           />
         </div>
       ) : null}

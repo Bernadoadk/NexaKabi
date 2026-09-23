@@ -264,6 +264,15 @@ export interface ProviderAvailability {
   readonly status: 'OPERATIONAL' | 'DELAYED' | 'CLOSED';
 }
 
+/** Solde de notre compte chez le prestataire, dans une devise. */
+export interface ProviderBalance {
+  readonly currency: string;
+  readonly balance: number;
+  /** Réservé : remboursements et retraits en cours d'exécution. */
+  readonly reserved: number;
+  readonly available: number;
+}
+
 export class WebhookSignatureError extends Error {
   constructor(message = 'Signature du webhook invalide.') {
     super(message);
@@ -395,4 +404,13 @@ export abstract class PaymentProvider {
    * et rien n'est fermé. L'ignorance ne vaut pas panne.
    */
   listAvailability?(): Promise<ProviderAvailability[]>;
+
+  /**
+   * Solde de notre compte chez le prestataire.
+   *
+   * Sert au rapprochement : ce que le prestataire dit détenir, face à ce que
+   * nos écritures disent qu'il devrait détenir. Facultatif — un prestataire
+   * qui ne l'expose pas se rapproche sans cette ligne.
+   */
+  getBalance?(): Promise<ProviderBalance[]>;
 }

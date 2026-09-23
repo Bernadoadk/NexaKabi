@@ -87,7 +87,9 @@ export function RecordRefundForm({
         <strong className="tabular text-text-strong">{payerPhone}</strong> ({methodLabel}) — depuis
         le tableau de bord de l’opérateur, ou par transfert —, puis indique la référence de
         l’opération.
-        {payerPhoneMasked ? ' Le numéro complet est réservé aux comptes autorisés à déplacer de l’argent.' : null}
+        {payerPhoneMasked
+          ? ' Le numéro complet est réservé aux comptes autorisés à déplacer de l’argent.'
+          : null}
       </p>
 
       <Field

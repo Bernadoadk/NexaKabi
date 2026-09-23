@@ -11,6 +11,7 @@ import { formatEventCaptionWithTime } from '@nexakabi/utils';
 import { Alert, Badge, EmptyState, Money, Surface } from '@nexakabi/ui';
 import { adminFetch, canMoveMoney, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { AccessDenied } from '../access';
+import { FinanceNav } from '../finance/finance-page';
 import { AdminShell } from '../shell';
 import { ExecuteButton } from './execute-button';
 import { RecordPayoutForm } from './record-form';
@@ -56,6 +57,9 @@ export default async function PayoutsPage({
   return (
     <AdminShell user={user}>
       <div className="flex flex-col gap-5">
+        {/* Les retraits font partie de la finance : qui voit les deux navigue entre eux. */}
+        {hasAdminAccess(user, 'finance') ? <FinanceNav user={user} /> : null}
+
         <header className="flex flex-col gap-1">
           <h1 className="font-display text-h1 font-bold tracking-[-0.02em]">Retraits</h1>
           <p className="text-body-s text-text-2">

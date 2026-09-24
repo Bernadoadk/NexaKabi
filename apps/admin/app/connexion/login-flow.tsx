@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button, Field, Input, Surface, startRouteProgress } from '@nexakabi/ui';
+import { Alert, BrandMark, Button, Field, Input, Surface, startRouteProgress } from '@nexakabi/ui';
 
 /**
  * Connexion : identifiant et mot de passe, en une étape.
@@ -56,10 +56,8 @@ export function LoginFlow() {
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-2">
-          <span className="flex size-6 items-center justify-center rounded-[8px] bg-ink font-display text-[13px] font-extrabold text-white">
-            N
-          </span>
+        <div className="flex items-center gap-1">
+          <BrandMark size={36} />
           <span className="font-display text-[17px] font-bold tracking-[-0.02em]">
             Administration
           </span>

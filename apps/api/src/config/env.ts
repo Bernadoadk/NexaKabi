@@ -120,16 +120,15 @@ const envSchema = z.object({
   PUBLIC_WEB_URL: z.string().url().optional(),
 
   /**
-   * Bictorys — prestataire de paiement principal : carte et Mobile Money,
-   * collecte et versement, dans plusieurs pays d'Afrique de l'Ouest.
+   * Bictorys — HÉRITÉ : plus aucun paiement neuf ne lui est confié. Ses clés
+   * ne servent qu'à relire et rembourser ce qu'il a déjà encaissé.
    *
-   * `test` tant que le compte marchand n'est pas activé. Les deux
-   * environnements ont des HÔTES différents, pas seulement des clés : viser le
-   * mauvais avec les bonnes clés échoue à l'authentification, ce qui est le bon
-   * comportement.
+   * Les deux environnements ont des HÔTES différents, pas seulement des
+   * clés : viser le mauvais avec les bonnes clés échoue à l'authentification,
+   * ce qui est le bon comportement.
    */
   BICTORYS_ENVIRONMENT: z.enum(['test', 'live']).default('test'),
-  /** Clé d'API. Vide = Bictorys n'est pas branché ; hors production, le simulateur prend sa place. */
+  /** Clé d'API. Vide = Bictorys n'est pas branché. */
   BICTORYS_API_KEY: z.string().default(''),
   /** Secret de webhook, celui renseigné sur le tableau de bord Bictorys (en-tête `X-Secret-Key`). */
   BICTORYS_WEBHOOK_SECRET: z.string().default(''),
@@ -144,8 +143,9 @@ const envSchema = z.object({
    *   · la clé PUBLIQUE ouvre la fenêtre de paiement dans le navigateur ;
    *   · la clé PRIVÉE, côté serveur seulement, vérifie les transactions ;
    *   · la clé SECRÈTE, côté serveur seulement, les modifie (remboursement).
-   * Vide = Kkiapay n'est pas branché ; hors production, le simulateur prend
-   * sa place.
+   * Vide = Kkiapay n'est pas branché, et aucun moyen de paiement n'est
+   * proposé : aucun paiement n'est jamais simulé. Pour essayer sans argent
+   * réel, ce sont les clés du BAC À SABLE de Kkiapay qui se posent ici.
    */
   KKIAPAY_PUBLIC_KEY: z.string().trim().default(''),
   KKIAPAY_PRIVATE_KEY: z.string().trim().default(''),

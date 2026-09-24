@@ -16,6 +16,8 @@ interface Catalogue {
     code: PaymentProviderCode;
     label: string;
     connected: boolean;
+    /** Sait décrire son compte marchand : le bouton « Synchroniser » a un sens. */
+    canSync: boolean;
     status: 'ACTIVE' | 'LEGACY';
     methodCodes: string[];
     /** Moyens traités pays par pays, quand ils diffèrent du catalogue général. */
@@ -80,17 +82,14 @@ export default async function SettingsPage() {
                     <p className="text-micro text-text-3">
                       {provider.status === 'LEGACY'
                         ? 'Ne reçoit plus de nouveaux paiements · conservé pour relire et rembourser son historique'
-                        : provider.connected
-                          ? 'Branché · clés renseignées'
-                          : provider.code === 'mock'
-                            ? 'Simulateur · hors production uniquement'
+                        : provider.code === 'manual'
+                          ? 'Aucun prestataire · le virement se fait à la main, puis s’enregistre dans la console'
+                          : provider.connected
+                            ? 'Branché · clés renseignées'
                             : 'Non branché · renseigne ses clés dans la configuration de l’API'}
                     </p>
                   </div>
-                  {canAct &&
-                  provider.connected &&
-                  provider.code !== 'mock' &&
-                  provider.status !== 'LEGACY' ? (
+                  {canAct && provider.canSync && provider.status !== 'LEGACY' ? (
                     <SyncButton providerCode={provider.code} />
                   ) : null}
                 </li>

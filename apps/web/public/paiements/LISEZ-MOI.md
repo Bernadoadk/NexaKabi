@@ -26,5 +26,5 @@ d'affichage dans le tunnel d'achat.
 
 ## Repli
 
-Un moyen sans fichier — le virement bancaire, le simulateur — s'affiche avec une pastille
+Un moyen sans fichier — le virement bancaire — s'affiche avec une pastille
 typographique tirée de `brandColor`. L'écran ne casse jamais faute de logo.

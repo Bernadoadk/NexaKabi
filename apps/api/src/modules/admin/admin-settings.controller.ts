@@ -73,6 +73,8 @@ export class AdminSettingsController {
       code: PaymentProviderCode;
       label: string;
       connected: boolean;
+      /** Sait décrire son compte marchand : le bouton « Synchroniser » a un sens. */
+      canSync: boolean;
       status: 'ACTIVE' | 'LEGACY';
       methodCodes: string[];
       methodCodesByCountry?: Record<string, string[]>;
@@ -84,6 +86,11 @@ export class AdminSettingsController {
         code: provider.code,
         label: provider.label,
         connected: this.registry.has(provider.code),
+        // Kkiapay n'a aucune API qui décrive le compte marchand : lui proposer
+        // « Synchroniser » ne produirait qu'un refus, à chaque clic.
+        canSync:
+          this.registry.has(provider.code) &&
+          Boolean(this.registry.get(provider.code).listMerchantMethods),
         // `LEGACY` est exposé plutôt que filtré : la console doit pouvoir
         // EXPLIQUER une ligne héritée existante, sans la proposer à l'ajout.
         status: provider.status,

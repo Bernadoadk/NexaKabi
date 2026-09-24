@@ -60,16 +60,19 @@ export interface ResolvedRoute {
  * participant et celui de l'organisateur ne se rencontrent jamais : l'un
  * paie par carte, l'autre reçoit sur MTN, et rien ici ne suppose le contraire.
  *
- * ── Ce qui rend un moyen effectivement disponible ───────────────────────────
+ * ── Ce qui rend un moyen effectivement disponible à l'ENCAISSEMENT ──────────
  *   1. la ligne existe pour ce pays ;
  *   2. l'administrateur l'a ouverte (décision) ;
  *   3. le prestataire ne l'a pas contredite à la dernière synchronisation
  *      (constat : `null` vaut « pas encore su », donc pas d'objection) ;
- *   4. le prestataire est BRANCHÉ — sinon le simulateur prend sa place, mais
- *      seulement hors production et sans aucun prestataire réel ; en
- *      production, le moyen disparaît de l'écran.
+ *   4. le prestataire est ACTIF et BRANCHÉ — ses clés sont renseignées.
+ *      Aucun paiement n'est jamais simulé : sans prestataire, le moyen
+ *      disparaît de l'écran.
  * Un moyen qui échoue à l'un des quatre n'est pas proposé : mieux vaut un
  * choix en moins qu'un paiement qui échoue après la saisie du numéro.
+ *
+ * Au VERSEMENT, seules la décision et le constat comptent : un retrait
+ * qu'aucun prestataire ne sait exécuter se fait à la main, depuis la console.
  */
 @Injectable()
 export class PaymentRoutingService implements OnApplicationBootstrap {
@@ -97,8 +100,6 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
   @Cron(CronExpression.EVERY_HOUR)
   async syncConnectedProviders(): Promise<void> {
     for (const code of this.registry.availableCodes) {
-      if (code === 'mock') continue;
-
       // Un prestataire hérité ne route plus rien : constater ce que son compte
       // marchand sait faire ne servirait qu'à produire un avertissement par
       // heure sur une intégration qu'on a mise de côté.
@@ -292,8 +293,8 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
     const methods: PayoutMethod[] = [];
 
     for (const row of rows) {
-      if (seen.has(row.methodCode) || row.methodCode === 'mock') continue;
-      if (!row.payoutEnabled || row.providerPayoutEnabled === false) continue;
+      if (seen.has(row.methodCode)) continue;
+      if (!offersPayout(row)) continue;
 
       const definition = getPaymentMethodDefinition(row.methodCode);
       if (!definition) continue;
@@ -337,12 +338,11 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
     if (!country) return null;
 
     const rows = await this.rowsFor(country.code, methodCode);
-    const row = rows.find((entry) => entry.payoutEnabled && entry.providerPayoutEnabled !== false);
+    const row = rows.find(offersPayout);
 
     if (!row) return null;
 
-    // Un virement bancaire se fait depuis la banque, jamais par un prestataire
-    // — même quand le simulateur se dit capable de tout.
+    // Un virement bancaire se fait depuis la banque, jamais par un prestataire.
     if (row.kind === 'BANK_TRANSFER') return null;
 
     const provider = this.providerFor(row);
@@ -354,7 +354,7 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
   /** Vrai si le pays autorise encore ce moyen en versement. */
   async isPayoutMethodOpen(countryCode: string, methodCode: string): Promise<boolean> {
     const rows = await this.rowsFor(countryCode.toUpperCase(), methodCode);
-    return rows.some((row) => row.payoutEnabled && row.providerPayoutEnabled !== false);
+    return rows.some(offersPayout);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -511,22 +511,20 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
     }
 
     // Une ligne configurée que le prestataire ne mentionne pas : il ne la
-    // propose pas. Le simulateur, lui, n'énumère rien — et ne ferme rien.
-    if (providerCode !== 'mock') {
-      for (const row of rows) {
-        const key = `${row.countryCode}:${row.providerMethodCode}`;
-        if (seen.has(key)) continue;
+    // propose pas.
+    for (const row of rows) {
+      const key = `${row.countryCode}:${row.providerMethodCode}`;
+      if (seen.has(key)) continue;
 
-        await this.prisma.countryPaymentMethod.update({
-          where: { id: row.id },
-          data: {
-            providerCollectionEnabled: false,
-            providerPayoutEnabled: false,
-            providerSyncedAt: syncedAt,
-          },
-        });
-        updated += 1;
-      }
+      await this.prisma.countryPaymentMethod.update({
+        where: { id: row.id },
+        data: {
+          providerCollectionEnabled: false,
+          providerPayoutEnabled: false,
+          providerSyncedAt: syncedAt,
+        },
+      });
+      updated += 1;
     }
 
     this.logger.log(
@@ -549,44 +547,35 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
   }
 
   /**
-   * Le prestataire qui traite une ligne : celui qu'elle nomme s'il est
-   * branché ; sinon le simulateur, s'il est enregistré — ce qui n'arrive que
-   * hors production ET sans aucun prestataire réel configuré (voir
-   * `PaymentsModule`). Dès que les clés Kkiapay sont renseignées, c'est son
-   * environnement — bac à sable ou production — qui dit si l'argent est
-   * réel, et plus rien ici ne simule.
+   * Le prestataire qui traite une ligne : celui qu'elle nomme, s'il est
+   * actif ET branché. Personne ne le remplace : c'est l'environnement de ses
+   * clés — bac à sable ou production — qui dit si l'argent est réel.
    */
   private providerFor(row: CountryPaymentMethodRow): PaymentProvider | null {
-    // Un prestataire HÉRITÉ ne reçoit plus rien de neuf. Sans ce contrôle, le
-    // simulateur prendrait sa place hors production et ses lignes
-    // redeviendraient routables — exactement ce que « retiré » doit exclure.
+    // Un prestataire HÉRITÉ ne reçoit plus rien de neuf, même si ses clés
+    // sont encore là pour relire son historique.
     if (!isPaymentProviderActive(row.providerCode)) {
       return null;
     }
 
-    if (this.registry.has(row.providerCode as PaymentProviderCode)) {
-      return this.registry.get(row.providerCode as PaymentProviderCode);
-    }
+    const code = row.providerCode as PaymentProviderCode;
 
-    if (this.registry.has('mock')) {
-      return this.registry.get('mock');
-    }
-
-    return null;
+    return this.registry.has(code) ? this.registry.get(code) : null;
   }
 
   private isEffective(row: CountryPaymentMethodRow, side: 'collection' | 'payout'): boolean {
-    const decision = side === 'collection' ? row.collectionEnabled : row.payoutEnabled;
-    const observed =
-      side === 'collection' ? row.providerCollectionEnabled : row.providerPayoutEnabled;
+    // Un retrait n'a besoin d'aucun prestataire branché : celui qu'aucun ne
+    // sait exécuter se fait à la main. Est « effectif » ce qui est proposé
+    // aux organisateurs — exactement ce que `listPayoutMethods` leur montre.
+    if (side === 'payout') return offersPayout(row);
 
-    if (!decision || observed === false) return false;
+    if (!row.collectionEnabled || row.providerCollectionEnabled === false) return false;
 
     // Opérateur en panne : le moyen sort de l'écran le temps qu'elle dure.
     // Le laisser afficher ferait saisir un numéro, attendre trois minutes et
     // repartir sur un échec — la façon la plus sûre de perdre une vente.
     // `DELAYED` reste proposé, avec sa mention : il fonctionne, plus lentement.
-    if (this.availabilityOf(row, side) === 'CLOSED') return false;
+    if (this.availabilityOf(row, 'collection') === 'CLOSED') return false;
 
     return this.providerFor(row) !== null;
   }
@@ -609,17 +598,12 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
       );
     }
 
-    // Quand le simulateur remplace un prestataire absent, le moyen lui est
-    // nommé par NOTRE code : il n'a pas de table de correspondance à lui.
-    const providerMethodCode =
-      provider.code === row.providerCode ? row.providerMethodCode : row.methodCode;
-
     return {
       provider,
       method: {
         code: row.methodCode as PaymentMethodCode,
         kind: row.kind as PaymentMethodKind,
-        providerMethodCode,
+        providerMethodCode: row.providerMethodCode,
       },
       countryCode: row.countryCode,
       currency,
@@ -651,4 +635,16 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
       effectivePayout: this.isEffective(row, 'payout'),
     };
   }
+}
+
+/**
+ * Ce moyen est-il proposé aux organisateurs pour leurs retraits ?
+ *
+ * La décision de l'administrateur, et le constat du prestataire quand il en
+ * a fait un — rien d'autre. Un seul prédicat pour la liste des moyens, la
+ * résolution d'un retrait et l'écran de configuration : trois endroits qui
+ * ne peuvent plus diverger.
+ */
+function offersPayout(row: CountryPaymentMethodRow): boolean {
+  return row.payoutEnabled && row.providerPayoutEnabled !== false;
 }

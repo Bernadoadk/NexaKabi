@@ -760,7 +760,6 @@ enum PaymentMethodKind {
   CARD
   BANK_TRANSFER
   CASH
-  DEMO
 }
 
 /// État opérationnel d'un moyen, constaté chez le prestataire.
@@ -777,7 +776,7 @@ enum PaymentAvailability {
 /// Un moyen de paiement ouvert dans un pays, et le prestataire qui le traite.
 ///
 /// C'est LA table de configuration du système de paiement : « au Bénin, MTN
-/// MoMo est collecté et versé par Bictorys sous le code `mtn_money` ».
+/// MoMo est collecté par Kkiapay, dans sa fenêtre de paiement `momo` ».
 /// Collecte et versement sont deux drapeaux distincts — qu'un moyen sache
 /// encaisser ne dit rien de sa capacité à verser.
 ///
@@ -796,7 +795,8 @@ model CountryPaymentMethod {
   methodCode String
   kind       PaymentMethodKind
 
-  /// Prestataire : `bictorys`, `mock`.
+  /// Prestataire : `kkiapay`, `bictorys` (hérité), ou `manual` pour un
+  /// virement fait à la main — aucun prestataire ne l'exécute.
   providerCode       String
   /// Le même moyen tel que CE prestataire le nomme : `mtn_money`, `wave_money`.
   providerMethodCode String
@@ -1415,10 +1415,10 @@ model Payment {
   orderId String
   order   Order  @relation(fields: [orderId], references: [id])
 
-  /// Prestataire qui traite : `bictorys`, `mock`.
+  /// Prestataire qui traite : `kkiapay`, `bictorys` (hérité).
   providerCode      String
   /// Moyen choisi par le participant : `mtn_momo`, `wave`, `card`.
-  methodCode        String @default("mock")
+  methodCode        String
   /// Pays de paiement.
   countryCode       String @default("BJ")
   /// Référence chez le prestataire.

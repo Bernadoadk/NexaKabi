@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { cn } from '../lib/cn';
 import { BottomTabBar, type BottomTabEntry } from './bottom-tab-bar';
+import { BrandMark } from './brand-mark';
 import { ConsoleMobileMenu, type ConsoleMobileMenuProps } from './console-mobile';
 
 /**
@@ -62,10 +63,11 @@ export function ConsoleShell({
           )}
         >
           {/* `text-text-strong` explicite : la feuille globale colore les liens en corail. */}
-          <Link href={brandHref} className="flex min-w-0 shrink items-center gap-2 text-text-strong">
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-[8px] bg-ink font-display text-[13px] font-extrabold text-white">
-              N
-            </span>
+          <Link
+            href={brandHref}
+            className="flex min-w-0 shrink items-center gap-1 text-text-strong"
+          >
+            <BrandMark size={34} />
             <span className="truncate font-display text-[16px] font-bold tracking-[-0.02em]">
               {brandLabel}
             </span>

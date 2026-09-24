@@ -1,4 +1,4 @@
-import { RowSkeleton, Skeleton } from '@nexakabi/ui';
+import { BrandMark, RowSkeleton, Skeleton } from '@nexakabi/ui';
 
 /**
  * La console, pendant qu'une page arrive.
@@ -20,10 +20,9 @@ export function ConsoleSkeleton({ children }: { children?: React.ReactNode }) {
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-30 border-b border-border bg-surface">
         <div className="mx-auto flex h-[58px] max-w-[1180px] items-center gap-3 px-4 sm:gap-4 sm:px-5">
-          <span className="flex min-w-0 shrink items-center gap-2 text-text-strong">
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-[8px] bg-ink font-display text-[13px] font-extrabold text-white">
-              N
-            </span>
+          {/* Même marque, même taille que `ConsoleShell` : rien ne bouge à l'arrivée. */}
+          <span className="flex min-w-0 shrink items-center gap-1 text-text-strong">
+            <BrandMark size={34} />
             <span className="truncate font-display text-[16px] font-bold tracking-[-0.02em]">
               Administration
             </span>

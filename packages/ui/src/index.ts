@@ -82,6 +82,7 @@ export {
 } from './components/table';
 export { SectionNav, type SectionNavEntry, type SectionNavProps } from './components/section-nav';
 export { ConsoleShell, type ConsoleShellProps } from './components/console-shell';
+export { BrandMark, BRAND_MARK_SRC, type BrandMarkProps } from './components/brand-mark';
 export {
   Dialog,
   SuccessDialog,

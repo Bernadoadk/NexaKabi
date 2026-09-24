@@ -87,6 +87,11 @@ export const config = {
    * token < », dont personne ne devine la cause. La redirection reste donc
    * réservée aux pages, mais le contrôle d'origine, lui, doit s'appliquer AUX
    * ROUTES D'API en premier lieu : ce sont elles qui mutent quelque chose.
+   *
+   * ── Sauf les images de marque ────────────────────────────────────────────
+   * Logo (`icons/`) et icônes générées (`icon/…`, `apple-icon`) : sans cookie,
+   * la redirection vers la connexion les remplacerait par une page HTML — et
+   * l'écran de connexion, précisément, s'afficherait sans logo ni favicon.
    */
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icons/|icon/|apple-icon).*)'],
 };

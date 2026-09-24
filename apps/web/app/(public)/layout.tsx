@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { CalendarPlus, LogIn, Search, UserRound } from 'lucide-react';
-import { Avatar, Button, ThemeToggle, cn } from '@nexakabi/ui';
+import { Avatar, BrandMark, Button, ThemeToggle, cn } from '@nexakabi/ui';
 import { getCurrentUser } from '@/lib/session';
 import { fetchCities } from '@/lib/events';
 import { fetchNotifications } from '@/lib/notifications';
@@ -46,10 +46,8 @@ export default async function PublicLayout({ children }: { children: React.React
           basse. */}
       <header className="sticky top-0 z-40 border-b border-border-subtle bg-surface pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex h-[58px] max-w-[1440px] items-center gap-2.5 px-4 md:h-[66px] md:gap-3 md:px-5 lg:gap-4">
-          <Link href="/" className="flex shrink-0 items-center gap-2 whitespace-nowrap">
-            <span className="flex size-6 items-center justify-center rounded-[8px] bg-coral font-display text-[14px] font-extrabold text-ink">
-              N
-            </span>
+          <Link href="/" className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+            <BrandMark size={34} />
             <span className="font-display text-[18px] font-bold tracking-[-0.02em]">
               Nexa&#8209;Kabi
             </span>

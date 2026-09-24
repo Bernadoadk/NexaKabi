@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { CalendarPlus, LayoutDashboard } from 'lucide-react';
-import { Avatar, ThemeToggle } from '@nexakabi/ui';
+import { Avatar, BrandMark, ThemeToggle } from '@nexakabi/ui';
 import { getCurrentUser } from '@/lib/session';
 import { listOrganizations } from '@/lib/organizations';
 import { fetchNotifications } from '@/lib/notifications';
@@ -34,11 +34,11 @@ export default async function AccountLayout({ children }: { children: React.Reac
     <div className="flex min-h-dvh flex-col bg-paper">
       <header className="sticky top-0 z-30 border-b border-border bg-surface pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex h-[58px] max-w-[960px] items-center justify-between px-4 sm:h-[62px] sm:px-5">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="flex size-7 items-center justify-center rounded-[9px] bg-coral font-display text-[15px] font-extrabold text-ink">
-              N
-            </span>
-            <span className="hidden font-display text-[17px] font-bold tracking-[-0.02em] sm:inline">
+          <Link href="/" className="flex items-center gap-1.5">
+            <BrandMark size={38} />
+            {/* Masqué à l'œil sur mobile, mais toujours lu : sans lui, le lien
+                n'aurait plus de nom pour un lecteur d'écran. */}
+            <span className="sr-only font-display text-[17px] font-bold tracking-[-0.02em] sm:not-sr-only">
               Nexa&#8209;Kabi
             </span>
           </Link>

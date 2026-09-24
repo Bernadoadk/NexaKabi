@@ -691,6 +691,18 @@ export class PaymentsService {
       },
     });
 
+    const provider = this.registry.get(providerCode);
+
+    // Fenêtre de paiement : chaque notification décrit UNE tentative, que
+    // l'on relit chez le prestataire — succès comme échec — avant d'en tirer
+    // quoi que ce soit. Le montant se contrôle sur CETTE lecture (voir
+    // `describeBindingProblem`), pas sur ce qu'annonce la notification : un
+    // montant de notification compté autrement — frais compris, par exemple —
+    // écarterait sinon un paiement que la lecture confirme.
+    if (this.flowOf(payment) === 'widget') {
+      return this.handleWidgetWebhook(provider, payment, event, record.id, Boolean(existing));
+    }
+
     /**
      * Le montant annoncé doit être celui du paiement.
      *
@@ -722,15 +734,6 @@ export class PaymentsService {
       );
 
       return { received: true, duplicate: Boolean(existing), outcome: 'ignored' };
-    }
-
-    const provider = this.registry.get(providerCode);
-
-    // Fenêtre de paiement : chaque notification décrit UNE tentative, que
-    // l'on relit chez le prestataire — succès comme échec — avant d'en tirer
-    // quoi que ce soit.
-    if (this.flowOf(payment) === 'widget') {
-      return this.handleWidgetWebhook(provider, payment, event, record.id, Boolean(existing));
     }
 
     let outcome: PaymentOutcome = {
@@ -1303,8 +1306,8 @@ export class PaymentsService {
     }
 
     if (!this.registry.has(payment.providerCode as PaymentProviderCode)) {
-      // Le prestataire de ce paiement n'est plus branché — clé retirée, ou
-      // simulateur en production. Rien à interroger : l'expiration conclura.
+      // Le prestataire de ce paiement n'est plus branché — ses clés ont été
+      // retirées. Rien à interroger : l'expiration conclura.
       return this.expireIfDue(payment);
     }
 

@@ -75,9 +75,10 @@ export interface InitiatePaymentResult {
   readonly redirectUrl?: string;
   /**
    * Lien de validation d'un paiement Mobile Money qui ne passe pas par USSD —
-   * l'application Wave, ou le simulateur du bac à sable. Proposé sur l'écran
-   * d'attente, à ouvrir À CÔTÉ : l'écran reste là et interroge l'état, parce
-   * que le prestataire ne renvoie pas toujours le participant après.
+   * l'application Wave, ou la page de validation du bac à sable d'un
+   * prestataire. Proposé sur l'écran d'attente, à ouvrir À CÔTÉ : l'écran
+   * reste là et interroge l'état, parce que le prestataire ne renvoie pas
+   * toujours le participant après.
    */
   readonly confirmationUrl?: string;
   /**

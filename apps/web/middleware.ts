@@ -176,7 +176,10 @@ function base64UrlDecode(segment: string): string {
 }
 
 export const config = {
+  // Ni fichiers statiques ni icônes générées (`icon/…`, `apple-icon`,
+  // `maskable-icon.png`) : rien à y protéger, et une session à rafraîchir pour
+  // une icône d'onglet serait un appel à l'API pour rien.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|icons/|sw.js|scanner-sw.js|manifest.webmanifest|scan/app-manifest).*)',
+    '/((?!_next/static|_next/image|favicon.ico|icons/|icon/|apple-icon|maskable-icon.png|sw.js|scanner-sw.js|manifest.webmanifest|scan/app-manifest).*)',
   ],
 };

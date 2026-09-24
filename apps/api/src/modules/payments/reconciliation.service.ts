@@ -263,32 +263,20 @@ export class ReconciliationService {
    *
    * ── Pourquoi le prestataire doit répondre lui-même ──────────────────────
    * Chacun nomme cette référence à sa façon : `id` chez Bictorys,
-   * `transactionId` chez Kkiapay, `providerReference` chez le simulateur.
-   * Chercher un seul nom ici revenait à ne retrouver QUE les notifications du
-   * simulateur — les autres finissaient en `FAILED`, et l'acheteur payé
-   * restait sans billet, silencieusement, dans le cas précis que ce filet
-   * doit rattraper.
+   * `transactionId` chez Kkiapay. Chercher un seul nom ici revenait à ne
+   * retrouver que les notifications d'un seul prestataire — les autres
+   * finissaient en `FAILED`, et l'acheteur payé restait sans billet,
+   * silencieusement, dans le cas précis que ce filet doit rattraper.
    *
-   * Le repli sur `providerReference` couvre le simulateur et tout prestataire
-   * qui n'aurait pas déclaré la méthode.
+   * Un prestataire qui n'est plus branché, ou qui ne sait pas la lire, ne
+   * rend rien : la notification reste à examiner, rien n'est deviné.
    */
   private referenceOf(providerCode: string, rawBody: string): string | null {
     const code = providerCode as PaymentProviderCode;
 
-    if (this.registry.has(code)) {
-      const provider = this.registry.get(code);
+    if (!this.registry.has(code)) return null;
 
-      if (provider.extractProviderReference) {
-        return provider.extractProviderReference(rawBody);
-      }
-    }
-
-    try {
-      const parsed = JSON.parse(rawBody) as { providerReference?: unknown };
-      return typeof parsed.providerReference === 'string' ? parsed.providerReference : null;
-    } catch {
-      return null;
-    }
+    return this.registry.get(code).extractProviderReference?.(rawBody) ?? null;
   }
 
   /** Notre identifiant de paiement dans un corps conservé, si le prestataire le renvoie. */

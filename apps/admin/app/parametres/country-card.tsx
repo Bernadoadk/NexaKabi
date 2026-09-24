@@ -381,7 +381,12 @@ function AddMethodForm({
             options={providers.map((provider) => ({
               value: provider.code,
               label: provider.label,
-              description: provider.connected ? 'Branché' : 'Non branché',
+              description:
+                provider.code === 'manual'
+                  ? 'Fait à la main'
+                  : provider.connected
+                    ? 'Branché'
+                    : 'Non branché',
             }))}
           />
         </Field>

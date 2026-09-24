@@ -35,10 +35,11 @@ export function GET(): Response {
     categories: ['productivity', 'utilities'],
     background_color: '#0B0918',
     theme_color: '#0B0918',
+    // Les mêmes que le manifeste du site, tirées de `public/icons/fav.png`.
     icons: [
-      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-      { src: '/icons/icon-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      { src: '/icon/192', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icon/512', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/maskable-icon.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   };
 

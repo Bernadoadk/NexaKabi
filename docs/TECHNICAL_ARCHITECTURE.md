@@ -253,7 +253,7 @@ src/modules/
 ├─ events/              Événement, catégories de billets, publication, brouillon
 ├─ orders/              Panier, réservation de stock, commande, expiration
 ├─ payments/            Machine à états, providers, remboursements
-│  └─ providers/        mock, mtn-momo, moov-money, celtiis, card, …
+│  └─ providers/        kkiapay, bictorys (hérité)
 ├─ tickets/             Émission, jetons signés, QR, PDF, lien public
 ├─ check-in/            Carnet, scan, synchronisation, conflits
 ├─ finance/             Grand livre, soldes, commissions, retraits, relevés
@@ -569,7 +569,7 @@ PaymentRoutingService     listCollectionMethods(pays)   → écran A3, généré
                           resolvePayout(pays, moyen)     → prestataire qui verse, ou « manuel »
                           syncProvider(prestataire)      → relit le compte marchand
         ▼
-PaymentProvider           kkiapay · bictorys (hérité) · mock    une implémentation par PRESTATAIRE
+PaymentProvider           kkiapay · bictorys (hérité)           une implémentation par PRESTATAIRE
 ```
 
 Trois pays interviennent dans une vente, et ils peuvent différer : le pays de l'**événement** (fixe la
@@ -584,14 +584,14 @@ l'achat et MTN à la réception est le cas normal.
 
 **Un moyen n'est proposé que si quatre conditions tiennent** : la ligne existe pour ce pays,
 l'administrateur l'a ouverte, le prestataire ne l'a pas contredite à la dernière synchronisation, et
-le prestataire est branché — sinon, hors production, le simulateur prend sa place ; en production, le
-moyen disparaît de l'écran.
+le prestataire est branché. Aucun paiement n'est jamais simulé : sans prestataire, le moyen disparaît
+de l'écran, en développement comme en production — on essaie avec le bac à sable du prestataire.
 
 ```typescript
 // apps/api/src/modules/payments/providers/payment-provider.ts
 
 abstract class PaymentProvider {
-  readonly code: PaymentProviderCode; // 'kkiapay' | 'bictorys' | 'mock' — un PRESTATAIRE, jamais un moyen
+  readonly code: PaymentProviderCode; // 'kkiapay' | 'bictorys' — un PRESTATAIRE, jamais un moyen
   readonly capabilities: {
     refund: boolean;
     partialRefund: boolean;
@@ -629,10 +629,10 @@ abstract class PaymentProvider {
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `KkiapayProvider`     | **Seul prestataire actif.** Mobile Money et carte en XOF, dans la fenêtre Kkiapay (`widget`) ; vérification serveur `POST /api/v1/transactions/status` ; remboursement intégral Mobile Money (`/api/v1/transactions/revert`) ; pas de versement vers un tiers. Voir `docs/PAYMENT_PROVIDER_KKIAPAY.md` |
 | `BictorysProvider`    | **Hérité** : jamais routé, branché seulement pour relire et rembourser ce qu'il a encaissé                                                              |
-| `MockPaymentProvider` | Hors production, sans clé Kkiapay. Un seul prestataire pour tous les moyens et tous les pays ; scénarios par numéro (`00`/`11`/`22`) ; page de carte simulée qui envoie le webhook PUIS renvoie l'acheteur |
 
-**Le webhook n'est qu'un signal.** Kkiapay authentifie ses notifications par un secret partagé
-(`x-kkiapay-secret`), sans signature du corps. Chaque transaction annoncée est donc **relue** chez
+**Le webhook n'est qu'un signal.** Kkiapay authentifie ses notifications par l'en-tête
+`x-kkiapay-secret` — le secret partagé, ou une signature faite avec lui : les deux sont acceptées.
+Chaque transaction annoncée est de toute façon **relue** chez
 lui avant d'être appliquée ; si la relecture échoue, la notification reste `RECEIVED` et la
 réconciliation reprend. Un billet n'est jamais émis sur la seule foi d'un message entrant — ni sur
 celle d'un « succès » rapporté par la page.
@@ -1252,8 +1252,8 @@ au barreau béninois reste nécessaire avant l'ouverture commerciale.
 
 | Environnement | Base de données           | Paiements             | Objet                    |
 | ------------- | ------------------------- | --------------------- | ------------------------ |
-| `local`       | PostgreSQL Docker         | `MockPaymentProvider` | Développement            |
-| `preview`     | Base éphémère par branche | Mock                  | Revue de PR              |
+| `local`       | PostgreSQL                | Bac à sable Kkiapay   | Développement            |
+| `preview`     | Base éphémère par branche | Bac à sable Kkiapay   | Revue de PR              |
 | `staging`     | Copie anonymisée          | Bac à sable opérateur | Recette, tests de charge |
 | `production`  | Managée, PITR             | Réel                  | —                        |
 
@@ -1280,7 +1280,7 @@ ailleurs — la couverture n'est pas un objectif en soi.
 
 | #   | Risque                                                                                                                                | Impact                                 | Probabilité              | Mitigation                                                                                                                                                                                   |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Contractualisation Mobile Money** : délais d'obtention des accès marchands MTN/Moov, exigences KYC, absence d'environnement de test | 🔴 Bloque le lancement                 | Élevée                   | Démarrer la démarche **dès la Phase 1**, en parallèle du développement. Évaluer un agrégateur régional comme plan A. `MockPaymentProvider` permet de développer 100 % du reste sans attendre |
+| R1  | **Contractualisation Mobile Money** : délais d'obtention des accès marchands MTN/Moov, exigences KYC, absence d'environnement de test | 🔴 Bloque le lancement                 | Élevée                   | Démarrer la démarche **dès la Phase 1**, en parallèle du développement. Évaluer un agrégateur régional comme plan A. Le bac à sable de l'agrégateur (Kkiapay) permet de tout éprouver sans argent réel |
 | R2  | **Statut réglementaire de la détention de fonds** (BCEAO)                                                                             | 🔴 Bloque la production                | Moyenne                  | Conseil juridique en Phase 1. Privilégier un montage où les fonds ne transitent pas par un compte propre                                                                                     |
 | R3  | **Webhook perdu ou tardif** → billet non délivré alors que le client a payé                                                           | 🔴 Perte de confiance                  | Élevée                   | Réconciliation par interrogation avec backoff + réconciliation quotidienne + alerte sur écart                                                                                                |
 | R4  | **Concurrence sur le stock** lors d'une vente flash                                                                                   | 🟠 Sur-vente                           | Moyenne                  | `SELECT … FOR UPDATE`, réservations à expiration, test de charge dédié en Phase 6                                                                                                            |

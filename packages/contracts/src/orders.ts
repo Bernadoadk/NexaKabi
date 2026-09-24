@@ -196,9 +196,9 @@ export const paymentStateSchema = z.object({
    */
   redirectUrl: z.string().nullable(),
   /**
-   * Lien de validation d'un Mobile Money qui ne passe pas par USSD (Wave,
-   * simulateur du bac à sable) : proposé sur l'écran d'attente, ouvert à
-   * côté — l'écran reste là et interroge l'état.
+   * Lien de validation d'un Mobile Money qui ne passe pas par USSD (Wave, ou
+   * la page de validation du bac à sable d'un prestataire) : proposé sur
+   * l'écran d'attente, ouvert à côté — l'écran reste là et interroge l'état.
    */
   confirmationUrl: z.string().nullable(),
   /**

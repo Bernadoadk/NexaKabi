@@ -123,7 +123,7 @@ export interface PaymentMethodDefinition {
    * accompagne le logo partout où il apparaît — tunnel, console, reçus.
    *
    * `logo` est le nom du fichier dans `/paiements/`, sans extension. Absent
-   * pour ce qui n'est pas une marque (virement, simulateur) : l'affichage
+   * pour ce qui n'est pas une marque (le virement bancaire) : l'affichage
    * retombe alors sur une pastille typographique.
    */
   readonly logo?: string;
@@ -377,19 +377,20 @@ export const PAYMENT_PROVIDER_DEFINITIONS: readonly PaymentProviderDefinition[] 
     },
   },
   {
-    code: 'mock',
-    label: 'Simulateur',
+    /**
+     * Virement à la main — aucun prestataire derrière.
+     *
+     * Un retrait par virement bancaire n'est exécuté par personne d'autre que
+     * nous : l'administrateur fait le virement, puis l'enregistre dans la
+     * console. Il fallait pourtant un « prestataire » à la ligne de
+     * configuration qui l'ouvre au versement : c'est celui-ci. Rien ne
+     * l'implémente, rien ne le branche — il n'encaisse donc jamais rien, et
+     * le routage le traite comme manuel quoi qu'il arrive.
+     */
+    code: 'manual',
+    label: 'Virement manuel',
     status: 'ACTIVE',
     methodCodes: {
-      mtn_momo: 'mtn_momo',
-      moov_money: 'moov_money',
-      celtiis_cash: 'celtiis_cash',
-      orange_money: 'orange_money',
-      wave: 'wave',
-      free_money: 'free_money',
-      t_money: 't_money',
-      airtel_money: 'airtel_money',
-      card: 'card',
       bank_transfer: 'bank_transfer',
     },
   },

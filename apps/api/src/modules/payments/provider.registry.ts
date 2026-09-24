@@ -5,7 +5,7 @@ import { PaymentProvider } from './providers/payment-provider';
 /**
  * Annuaire des PRESTATAIRES branchés.
  *
- * Indexé par prestataire — `kkiapay`, `mock` — et non par moyen de paiement :
+ * Indexé par prestataire — `kkiapay`, `bictorys` — et non par moyen de paiement :
  * un prestataire en traite plusieurs, dans plusieurs pays. Qui traite quel
  * moyen où est une question de configuration, tranchée par
  * `PaymentRoutingService` ; ici, on ne fait que retrouver une implémentation

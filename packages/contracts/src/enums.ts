@@ -196,10 +196,12 @@ export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
  * prestataire qui le traite. Ajouter un prestataire consiste à déposer une
  * implémentation de `PaymentProvider` et à ajouter son code ici.
  *
- * `mock` est le simulateur, hors production uniquement.
+ * `manual` n'est pas un prestataire : il porte ce qu'aucun prestataire
+ * n'exécute — le virement bancaire d'un retrait, fait à la main puis
+ * enregistré dans la console. Il n'encaisse jamais rien.
  * Voir docs/TECHNICAL_ARCHITECTURE.md §6.2.
  */
-export const PAYMENT_PROVIDERS = ['bictorys', 'kkiapay', 'mock'] as const;
+export const PAYMENT_PROVIDERS = ['bictorys', 'kkiapay', 'manual'] as const;
 export const paymentProviderSchema = makeEnum(PAYMENT_PROVIDERS).schema;
 export type PaymentProviderCode = z.infer<typeof paymentProviderSchema>;
 
@@ -208,13 +210,7 @@ export type PaymentProviderCode = z.infer<typeof paymentProviderSchema>;
  * numéro pour le Mobile Money, une redirection pour la carte — et ce qu'un
  * organisateur renseigne pour recevoir ses retraits.
  */
-export const PAYMENT_METHOD_KINDS = [
-  'MOBILE_MONEY',
-  'CARD',
-  'BANK_TRANSFER',
-  'CASH',
-  'DEMO',
-] as const;
+export const PAYMENT_METHOD_KINDS = ['MOBILE_MONEY', 'CARD', 'BANK_TRANSFER', 'CASH'] as const;
 export const paymentMethodKindSchema = makeEnum(PAYMENT_METHOD_KINDS).schema;
 export type PaymentMethodKind = z.infer<typeof paymentMethodKindSchema>;
 
@@ -236,7 +232,6 @@ export const PAYMENT_METHOD_CODES = [
   'airtel_money',
   'card',
   'bank_transfer',
-  'mock',
 ] as const;
 export const paymentMethodCodeSchema = makeEnum(PAYMENT_METHOD_CODES).schema;
 export type PaymentMethodCode = z.infer<typeof paymentMethodCodeSchema>;

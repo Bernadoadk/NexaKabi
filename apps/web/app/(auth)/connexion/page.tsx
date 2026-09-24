@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { BrandMark } from '@nexakabi/ui';
 import { getCurrentUser } from '@/lib/session';
 import { LoginFlow } from './login-flow';
 
@@ -24,10 +25,8 @@ export default async function LoginPage({
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-[460px] flex-col justify-center gap-6 px-5 py-12">
-      <Link href="/" className="flex items-center gap-2.5 self-start">
-        <span className="flex size-7 items-center justify-center rounded-[9px] bg-coral font-display text-[15px] font-extrabold text-ink">
-          N
-        </span>
+      <Link href="/" className="flex items-center gap-1.5 self-start">
+        <BrandMark size={40} />
         <span className="font-display text-[19px] font-bold tracking-[-0.02em] text-text-strong">
           Nexa&#8209;Kabi
         </span>

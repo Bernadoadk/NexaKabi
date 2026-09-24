@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Skeleton } from '@nexakabi/ui';
+import { BrandMark, Skeleton } from '@nexakabi/ui';
 
 /**
  * La connexion, pendant que l'écran arrive.
@@ -17,10 +17,8 @@ import { Skeleton } from '@nexakabi/ui';
 export default function LoginLoading() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-[460px] flex-col justify-center gap-6 px-5 py-12">
-      <Link href="/" className="flex items-center gap-2.5 self-start">
-        <span className="flex size-7 items-center justify-center rounded-[9px] bg-coral font-display text-[15px] font-extrabold text-ink">
-          N
-        </span>
+      <Link href="/" className="flex items-center gap-1.5 self-start">
+        <BrandMark size={40} />
         <span className="font-display text-[19px] font-bold tracking-[-0.02em] text-text-strong">
           Nexa&#8209;Kabi
         </span>

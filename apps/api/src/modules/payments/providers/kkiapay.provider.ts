@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type {
@@ -47,11 +47,17 @@ import {
  *
  * ── Le webhook ──────────────────────────────────────────────────────────────
  * Déclaré au tableau de bord (Développeurs → Clés API → Webhook), avec un
- * « secret hash » que Kkiapay renvoie dans l'en-tête `x-kkiapay-secret`.
+ * « secret hash » dont Kkiapay se sert pour l'en-tête `x-kkiapay-secret`.
  * Événements : `transaction.success` et `transaction.failed` ; cinq nouvelles
- * tentatives en quelques secondes, puis abandon. Le secret authentifie
+ * tentatives en quelques secondes, puis abandon. L'en-tête authentifie
  * l'émetteur ; la relecture chez Kkiapay (`verifyWebhookByFetch`) établit les
  * faits — la notification ne dit pas qui a payé les frais.
+ *
+ * Sa documentation parle de « signature » mais montre le secret lui-même
+ * dans l'en-tête. Les deux formes sont acceptées : le secret tel quel, ou une
+ * signature HMAC-SHA256 du corps brut faite avec lui. L'une comme l'autre
+ * exige de connaître le secret, et la forme reçue est écrite une fois au
+ * journal — le bouton « Tester » du tableau de bord suffit à la constater.
  *
  * ── Ce qu'il rembourse ──────────────────────────────────────────────────────
  *   Rembourser     POST /api/v1/transactions/revert   { transactionId }
@@ -182,7 +188,9 @@ export class KkiapayProvider extends PaymentProvider {
   private readonly publicKey: string;
   private readonly privateKey: string;
   private readonly secretKey: string;
-  private readonly webhookSecretDigest: Buffer;
+  private readonly webhookSecret: string;
+  /** Forme d'authentification déjà écrite au journal — une seule fois par processus. */
+  private webhookAuthLogged = false;
 
   constructor(config: ConfigService<Env, true>) {
     super();
@@ -192,9 +200,7 @@ export class KkiapayProvider extends PaymentProvider {
     this.publicKey = config.get('KKIAPAY_PUBLIC_KEY', { infer: true });
     this.privateKey = config.get('KKIAPAY_PRIVATE_KEY', { infer: true });
     this.secretKey = config.get('KKIAPAY_SECRET_KEY', { infer: true });
-    // Seule l'empreinte est gardée : la comparaison se fait sur deux
-    // empreintes de même longueur, ce qui ne laisse rien fuir par le temps.
-    this.webhookSecretDigest = digest(config.get('KKIAPAY_WEBHOOK_SECRET', { infer: true }));
+    this.webhookSecret = config.get('KKIAPAY_WEBHOOK_SECRET', { infer: true });
 
     this.logger.log(`Kkiapay branché (${this.sandbox ? 'bac à sable' : 'PRODUCTION'})`);
   }
@@ -280,8 +286,8 @@ export class KkiapayProvider extends PaymentProvider {
   }
 
   async parseWebhook(raw: RawWebhook): Promise<NormalizedWebhookEvent> {
-    // L'authentification d'abord : rien du corps n'est lu avant.
-    this.assertWebhookSecret(firstHeader(raw.headers['x-kkiapay-secret']));
+    // L'authentification d'abord : rien du corps n'est interprété avant.
+    this.assertWebhookSecret(firstHeader(raw.headers['x-kkiapay-secret']), raw.rawBody);
 
     let payload: KkiapayWebhookPayload;
 
@@ -360,7 +366,7 @@ export class KkiapayProvider extends PaymentProvider {
     }
 
     const response = await this.post(REVERT_PATH, { transactionId: input.providerReference });
-    const status = String(response.body?.status ?? '').toUpperCase();
+    const status = outcomeOf(response);
     const accepted = response.httpStatus >= 200 && response.httpStatus < 300;
 
     // La référence du remboursement EST celle de la transaction remboursée :
@@ -446,7 +452,7 @@ export class KkiapayProvider extends PaymentProvider {
   private async verify(transactionId: string): Promise<KkiapayTransaction> {
     const response = await this.post(VERIFY_PATH, { transactionId });
     const body = (response.body ?? {}) as KkiapayTransaction;
-    const status = String(body.status ?? '').toUpperCase();
+    const status = outcomeOf(response);
 
     if (status === 'TRANSACTION_NOT_FOUND' || status === 'INVALID_TRANSACTION') {
       throw new ProviderTransactionNotFoundError(
@@ -524,20 +530,52 @@ export class KkiapayProvider extends PaymentProvider {
     }
   }
 
-  private assertWebhookSecret(received: string | undefined): void {
-    if (!received) {
+  /**
+   * Authentifie une notification par son en-tête `x-kkiapay-secret`.
+   *
+   * Deux formes acceptées (voir l'en-tête du fichier) : le secret lui-même,
+   * ou la signature HMAC-SHA256 du corps brut — en hexadécimal ou en base 64.
+   * Toutes sont comparées, à temps constant, pour que la durée de la réponse
+   * ne dise rien de la forme ni du secret.
+   */
+  private assertWebhookSecret(received: string | undefined, rawBody: string): void {
+    const value = received?.trim();
+
+    if (!value) {
       throw new WebhookSignatureError('En-tête x-kkiapay-secret absent.');
     }
 
-    // Deux empreintes SHA-256 : même longueur quoi qu'on reçoive, donc une
-    // comparaison à temps constant qui ne trahit même pas la longueur du secret.
-    if (!timingSafeEqual(digest(received.trim()), this.webhookSecretDigest)) {
+    const signature = createHmac('sha256', this.webhookSecret).update(rawBody, 'utf8').digest();
+
+    const asSecret = sameValue(value, this.webhookSecret);
+    const asHexSignature = sameValue(value.toLowerCase(), signature.toString('hex'));
+    const asBase64Signature = sameValue(value, signature.toString('base64'));
+
+    if (!asSecret && !asHexSignature && !asBase64Signature) {
       throw new WebhookSignatureError();
+    }
+
+    if (!this.webhookAuthLogged) {
+      this.webhookAuthLogged = true;
+      this.logger.log(
+        `Notification Kkiapay authentifiée : ${
+          asSecret ? 'secret transmis tel quel' : 'signature HMAC-SHA256 du corps'
+        }`,
+      );
     }
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Égalité à temps constant, sur deux empreintes SHA-256 : même longueur quoi
+ * qu'on reçoive, donc une comparaison qui ne trahit même pas la longueur
+ * attendue.
+ */
+function sameValue(received: string, expected: string): boolean {
+  return timingSafeEqual(digest(received), digest(expected));
+}
 
 function digest(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest();
@@ -639,10 +677,27 @@ function isRefusal(httpStatus: number): boolean {
   return httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429;
 }
 
+/**
+ * Le verdict d'une réponse, en majuscules. Kkiapay ne le range pas toujours
+ * au même endroit — constaté sur son bac à sable : `transactions/status`
+ * répond `{ status: "TRANSACTION_NOT_FOUND" }`, `transactions/revert`
+ * répond `{ code: "TRANSACTION_NOT_FOUND", description: "…" }`.
+ */
+function outcomeOf(response: KkiapayResponse): string {
+  const body = response.body ?? {};
+
+  for (const key of ['status', 'code']) {
+    const value = body[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim().toUpperCase();
+  }
+
+  return '';
+}
+
 function messageOf(response: KkiapayResponse): string {
   const body = response.body ?? {};
 
-  for (const key of ['message', 'reason', 'status', 'error', 'raw']) {
+  for (const key of ['message', 'description', 'reason', 'status', 'code', 'error', 'raw']) {
     const value = body[key];
     if (typeof value === 'string' && value.length > 0) return value.slice(0, 200);
   }

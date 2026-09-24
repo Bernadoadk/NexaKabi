@@ -775,6 +775,11 @@ l'organisateur, sans incident financier.
 
 ### État : CODE PRÊT — reste le bac à sable et le pilote, qui demandent des clés réelles
 
+> **Mise à jour du 24 septembre 2026.** Ce qui suit est l'historique de la phase. Depuis : Bictorys
+> est hérité, **Kkiapay** est le seul prestataire actif (ses clés de bac à sable sont posées), et le
+> **simulateur de paiement est retiré** — aucun paiement n'est plus simulé, on essaie avec le bac à
+> sable de Kkiapay. État à jour : `docs/PAYMENT_PROVIDER_KKIAPAY.md`.
+
 **Décision (19 septembre 2026) : Bictorys plutôt que FedaPay, et une
 architecture multi-pays plutôt qu'un branchement béninois.** FedaPay a été
 retiré. La première intégration confondait le prestataire et le moyen de

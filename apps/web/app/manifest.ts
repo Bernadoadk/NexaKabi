@@ -34,11 +34,12 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: '#12102B',
     theme_color: '#FF4D2E',
 
+    // Toutes tirées de `public/icons/fav.png` : voir `app/icon.tsx`.
     icons: [
-      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/icon/192', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icon/512', sizes: '512x512', type: 'image/png', purpose: 'any' },
       // `maskable` évite qu'Android rogne le logo dans sa forme d'icône.
-      { src: '/icons/icon-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      { src: '/maskable-icon.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
 
     /**

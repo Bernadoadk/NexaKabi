@@ -101,8 +101,9 @@ sessions de 8 h révocables, chaque geste tracé dans le journal d'audit.
 objets distincts. Le **pays** (table `country`) porte sa devise et son indicatif, et s'ouvre depuis
 la console — le Bénin est ouvert et par défaut, les autres pays d'Afrique de l'Ouest attendent. Le
 **moyen** (`mtn_momo`, `wave`, `card`, `bank_transfer`…) est ce que le participant reconnaît. Le
-**prestataire** (`kkiapay`, `mock`) est celui qui traite l'argent, et le participant ne le voit
-jamais. La table `country_payment_method` relie les trois, avec deux drapeaux indépendants par
+**prestataire** (`kkiapay` ; `bictorys`, hérité) est celui qui traite l'argent, et le participant ne
+le voit jamais — le virement bancaire des retraits, qu'aucun prestataire n'exécute, est porté par
+`manual`. La table `country_payment_method` relie les trois, avec deux drapeaux indépendants par
 ligne — **collecte** (ce que le participant peut payer) et **versement** (ce sur quoi l'organisateur
 peut recevoir) —, plus le constat synchronisé depuis le compte marchand du prestataire. Ouvrir la
 Côte d'Ivoire avec Wave se fait dans l'écran « Pays & paiements » de la console, sans code. Le
@@ -132,15 +133,12 @@ font refuser la notification. La commission Nexa-Kabi (table `commission_policy`
 organisation > pays > plateforme) ne dépend jamais du moyen de paiement ; les frais du
 prestataire sont une ligne à part, constatée à l'encaissement.
 
-**Paiements simulés tant qu'aucune clé de prestataire n'est configurée.** Hors production, le
-simulateur prend la place du prestataire pour tous les moyens configurés, avec les retours exacts du contrat
-`PaymentProvider` — encaissement, remboursement, versement des retraits — de sorte que brancher le
-prestataire réel ne change ni écran ni service. Le numéro saisi choisit le scénario : finit par `00`
-→ refus immédiat, `11` → jamais de réponse, `22` → succès immédiat, tout autre → succès après
-quelques secondes. Il vaut pour le numéro du payeur à l'achat comme pour le compte de réception d'un
-retrait. Un paiement par carte simulé ouvre une page où l'on valide ou refuse — le webhook part, puis
-l'acheteur revient, comme chez le vrai prestataire. Un virement bancaire, lui, se fait toujours à la
-main et s'enregistre dans la console.
+**Aucun paiement simulé.** Tout paiement passe par Kkiapay ; la seule façon d'essayer sans argent
+réel est son **bac à sable** — ses clés de test dans `apps/api/.env` avec `KKIAPAY_SANDBOX=true`
+(obligatoire hors production) : la fenêtre de paiement est la vraie, avec les numéros et cartes de
+test de Kkiapay (`docs/PAYMENT_PROVIDER_KKIAPAY.md` §9). Sans clé, aucun moyen de paiement n'est
+proposé. Un virement bancaire vers un organisateur se fait toujours à la main et s'enregistre dans
+la console.
 
 **Aucune donnée de démonstration, aucune suite de tests automatisés.** Le produit se teste en
 réel, par ses propres écrans, en suivant le cahier de recette ; la vérification automatique se

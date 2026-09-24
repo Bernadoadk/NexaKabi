@@ -136,8 +136,11 @@ Les statuts Kkiapay ne sortent jamais de l'adaptateur ; le reste de l'applicatio
 | Événements | `transaction.success`, `transaction.failed` |
 | Secret hash | la valeur de `KKIAPAY_WEBHOOK_SECRET` |
 
-- **Authentification** : l'en-tête `x-kkiapay-secret` est comparé au secret, à temps constant (sur deux
-  empreintes SHA-256). Absent ou faux → `401`. Il n'est jamais écrit en base.
+- **Authentification** : l'en-tête `x-kkiapay-secret` doit être soit le secret lui-même, soit la
+  signature HMAC-SHA256 du corps brut faite avec lui (hexadécimal ou base 64) — la documentation parle de
+  signature mais montre le secret, et les deux formes exigent de le connaître. Comparaisons à temps
+  constant (sur des empreintes SHA-256). Absent ou faux → `401`. Il n'est jamais écrit en base. La forme
+  reçue est écrite une fois au journal de l'API (« Notification Kkiapay authentifiée : … »).
 - **Vérification** : la transaction annoncée est relue chez Kkiapay (`verifyWebhookByFetch`), succès
   comme échec. Relecture impossible → la notification reste `RECEIVED`, la transaction est rattachée,
   la réconciliation conclura.
@@ -158,13 +161,28 @@ Kkiapay ne sont **jamais** calculés par un taux écrit dans le code : ils vienn
 
 - `income` (ce que Kkiapay nous crédite) connu : frais **sur nous** = `amount − income` ;
 - sinon `feeSupportedBy = customer` : **0** pour nous — l'acheteur les paie en plus du prix ;
-- sinon `feeSupportedBy = marchand` et `fees` connu : `fees` ;
+- sinon `feeSupportedBy = merchant` et `fees` connu : `fees` ;
 - rien de tout cela : inconnu, rien n'est inventé.
 
-D'après la page Tarifs (à confirmer avec Kkiapay), l'offre Intégration met les frais **à la charge du
-client** : 1,5 à 1,9 % en Mobile Money selon le pays, 2,1 % (cartes UEMOA) ou 3 % (hors UEMOA). La
-fenêtre affichera donc un montant supérieur au bouton « Payer » de Nexa-Kabi : l'écran de paiement le
-dit avant l'ouverture. La même page indique un abonnement de 9 900 F HT par mois pour cette offre.
+**Qui reçoit quoi, pour un billet à 5 000 F** (politique par défaut : 5 %, plancher de 100 F par
+commande, frais de service ajoutés à l'acheteur) :
+
+| | Montant | Où c'est écrit |
+| - | - | - |
+| L'acheteur paie à Nexa-Kabi | 5 250 F (billet + 250 F de frais de service) | `order.totalAmount`, écriture `SALE` |
+| Kkiapay, frais **payés par l'acheteur** | en plus, dans sa fenêtre (≈ 1,9 % en Mobile Money) | nulle part chez nous : cet argent ne nous parvient pas |
+| Kkiapay, frais **retenus sur le marchand** | `amount − income` | écriture `PROVIDER_FEE`, déduite du net de l'organisateur |
+| Nexa-Kabi (commission) | 250 F | écriture `PLATFORM_FEE` |
+| L'organisateur | 5 000 F − frais retenus sur le marchand | le solde net ; retiré ensuite à la main, moins les frais de retrait (1 %, plafonné à 2 000 F, écriture `PAYOUT_FEE`) |
+
+Les deux pages de Kkiapay ne disent pas la même chose, et c'est pour cela que rien n'est codé en dur :
+la page Tarifs (offre Intégration) met tous les frais **à la charge du client** — 1,5 à 1,9 % en Mobile
+Money selon le pays, 2,1 % (cartes UEMOA) ou 3 % (hors UEMOA) —, la page « Frais » de la documentation
+met 1,9 % sur le client en Mobile Money mais **4 % sur le marchand** pour la carte. Dans le premier cas
+la fenêtre affiche un montant supérieur au bouton « Payer » (l'écran de paiement le dit avant
+l'ouverture) ; dans le second, les frais réduisent le net de l'organisateur. La vérification de chaque
+transaction tranche. La page Tarifs indique aussi un abonnement de 9 900 F HT par mois pour l'offre
+Intégration.
 
 ---
 
@@ -210,7 +228,11 @@ est **interdit en production**, `false` est **interdit hors production**. Donc :
 | Préproduction / mise en ligne actuelle | `development` | Bac à sable (clés de TEST) |
 | Production | `production` | Live (clés LIVE, compte activé) |
 
-Sans aucune clé, hors production, le **simulateur** remplace Kkiapay (mêmes lignes de configuration).
+**Aucun paiement n'est simulé** (simulateur retiré le 24 septembre 2026). Sans clé Kkiapay, aucun moyen
+de paiement n'est proposé, en développement comme en production. La seule façon d'essayer sans argent
+réel est le bac à sable de Kkiapay : ses clés de TEST avec `KKIAPAY_SANDBOX=true`. Le virement bancaire
+des retraits, qu'aucun prestataire n'exécute, est porté par le pseudo-prestataire `manual` (« Virement
+manuel ») : fait à la main, puis enregistré dans la console.
 
 La politique de sécurité du site autorise nommément `https://cdn.kkiapay.me` (script) et
 `https://widget-v3.kkiapay.me` (cadre de la fenêtre) — `apps/web/lib/security-headers.ts`. Si
@@ -222,16 +244,18 @@ Kkiapay change l'hôte de sa fenêtre, c'est là qu'il faut le suivre.
 
 Le compte donne accès au bac à sable **dès sa création**, sans l'enregistrement de la société.
 
-1. Récupérer les trois clés **de test** (Développeurs → Clés API), les mettre dans `apps/api/.env`
-   avec `KKIAPAY_SANDBOX=true` et un `KKIAPAY_WEBHOOK_SECRET` généré.
-2. Déclarer le webhook (§5). En local, l'API n'est pas joignable depuis Kkiapay : le parcours
-   fonctionne quand même — la page confirme la transaction, et la réconciliation relit les
-   transactions en attente —, mais pour éprouver le webhook il faut une URL publique (API déployée,
-   ou tunnel).
+1. Les trois clés **de test** (Développeurs → Clés API) sont dans `apps/api/.env` depuis le
+   24 septembre 2026, avec `KKIAPAY_SANDBOX=true` et un `KKIAPAY_WEBHOOK_SECRET` généré. Au démarrage,
+   l'API écrit « Kkiapay branché (bac à sable) ».
+2. Déclarer le webhook (§5) avec ce même secret. En local, l'API n'est pas joignable depuis Kkiapay :
+   le parcours fonctionne quand même — la page confirme la transaction, et la réconciliation relit les
+   transactions en attente chaque minute —, mais pour éprouver le webhook il faut une URL publique (API
+   déployée, ou tunnel).
 3. Bouton « Tester » du formulaire webhook : doit répondre `200` — une notification de test ne
-   correspond à aucun paiement, elle est acquittée sans effet. Un `401` signifie que le secret
-   diffère (ou que l'en-tête n'est pas le secret lui-même : voir « À confirmer » ci-dessous).
-4. Acheter un billet sur le site, choisir MTN MoMo ou Moov Money, puis dans la fenêtre :
+   correspond à aucun paiement, elle est acquittée sans effet. Un `401` signifie que le secret saisi
+   diffère de `KKIAPAY_WEBHOOK_SECRET`.
+4. Publier un événement à venir avec un billet payant, l'acheter sur le site, choisir MTN MoMo ou Moov
+   Money, puis dans la fenêtre :
 
 | Numéro | Opérateur | Scénario |
 | ------ | --------- | -------- |
@@ -253,19 +277,35 @@ Le compte donne accès au bac à sable **dès sa création**, sans l'enregistrem
 6. Rejouer un échec puis un succès sur la même commande : un seul paiement, réussi, un seul lot de
    billets.
 
-### À confirmer en bac à sable (non documenté)
+### Constaté sur le vrai bac à sable (24 septembre 2026)
 
-- **L'en-tête `x-kkiapay-secret`** : la documentation parle de signature mais montre le secret lui-même.
-  L'implémentation compare au secret ; si le bouton « Tester » renvoie `401` avec le bon secret, c'est
-  qu'il s'agit d'une signature — l'adaptateur sera à ajuster.
-- **`amount`** dans la vérification quand le client paie les frais : la documentation montre le montant
-  hors frais (`amount` 40, `fees` 1, `income` 40). S'il incluait les frais, les paiements seraient
-  refusés à la vérification — visible immédiatement dans la chronologie.
-- **La réponse de `transactions/revert`** et le passage de la transaction à `REVERTED` : non décrits.
+- **Les clés sont acceptées** : `transactions/status` sur une transaction inconnue répond HTTP 400
+  `{"status":"TRANSACTION_NOT_FOUND"}` (de mauvaises clés donnent HTTP 401
+  `{"status":4003,"reason":"Invalid API KEY"}`).
+- **`transactions/revert` ne range pas son verdict au même endroit** : sur une transaction inconnue,
+  HTTP 400 `{"code":"TRANSACTION_NOT_FOUND","description":"Transaction not found"}` — `code`, pas
+  `status`. L'adaptateur lit les deux ; un refus de remboursement arrive donc motivé en français dans la
+  console.
+- **La fenêtre officielle s'initialise avec la configuration de l'API** : le SDK répond
+  `WIDGET_SUCCESSFULLY_INIT` puis `WIDGET_IS_READY`, sans blocage de la politique de sécurité du site.
+- **Le code du SDK** (`k.js`) garde un seul écouteur par événement (`addSuccessListener` remplace le
+  précédent), expose bien `addPendingListener` et `addKkiapayCloseListener`, et n'accepte pour
+  `paymentmethod` que `momo`, `card`, `direct_debit`. Le plugin WooCommerce officiel confirme que le
+  succès porte `transactionId` et que l'attribut `data` revient dans le webhook sous `stateData`.
+
+### À confirmer au premier paiement de bac à sable
+
+- **`amount` dans la vérification quand le client paie les frais** : la documentation montre le montant
+  hors frais (`amount` 40, `fees` 1, `income` 40), et le plugin WooCommerce officiel compare `amount` au
+  total de la commande. S'il incluait les frais, le paiement serait refusé à la vérification — visible
+  immédiatement dans la chronologie (Finance → Transactions).
+- **La forme de l'en-tête `x-kkiapay-secret`** (secret ou signature) : les deux sont acceptées ; le
+  journal de l'API dit laquelle Kkiapay emploie à la première notification.
+- **La réponse de `transactions/revert` quand il accepte** et le passage de la transaction à
+  `REVERTED` : non décrits. Acceptée sans statut final, la demande passe « en cours » et la transaction
+  est relue chaque minute jusqu'à `REVERTED`.
 - **Le format du numéro** : les numéros de test ont 8 chiffres, les numéros béninois 10 depuis 2024.
   Aucun numéro n'est pré-rempli dans la fenêtre pour cette raison.
-- **Les écouteurs du SDK** `addPendingListener` et `addKkiapayCloseListener` viennent des définitions
-  de type du SDK officiel, pas de la documentation : utilisés seulement s'ils existent.
 
 ---
 

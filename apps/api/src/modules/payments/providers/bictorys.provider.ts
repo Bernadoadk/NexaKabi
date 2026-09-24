@@ -247,8 +247,8 @@ export class BictorysProvider extends PaymentProvider {
       status: 'PENDING',
       expiresAt,
       // Page hébergée pour la carte ; lien de validation pour un Mobile Money
-      // qui se valide dans une application plutôt que par USSD (Wave), ou dans
-      // le simulateur du bac à sable.
+      // qui se valide dans une application plutôt que par USSD (Wave), ou sur
+      // la page de validation du bac à sable Bictorys.
       redirectUrl: isCard ? (response.link ?? response.redirectUrl) : undefined,
       confirmationUrl: isCard ? undefined : response.link,
       instructions: isCard ? undefined : (response.message ?? undefined),

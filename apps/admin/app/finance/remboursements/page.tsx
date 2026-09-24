@@ -42,9 +42,9 @@ const EMPTY_MESSAGES: Readonly<Record<QueueFilter, string>> = {
  * Le service de remboursement existait, mais aucun écran ne l'exposait : un
  * remboursement au cas par cas était impossible, et ceux qu'une annulation
  * d'événement n'arrivait pas à confier au prestataire ne se voyaient nulle
- * part. KPay ne rembourse que la totalité d'un paiement, dans les sept jours ;
- * tout le reste se fait à la main — et doit donc se lire ici, s'y faire, et
- * s'y consigner.
+ * part. Kkiapay ne rembourse par API que la totalité d'un paiement Mobile
+ * Money ; tout le reste se fait à la main — et doit donc se lire ici, s'y
+ * faire, et s'y consigner.
  *
  * La file « À faire » vient en premier : chaque ligne est un participant qui
  * attend son argent.

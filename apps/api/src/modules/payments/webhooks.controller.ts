@@ -50,10 +50,11 @@ interface RawBodyRequest extends Request {
  *     une salve de notifications après un incident est justement le moment où
  *     il ne faut rien perdre.
  *  5. **On accuse réception AVANT de traiter.** Une notification authentifiée
- *     est acquittée aussitôt, puis traitée en arrière-plan. KPay abandonne au
- *     bout de trois secondes — moins qu'un premier encaissement sur une
- *     instance qui démarre. Un traitement interrompu n'est pas perdu : la
- *     réconciliation relit l'état chez le prestataire chaque minute.
+ *     est acquittée aussitôt, puis traitée en arrière-plan. Kkiapay retente
+ *     cinq fois en quelques secondes seulement, puis abandonne — moins qu'un
+ *     premier encaissement sur une instance qui démarre. Un traitement
+ *     interrompu n'est pas perdu : la réconciliation relit l'état chez le
+ *     prestataire chaque minute.
  *
  * Un même point de terminaison reçoit les encaissements, les versements et
  * les remboursements : c'est la notification normalisée qui dit de quoi elle
@@ -122,13 +123,12 @@ export class WebhooksController {
       throw new BadRequestException('Charge utile de webhook illisible.');
     }
 
-    // Conservée pour l'audit. Jamais `X-Secret-Key` : chez Bictorys, cet en-tête
-    // porte le secret lui-même, pas une signature — l'écrire en base revenait à
-    // stocker le secret du webhook en clair, à chaque notification.
+    // Conservée pour l'audit, quand c'est une VRAIE signature. Jamais
+    // `x-kkiapay-secret` ni `X-Secret-Key` (Bictorys) : ces en-têtes portent le
+    // secret lui-même — l'écrire en base revenait à stocker le secret du
+    // webhook en clair, à chaque notification.
     const signature = firstHeader(
-      request.headers['x-kpay-signature'] ??
-        request.headers['x-signature'] ??
-        request.headers['x-mock-signature'],
+      request.headers['x-signature'] ?? request.headers['x-mock-signature'],
     );
 
     // Authentifiée et lisible : on acquitte, le traitement suit. Les refus

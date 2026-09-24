@@ -158,6 +158,63 @@ export class StockService {
     });
   }
 
+  /**
+   * Transforme en vente les places d'une commande qui vient d'être payée.
+   *
+   * Le cas normal : la réservation court encore, elle est confirmée.
+   *
+   * Le cas tardif : le paiement a abouti APRÈS la fin de la réservation — une
+   * validation dans la fenêtre du prestataire une minute trop tard, une
+   * confirmation d'opérateur arrivée après notre abandon. Les places ont été
+   * rendues à la vente ; on les reprend si elles sont encore libres, sous le
+   * même verrou que n'importe quel achat. Sinon, rien n'est écrit : vendre une
+   * place déjà revendue ferait deux porteurs pour un siège.
+   *
+   * @returns `false` si les places ne sont plus disponibles.
+   */
+  async secureForPayment(tx: Prisma.TransactionClient, orderId: string): Promise<boolean> {
+    const active = await tx.stockReservation.count({ where: { orderId, releasedAt: null } });
+
+    if (active > 0) {
+      await this.confirm(tx, orderId);
+      return true;
+    }
+
+    const lines = await tx.orderItem.groupBy({
+      by: ['ticketTypeId'],
+      where: { orderId },
+      _sum: { quantity: true },
+    });
+
+    const requests = lines
+      .map((line) => ({ ticketTypeId: line.ticketTypeId, quantity: line._sum.quantity ?? 0 }))
+      .filter((request) => request.quantity > 0);
+
+    try {
+      await this.lockAndVerify(tx, requests);
+    } catch (error) {
+      // Épuisé, retiré de la vente, supprimé : la commande ne peut plus être
+      // honorée. Aucune écriture n'a eu lieu — les lectures verrouillées se
+      // relâcheront avec la transaction.
+      if (error instanceof BadRequestException) {
+        this.logger.warn(`Paiement tardif sur la commande ${orderId} : places indisponibles`);
+        return false;
+      }
+
+      throw error;
+    }
+
+    for (const request of requests) {
+      await tx.ticketType.update({
+        where: { id: request.ticketTypeId },
+        data: { quantitySold: { increment: request.quantity } },
+      });
+    }
+
+    this.logger.warn(`Paiement tardif sur la commande ${orderId} : places reprises et vendues`);
+    return true;
+  }
+
   /** Libère les places d'une commande expirée ou annulée. */
   async release(tx: Prisma.TransactionClient, orderId: string): Promise<number> {
     const reservations = await tx.stockReservation.findMany({

@@ -9,7 +9,7 @@ import { ReconciliationService } from './reconciliation.service';
 import { WebhooksController } from './webhooks.controller';
 import { PaymentProviderRegistry } from './provider.registry';
 import { BictorysProvider } from './providers/bictorys.provider';
-import { KpayProvider } from './providers/kpay.provider';
+import { KkiapayProvider } from './providers/kkiapay.provider';
 import { MockPaymentProvider } from './providers/mock-payment.provider';
 import type { PaymentProvider } from './providers/payment-provider';
 import type { Env } from '../../config/env';
@@ -19,10 +19,10 @@ import type { Env } from '../../config/env';
  *
  * ── Comment les prestataires se branchent ───────────────────────────────────
  * Chaque clé renseignée branche SON prestataire, et ils coexistent. En V1,
- * KPay est le seul prestataire ACTIF — le Mobile Money au Bénin, en Côte
- * d'Ivoire, au Sénégal et au Cameroun ; Bictorys, hérité, n'est branché que
- * pour relire ce qu'il a déjà encaissé. C'est l'environnement du prestataire
- * — sa clé de test ou de production — qui dit si l'argent est réel : rien
+ * Kkiapay est le seul prestataire ACTIF — Mobile Money et carte, en francs
+ * CFA ; Bictorys, hérité, n'est branché que pour relire ce qu'il a déjà
+ * encaissé. C'est l'environnement du prestataire — bac à sable ou
+ * production, `KKIAPAY_SANDBOX` — qui dit si l'argent est réel : rien
  * d'autre ne simule.
  *
  * Cette coexistence est ce qui rend une bascule POSSIBLE. Le prestataire d'un
@@ -54,8 +54,10 @@ import type { Env } from '../../config/env';
 
         const providers: PaymentProvider[] = [];
 
-        if (config.get('KPAY_API_KEY', { infer: true })) {
-          providers.push(new KpayProvider(config));
+        // Les quatre valeurs Kkiapay vont ensemble — `config/env.ts` refuse de
+        // démarrer sur une configuration partielle.
+        if (config.get('KKIAPAY_PUBLIC_KEY', { infer: true })) {
+          providers.push(new KkiapayProvider(config));
         }
 
         /**

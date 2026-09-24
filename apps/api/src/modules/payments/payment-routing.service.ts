@@ -12,6 +12,7 @@ import {
   getPaymentProviderDefinition,
   isPaymentProviderActive,
   paymentMethodRequiresPhone,
+  providerAcceptsCurrency,
   resolveProviderMethodCode,
   type CheckoutPaymentMethod,
   type CheckoutPaymentMethods,
@@ -103,8 +104,8 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
       // heure sur une intégration qu'on a mise de côté.
       if (!isPaymentProviderActive(code)) continue;
 
-      // Un prestataire qui ne sait pas décrire son compte marchand — KPay n'a
-      // pas d'API pour cela — se configure à la main. Rien à constater, et
+      // Un prestataire qui ne sait pas décrire son compte marchand — Kkiapay
+      // n'a pas d'API pour cela — se configure à la main. Rien à constater, et
       // surtout pas un avertissement toutes les heures.
       if (!this.registry.get(code).listMerchantMethods) continue;
 
@@ -126,11 +127,12 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
   }
 
   /**
-   * Relève l'état opérationnel des opérateurs chez les prestataires branchés.
+   * Relève l'état opérationnel des opérateurs chez les prestataires branchés
+   * qui le publient — Kkiapay ne le publie pas : pour lui, ce relevé ne fait
+   * rien, et ses moyens restent à `UNKNOWN`, donc proposés.
    *
-   * Toutes les cinq minutes : KPay met sa réponse en cache une minute, et une
-   * panne d'opérateur se compte en dizaines de minutes — interroger plus
-   * souvent ne dirait rien de plus.
+   * Toutes les cinq minutes : une panne d'opérateur se compte en dizaines de
+   * minutes — interroger plus souvent ne dirait rien de plus.
    *
    * Un prestataire injoignable ne ferme RIEN : les états relevés restent ceux
    * du dernier passage. Fermer tous les moyens parce qu'une requête a échoué
@@ -224,7 +226,13 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
       if (!this.isEffective(row, 'collection')) continue;
 
       const definition = getPaymentMethodDefinition(row.methodCode);
-      if (!definition) continue;
+      const provider = this.providerFor(row);
+      if (!definition || !provider) continue;
+
+      // Comment ce moyen se valide chez le prestataire qui le traite ICI :
+      // l'écran demande le numéro, envoie sur une page, ou ouvre la fenêtre
+      // du prestataire — sans jamais savoir de quel prestataire il s'agit.
+      const flow = provider.checkoutFlow(definition.kind);
 
       seen.add(row.methodCode);
       methods.push({
@@ -233,8 +241,9 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
         description: definition.description,
         kind: definition.kind,
         group: definition.group,
-        requiresPhone: paymentMethodRequiresPhone(definition.kind),
-        redirects: definition.kind === 'CARD',
+        flow,
+        requiresPhone: flow === 'push' && paymentMethodRequiresPhone(definition.kind),
+        redirects: flow === 'redirect',
         logo: definition.logo ?? null,
         brandColor: definition.brandColor ?? null,
         brandColorIsLight: definition.brandColorIsLight ?? false,
@@ -379,8 +388,8 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
 
     const definition = getPaymentMethodDefinition(input.methodCode);
     const provider = getPaymentProviderDefinition(input.providerCode);
-    // Le code du moyen dépend du PAYS chez certains prestataires : KPay nomme
-    // MTN MoMo `MTN_MOMO_BEN` au Bénin et `MTN_MOMO_CIV` en Côte d'Ivoire.
+    // Le code du moyen peut dépendre du PAYS chez certains prestataires : la
+    // table du prestataire le dit, pays par pays.
     const providerMethodCode = resolveProviderMethodCode(
       input.providerCode,
       input.methodCode,
@@ -391,6 +400,15 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
       throw new BadRequestException(
         `${provider?.label ?? input.providerCode} ne prend pas en charge ` +
           `${definition?.label ?? input.methodCode} pour ce pays (${country.name}).`,
+      );
+    }
+
+    // Kkiapay n'encaisse qu'en francs CFA : lui confier la Guinée ferait
+    // échouer chaque paiement, un par un, après le choix de l'acheteur.
+    if (!providerAcceptsCurrency(input.providerCode, country.currency)) {
+      throw new BadRequestException(
+        `${provider.label} n'encaisse pas en ${country.currency} : il ne peut pas traiter ` +
+          `les paiements de ce pays (${country.name}).`,
       );
     }
 
@@ -534,8 +552,8 @@ export class PaymentRoutingService implements OnApplicationBootstrap {
    * Le prestataire qui traite une ligne : celui qu'elle nomme s'il est
    * branché ; sinon le simulateur, s'il est enregistré — ce qui n'arrive que
    * hors production ET sans aucun prestataire réel configuré (voir
-   * `PaymentsModule`). Dès qu'une clé Bictorys est renseignée, c'est
-   * l'environnement de Bictorys — test ou live — qui dit si l'argent est
+   * `PaymentsModule`). Dès que les clés Kkiapay sont renseignées, c'est son
+   * environnement — bac à sable ou production — qui dit si l'argent est
    * réel, et plus rien ici ne simule.
    */
   private providerFor(row: CountryPaymentMethodRow): PaymentProvider | null {

@@ -293,7 +293,15 @@ export class OrdersService {
         });
 
         if (order.totalAmount === 0) {
-          await this.markPaid(tx, order.id, now, 0);
+          // La réservation court encore — `requireOpenOrder` l'a vérifié —,
+          // l'échec n'arrive donc qu'en cas de course : tout est annulé.
+          const settled = await this.markPaid(tx, order.id, now, 0);
+
+          if (settled !== 'paid') {
+            throw new ConflictException(
+              'Les places de cette commande ne sont plus disponibles. Recommence ta sélection.',
+            );
+          }
         }
       },
       { maxWait: 20_000, timeout: 20_000 },
@@ -387,14 +395,22 @@ export class OrdersService {
    * N'ouvre PAS de transaction : elle est appelée depuis celle qui confirme le
    * paiement. Le stock, la commande et le paiement basculent ensemble ou pas
    * du tout.
+   *
+   * Une commande dont la réservation a pris fin (paiement tardif) n'est
+   * honorée que si ses places sont encore libres — voir
+   * `StockService.secureForPayment`. Sinon, rien n'est écrit et la réponse le
+   * dit : l'argent est encaissé, la commande ne l'est pas, et c'est au
+   * rapprochement de le montrer pour qu'un remboursement suive.
    */
   async markPaid(
     tx: Prisma.TransactionClient,
     orderId: string,
     paidAt: Date,
     providerFeeAmount: number,
-  ): Promise<void> {
-    await this.stock.confirm(tx, orderId);
+  ): Promise<'paid' | 'unfulfillable'> {
+    const secured = await this.stock.secureForPayment(tx, orderId);
+
+    if (!secured) return 'unfulfillable';
 
     const order = await tx.order.update({
       where: { id: orderId },
@@ -475,6 +491,8 @@ export class OrdersService {
         tx,
       );
     }
+
+    return 'paid';
   }
 
   /**

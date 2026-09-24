@@ -85,8 +85,8 @@ type RefundForExecution = Prisma.RefundGetPayload<{
  * plus retirer ce qu'il doit rendre — et les billets cessent d'être valables.
  *
  * L'EXÉCUTION, elle, se suit à part, parce qu'elle ne dépend pas de nous :
- *   · par le prestataire quand il le peut — KPay rembourse intégralement, dans
- *     les sept jours, de façon asynchrone ;
+ *   · par le prestataire quand il le peut — Kkiapay rembourse intégralement
+ *     un paiement Mobile Money, sans en rendre les frais ;
  *   · à la main sinon — depuis son tableau de bord, ou par transfert vers le
  *     numéro qui a payé — puis consignée dans la console.
  * Tant qu'il n'est pas `COMPLETED`, un remboursement reste dans la file de
@@ -686,7 +686,12 @@ export class RefundsService {
    * perdue ne ferait qu'ajouter un refus à la liste.
    */
   private automaticBlocker(
-    payment: { providerCode: string; amount: number; confirmedAt: Date | null },
+    payment: {
+      providerCode: string;
+      methodCode: string;
+      amount: number;
+      confirmedAt: Date | null;
+    },
     amount: number,
   ): string | null {
     const code = payment.providerCode as PaymentProviderCode;
@@ -700,6 +705,17 @@ export class RefundsService {
 
     if (!provider.capabilities.refund) {
       return `${label} ne rembourse pas par API : ce remboursement se fait à la main.`;
+    }
+
+    // Kkiapay ne documente le remboursement que pour le Mobile Money : une
+    // carte se rembourse depuis son tableau de bord, puis se consigne ici.
+    const kinds = provider.capabilities.refundMethodKinds;
+    const method = getPaymentMethodDefinition(payment.methodCode);
+
+    if (kinds !== null && (!method || !kinds.includes(method.kind))) {
+      return `${label} ne rembourse pas par API un paiement ${
+        method ? `par ${method.label}` : 'de ce type'
+      } : ce remboursement se fait à la main.`;
     }
 
     // Partiel au sens du PRESTATAIRE : moins que ce qu'il a encaissé. Rendre

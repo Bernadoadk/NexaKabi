@@ -15,8 +15,8 @@ les logos officiels**.
 
 Les logos des opérateurs sont des **marques déposées**. Leur usage suppose :
 
-- de récupérer les fichiers dans la charte officielle de chaque opérateur, ou auprès de KPay qui
-  les redistribue parfois à ses marchands ;
+- de récupérer les fichiers dans la charte officielle de chaque opérateur, ou auprès du prestataire
+  de paiement (Kkiapay) qui les fournit parfois à ses marchands ;
 - de respecter leurs contraintes d'usage — zone de protection, proportions, fonds admis ;
 - de vérifier que notre relation commerciale autorise l'affichage de la marque.
 

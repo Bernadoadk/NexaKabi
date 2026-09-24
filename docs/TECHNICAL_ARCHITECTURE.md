@@ -569,7 +569,7 @@ PaymentRoutingService     listCollectionMethods(pays)   → écran A3, généré
                           resolvePayout(pays, moyen)     → prestataire qui verse, ou « manuel »
                           syncProvider(prestataire)      → relit le compte marchand
         ▼
-PaymentProvider           bictorys · mock                 une implémentation par PRESTATAIRE
+PaymentProvider           kkiapay · bictorys (hérité) · mock    une implémentation par PRESTATAIRE
 ```
 
 Trois pays interviennent dans une vente, et ils peuvent différer : le pays de l'**événement** (fixe la
@@ -591,26 +591,35 @@ moyen disparaît de l'écran.
 // apps/api/src/modules/payments/providers/payment-provider.ts
 
 abstract class PaymentProvider {
-  readonly code: PaymentProviderCode; // 'bictorys' | 'mock' — un PRESTATAIRE, jamais un moyen
+  readonly code: PaymentProviderCode; // 'kkiapay' | 'bictorys' | 'mock' — un PRESTATAIRE, jamais un moyen
   readonly capabilities: {
     refund: boolean;
     partialRefund: boolean;
+    refundMethodKinds: PaymentMethodKind[] | null; // Kkiapay : Mobile Money seulement
+    refundWindowDays: number | null;
     payout: boolean;
     statusPolling: boolean;
     /** Le webhook ne prouve rien à lui seul : relire l'état chez le prestataire avant de créditer. */
     verifyWebhookByFetch: boolean;
   };
 
+  /** Comment l'acheteur valide : `push` (téléphone), `redirect` (page), `widget` (fenêtre du prestataire). */
+  checkoutFlow(kind: PaymentMethodKind): CheckoutFlow;
   /** Le moyen et le pays sont PASSÉS à chaque appel : le prestataire n'en porte aucun en dur. */
-  initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult>; // → redirectUrl pour la carte
-  getStatus(providerReference: string): Promise<ProviderPaymentStatus>;
-  /** Normalise une notification d'ENCAISSEMENT ou de VERSEMENT — `kind: 'payment' | 'payout'`. */
+  initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult>; // → redirectUrl ou widget
+  /** Reconstruit la fenêtre d'un paiement déjà lancé (obligatoire en `widget`). */
+  widget?(input: InitiatePaymentInput): PaymentWidget;
+  getStatus(providerReference: string): Promise<ProviderPaymentStatus>; // statut, montant, notre référence
+  /** Normalise une notification — `kind: 'payment' | 'payout' | 'refund'`. */
   parseWebhook(raw: RawWebhook): Promise<NormalizedWebhookEvent>;
   refund(input: RefundInput): Promise<RefundResult>;
+  getRefundStatus?(providerReference: string): Promise<ProviderRefundStatus>;
   payout?(input: PayoutInput): Promise<PayoutResult>;
   getPayoutStatus?(providerReference: string): Promise<ProviderPayoutStatus>;
   /** Ce que le compte marchand sait faire, pays par pays — pour la synchronisation. */
   listMerchantMethods?(): Promise<MerchantMethod[]>;
+  listAvailability?(): Promise<ProviderAvailability[]>;
+  getBalance?(): Promise<ProviderBalance[]>;
 }
 ```
 
@@ -618,18 +627,20 @@ abstract class PaymentProvider {
 
 | Prestataire           | Rôle                                                                                                                                                   |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `BictorysProvider`    | Principal. Mobile Money par API directe (`POST /pay/v1/charges?payment_type=…`), carte par page hébergée, versements (`POST /pay/v1/payouts`), remboursements intégraux, synchronisation du compte marchand |
-| `MockPaymentProvider` | Hors production. Un seul prestataire pour tous les moyens et tous les pays ; scénarios par numéro (`00`/`11`/`22`) ; page de carte simulée qui envoie le webhook PUIS renvoie l'acheteur |
+| `KkiapayProvider`     | **Seul prestataire actif.** Mobile Money et carte en XOF, dans la fenêtre Kkiapay (`widget`) ; vérification serveur `POST /api/v1/transactions/status` ; remboursement intégral Mobile Money (`/api/v1/transactions/revert`) ; pas de versement vers un tiers. Voir `docs/PAYMENT_PROVIDER_KKIAPAY.md` |
+| `BictorysProvider`    | **Hérité** : jamais routé, branché seulement pour relire et rembourser ce qu'il a encaissé                                                              |
+| `MockPaymentProvider` | Hors production, sans clé Kkiapay. Un seul prestataire pour tous les moyens et tous les pays ; scénarios par numéro (`00`/`11`/`22`) ; page de carte simulée qui envoie le webhook PUIS renvoie l'acheteur |
 
-**Le webhook n'est qu'un signal.** Bictorys authentifie ses notifications par un secret partagé
-(`X-Secret-Key`), sans signature du corps. Un succès annoncé est donc **relu** par
-`GET /pay/v1/transactions/{id}` avant d'être appliqué ; si la relecture échoue, la notification
-reste `RECEIVED` et la réconciliation reprend. Un billet n'est jamais émis sur la seule foi d'un
-message entrant.
+**Le webhook n'est qu'un signal.** Kkiapay authentifie ses notifications par un secret partagé
+(`x-kkiapay-secret`), sans signature du corps. Chaque transaction annoncée est donc **relue** chez
+lui avant d'être appliquée ; si la relecture échoue, la notification reste `RECEIVED` et la
+réconciliation reprend. Un billet n'est jamais émis sur la seule foi d'un message entrant — ni sur
+celle d'un « succès » rapporté par la page.
 
 **La commission ne dépend jamais du moyen de paiement.** `CommissionPolicy` se résout par portée —
 organisation > pays > plateforme — et se fige sur la commande. Les frais du prestataire sont une
-autre ligne (`PROVIDER_FEE`), constatée à l'encaissement avec les `merchantFees` qu'il annonce.
+autre ligne (`PROVIDER_FEE`), constatée à l'encaissement avec ce qu'il annonce avoir retenu SUR
+NOUS — des frais payés par l'acheteur en plus du prix n'en font pas partie.
 
 ## 6.3 Machine à états
 
@@ -661,7 +672,24 @@ autre ligne (`PROVIDER_FEE`), constatée à l'encaissement avec les `merchantFee
 | `REFUNDED`   | Remboursement confirmé                                        | `REFUNDED`                                | Billets `REFUNDED`       |
 
 **Transitions interdites** : `SUCCEEDED` → `FAILED` (un webhook d'échec arrivant après un succès est
-journalisé et ignoré), toute transition depuis un état terminal sauf remboursement.
+journalisé et ignoré), et depuis un état terminal toute transition autre que le remboursement — ou le
+**succès tardif**.
+
+**Le succès tardif** (`FAILED`, `EXPIRED`, `CANCELLED` → `SUCCEEDED`) : le prestataire confirme avoir
+encaissé un paiement que nous avions clos — validation dans la fenêtre une minute après la fin de la
+réservation, confirmation d'opérateur arrivée après notre abandon. L'argent est parti ; le paiement
+passe donc à `SUCCEEDED`, et la commande :
+
+- est honorée si ses places sont encore libres (`StockService.secureForPayment` les reprend sous le
+  même verrou qu'un achat) ;
+- sinon reste telle quelle, et le rapprochement la signale (« Paiement réussi, commande non payée »)
+  pour qu'un remboursement suive.
+
+**L'encaissement en double ne s'applique jamais.** La base n'admet qu'un paiement réussi par commande
+(index `payment_one_success_per_order`). Un succès qui arrive sur une commande déjà réglée — ou une
+seconde transaction réussie sur un paiement déjà réglé — n'est donc pas appliqué : il est consigné
+(`payment.duplicate`) et le rapprochement le signale (« Commande payée deux fois »), pour qu'il soit
+remboursé. L'acheteur, lui, voit sa commande confirmée.
 
 ## 6.4 Séquence nominale
 
@@ -696,6 +724,41 @@ Client                API                  Provider           Webhook
   │◄── polling renvoie SUCCEEDED ────────────────────────────────┤
   ├─ redirection vers l'écran de confirmation                    │
 ```
+
+### 6.4.1 Séquence « fenêtre de paiement » (Kkiapay)
+
+Kkiapay ne lance pas de paiement depuis un serveur : c'est son SDK qui ouvre, dans la page, une
+fenêtre où l'acheteur choisit son opérateur, saisit son numéro ou sa carte, et valide. La page ne
+fait que transporter une RÉFÉRENCE ; le serveur la lit chez Kkiapay, et seule cette lecture règle
+la commande.
+
+```
+Page                  API                         Kkiapay
+  │                    │                             │
+  ├─ POST /payments ──►│ Payment(PENDING), expire avec la réservation
+  │◄── widget { key publique, sandbox, amount, partnerId = payment.id }
+  ├─ openKkiapayWidget ─────────────────────────────►│ l'acheteur valide
+  │◄──────────────── succès { transactionId } ───────┤
+  ├─ POST /payments/:id/confirm { providerReference }│
+  │                    ├─ POST /api/v1/transactions/status ─►│
+  │                    │◄── status, amount, partnerId ───────┤
+  │                    ├─ partnerId = payment.id ? montant = dû ?
+  │                    ├─ TRANSACTION : SUCCEEDED, commande PAID, billets, grand livre
+  │◄── SUCCEEDED ──────┤                             │
+  │                    │◄── webhook transaction.success (x-kkiapay-secret)
+  │                    ├─ relit la transaction, même contrôle → déjà appliqué, sans effet
+```
+
+- **Le paiement reste ouvert après un échec.** Dans la fenêtre, l'acheteur peut se tromper puis
+  réessayer sur le MÊME paiement (`partnerId` inchangé) : un échec est consigné et montré, le
+  paiement reste `PENDING` jusqu'au succès ou à la fin de la réservation.
+- **Changer de moyen réutilise le paiement.** MTN → carte : même `partnerId`, seule la famille de la
+  fenêtre change — une validation tardive sur l'ancien moyen règle toujours la commande.
+- **Trois chemins mènent au même verdict** : la page (`confirm`), la notification, et la
+  réconciliation (interrogation de la transaction rattachée). Tous passent par
+  `PaymentsService.applyOutcome`, sous verrou : une seule émission de billets.
+- **Rien ne s'est rapporté ?** La console (Finance → Transactions → détail) rattache une référence
+  de transaction à la main — vérifiée chez Kkiapay avec les mêmes contrôles.
 
 ## 6.5 Garanties à implémenter
 

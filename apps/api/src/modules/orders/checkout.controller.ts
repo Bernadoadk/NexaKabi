@@ -20,6 +20,7 @@ import { OrdersService } from './orders.service';
 import {
   BuyerDetailsDto,
   ConfirmOrderDto,
+  ConfirmPaymentDto,
   CreateOrderDto,
   InitiatePaymentDto,
 } from './dto/orders.dto';
@@ -171,6 +172,30 @@ export class CheckoutController {
     @Param('paymentId') paymentId: string,
   ): Promise<PaymentState> {
     return this.payments.getState(reference.toUpperCase(), paymentId);
+  }
+
+  /**
+   * La fenêtre de paiement du prestataire s'est refermée sur une transaction.
+   *
+   * La page transmet sa référence ; le serveur la lit chez le prestataire et
+   * n'applique que ce qu'il y lit. Rien de ce que dit le navigateur ne
+   * confirme un paiement — voir `PaymentsService.confirmFromCheckout`.
+   */
+  @Public()
+  @UseGuards(CheckoutAccessGuard)
+  @Post('orders/:reference/payments/:paymentId/confirm')
+  @ApiHeader({ name: CHECKOUT_TOKEN_HEADER, required: false })
+  @ApiOperation({ summary: 'Faire vérifier une transaction de la fenêtre de paiement' })
+  async confirmPayment(
+    @Param('reference') reference: string,
+    @Param('paymentId') paymentId: string,
+    @Body() body: ConfirmPaymentDto,
+  ): Promise<PaymentState> {
+    return this.payments.confirmFromCheckout(
+      reference.toUpperCase(),
+      paymentId,
+      body.providerReference,
+    );
   }
 }
 

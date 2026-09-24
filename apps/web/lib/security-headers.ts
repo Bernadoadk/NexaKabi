@@ -26,6 +26,15 @@ import type { NextRequest, NextResponse } from 'next/server';
  * ensemble, l'une bouche le trou, l'autre limite les dégâts du prochain.
  */
 
+/**
+ * Origines du paiement Kkiapay : le SDK documenté (`cdn.kkiapay.me/k.js`) et
+ * le cadre de sa fenêtre de paiement, que ce SDK ouvre — adresse relevée dans
+ * son code. Si Kkiapay change d'hôte, la fenêtre sera bloquée par le
+ * navigateur : c'est ici qu'il faudra la suivre.
+ */
+const KKIAPAY_SDK_ORIGIN = 'https://cdn.kkiapay.me';
+const KKIAPAY_WIDGET_ORIGIN = 'https://widget-v3.kkiapay.me';
+
 export function generateNonce(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
@@ -65,8 +74,9 @@ function buildPolicy({ nonce, isDevelopment, strict = false }: PolicyOptions): s
         // Le SDK Google Maps, chargé par une balise qui porte le nonce ; les
         // modules qu'il tire ensuite passent par `strict-dynamic`. Listé
         // quand même : un navigateur qui ignore `strict-dynamic` retombe sur
-        // cette liste d'hôtes.
-        ...(strict ? [] : ['https://maps.googleapis.com']),
+        // cette liste d'hôtes. Même raison pour le SDK de paiement Kkiapay,
+        // inséré par notre propre code au moment de payer.
+        ...(strict ? [] : ['https://maps.googleapis.com', KKIAPAY_SDK_ORIGIN]),
       ],
     ],
 
@@ -121,10 +131,15 @@ function buildPolicy({ nonce, isDevelopment, strict = false }: PolicyOptions): s
     ['worker-src', ["'self'", 'blob:']],
     ['manifest-src', ["'self'"]],
 
-    // Aucun greffon, aucun cadre : ni `<object>`, ni `<embed>`, ni iframe tierce.
+    // Aucun greffon : ni `<object>`, ni `<embed>`. Un seul cadre tiers, nommé :
+    // la fenêtre de paiement Kkiapay, que son SDK ouvre dans un cadre servi
+    // par son propre domaine. Autorisé sur tout le site public, pas sur le
+    // seul tunnel : la politique est celle du document CHARGÉ, et l'acheteur
+    // arrive souvent au paiement par une navigation interne depuis une autre
+    // page, sans nouveau document.
     ['object-src', ["'none'"]],
-    ['frame-src', ["'none'"]],
-    ['child-src', ["'none'"]],
+    ['frame-src', strict ? ["'none'"] : [KKIAPAY_WIDGET_ORIGIN]],
+    ['child-src', strict ? ["'none'"] : [KKIAPAY_WIDGET_ORIGIN]],
 
     // Personne ne peut encadrer ces pages : la version moderne de
     // `X-Frame-Options`, qui reste posé pour les navigateurs anciens.

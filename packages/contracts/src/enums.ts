@@ -190,16 +190,16 @@ export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
 /**
  * Prestataires de paiement — ceux qui traitent réellement l'argent.
  *
- * Un prestataire n'est PAS un moyen de paiement : KPay encaisse MTN MoMo et
- * Moov Money derrière la même API. Le participant ne voit jamais ce
- * code ; il choisit un MOYEN, et la configuration du pays désigne le
+ * Un prestataire n'est PAS un moyen de paiement : Kkiapay encaisse MTN MoMo,
+ * Moov Money et la carte derrière la même API. Le participant ne voit jamais
+ * ce code ; il choisit un MOYEN, et la configuration du pays désigne le
  * prestataire qui le traite. Ajouter un prestataire consiste à déposer une
  * implémentation de `PaymentProvider` et à ajouter son code ici.
  *
  * `mock` est le simulateur, hors production uniquement.
  * Voir docs/TECHNICAL_ARCHITECTURE.md §6.2.
  */
-export const PAYMENT_PROVIDERS = ['bictorys', 'kpay', 'mock'] as const;
+export const PAYMENT_PROVIDERS = ['bictorys', 'kkiapay', 'mock'] as const;
 export const paymentProviderSchema = makeEnum(PAYMENT_PROVIDERS).schema;
 export type PaymentProviderCode = z.infer<typeof paymentProviderSchema>;
 

@@ -5,7 +5,7 @@ import { PaymentProvider } from './providers/payment-provider';
 /**
  * Annuaire des PRESTATAIRES branchés.
  *
- * Indexé par prestataire — `bictorys`, `mock` — et non par moyen de paiement :
+ * Indexé par prestataire — `kkiapay`, `mock` — et non par moyen de paiement :
  * un prestataire en traite plusieurs, dans plusieurs pays. Qui traite quel
  * moyen où est une question de configuration, tranchée par
  * `PaymentRoutingService` ; ici, on ne fait que retrouver une implémentation
@@ -23,6 +23,18 @@ export class PaymentProviderRegistry {
       if (provider.capabilities.payout && (!provider.payout || !provider.getPayoutStatus)) {
         throw new Error(
           `Le prestataire ${provider.code} annonce savoir verser sans implémenter payout() et getPayoutStatus().`,
+        );
+      }
+
+      // Même garde pour une fenêtre de paiement : sans `widget()`, un paiement
+      // lancé ne pourrait plus être repris après une fenêtre fermée.
+      const usesWidget = (['MOBILE_MONEY', 'CARD'] as const).some(
+        (kind) => provider.checkoutFlow(kind) === 'widget',
+      );
+
+      if (usesWidget && !provider.widget) {
+        throw new Error(
+          `Le prestataire ${provider.code} se valide dans sa fenêtre de paiement sans implémenter widget().`,
         );
       }
     }

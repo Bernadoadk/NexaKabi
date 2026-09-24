@@ -52,6 +52,22 @@ export const AUDIT_ACTIONS = {
   paymentWebhookIgnored: 'payment.webhook_ignored',
   /** Écart rattrapé par la réconciliation : un webhook s'est perdu. */
   paymentReconciled: 'payment.reconciled',
+  /**
+   * Transaction présentée pour un paiement, refusée à la vérification : elle
+   * appartient à un autre paiement, ou ne porte pas le bon montant. C'est la
+   * trace d'une page qui s'est trompée — ou qui a essayé.
+   */
+  paymentVerificationRejected: 'payment.verification_rejected',
+  /** Tentative échouée dans la fenêtre du prestataire ; le paiement reste ouvert. */
+  paymentAttemptFailed: 'payment.attempt_failed',
+  /** Succès confirmé après la fin de la réservation ; la commande a pu être honorée. */
+  paymentLateSettled: 'payment.late_settled',
+  /** Succès confirmé, mais la commande ne peut plus être honorée : à rembourser. */
+  paymentUnfulfillable: 'payment.unfulfillable',
+  /** Succès confirmé sur une commande déjà réglée par un autre paiement : à rembourser. */
+  paymentDuplicate: 'payment.duplicate',
+  /** Transaction du prestataire rattachée à la main par un administrateur. */
+  paymentTransactionAttached: 'payment.transaction_attached',
 
   ticketIssued: 'ticket.issued',
   ticketCancelled: 'ticket.cancelled',

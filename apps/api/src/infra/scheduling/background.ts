@@ -7,8 +7,8 @@ const logger = new Logger('Background');
  * Poursuit un travail APRÈS la réponse HTTP.
  *
  * ── Pourquoi c'est nécessaire ───────────────────────────────────────────────
- * Certains appelants n'attendent pas : KPay abandonne une notification au bout
- * de trois secondes, la rejoue deux fois, puis cesse. Or le traitement d'un
+ * Certains appelants n'attendent pas : Kkiapay rejoue une notification cinq
+ * fois en quelques secondes, puis cesse. Or le traitement d'un
  * encaissement — relecture chez le prestataire, confirmation de la commande,
  * émission des billets, grand livre — dépasse ce délai au premier appel
  * d'une instance qui démarre. La bonne réponse est celle que le prestataire

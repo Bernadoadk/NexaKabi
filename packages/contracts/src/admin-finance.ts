@@ -10,7 +10,7 @@
  *
  * ── Une vente, en cascade ───────────────────────────────────────────────────
  *   Montant brut          ce que les participants ont payé
- *   − Frais prestataire   ce que l'opérateur (KPay) a prélevé
+ *   − Frais prestataire   ce que le prestataire (Kkiapay) a prélevé sur nous
  *   − Commission          ce que Nexa-Kabi garde
  *   = Net organisateurs   ce qui revient aux organisateurs
  *
@@ -270,9 +270,57 @@ export const adminPaymentDetailSchema = adminPaymentSummarySchema.extend({
   ),
 
   timeline: z.array(paymentTimelineEntrySchema),
+
+  /**
+   * Une transaction du prestataire peut être rattachée à la main à ce
+   * paiement — fenêtre de paiement dont ni la page ni la notification ne nous
+   * ont rapporté l'issue.
+   */
+  canAttachTransaction: z.boolean(),
 });
 
 export type AdminPaymentDetail = z.infer<typeof adminPaymentDetailSchema>;
+
+/**
+ * Rattacher une transaction du prestataire à un paiement.
+ *
+ * Le cas : un acheteur a payé, mais ni la page ni la notification ne nous
+ * l'ont dit — il se présente au support avec la référence de sa transaction.
+ * La référence n'est qu'une piste : le serveur la lit chez le prestataire et
+ * n'agit que si elle porte l'identifiant de CE paiement et le bon montant.
+ */
+export const attachPaymentTransactionSchema = z.object({
+  providerReference: z
+    .string()
+    .trim()
+    .min(1, 'Indique la référence de la transaction')
+    .max(100)
+    .regex(/^[A-Za-z0-9_-]+$/, 'Référence de transaction invalide'),
+});
+
+export type AttachPaymentTransactionInput = z.infer<typeof attachPaymentTransactionSchema>;
+
+export const ATTACH_TRANSACTION_OUTCOMES = [
+  /** Encaissée : la commande est payée, les billets émis. */
+  'settled',
+  /** Encaissée, mais les places ne sont plus disponibles : à rembourser. */
+  'unfulfillable',
+  /** Encaissée sur une commande déjà réglée : à rembourser. */
+  'duplicate',
+  /** La transaction a échoué chez le prestataire : rien n'a été encaissé. */
+  'failed',
+  /** Encore en cours chez le prestataire : rattachée, relue automatiquement. */
+  'pending',
+  /** Ce paiement est déjà réglé par cette transaction. */
+  'already',
+] as const;
+
+export const attachPaymentTransactionResultSchema = z.object({
+  outcome: z.enum(ATTACH_TRANSACTION_OUTCOMES),
+  message: z.string(),
+});
+
+export type AttachPaymentTransactionResult = z.infer<typeof attachPaymentTransactionResultSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Paiements échoués
@@ -386,6 +434,7 @@ export const RECONCILIATION_ISSUE_KINDS = [
   'unknown_webhook',
   'amount_mismatch',
   'paid_without_order',
+  'duplicate_payment',
   'order_without_ledger',
   'stale_payout',
   'stale_refund',
@@ -400,6 +449,7 @@ export const RECONCILIATION_ISSUE_LABELS: Readonly<Record<ReconciliationIssueKin
   unknown_webhook: 'Notification sans objet',
   amount_mismatch: 'Montant annoncé incohérent',
   paid_without_order: 'Paiement réussi, commande non payée',
+  duplicate_payment: 'Commande payée deux fois',
   order_without_ledger: 'Commande payée absente du grand livre',
   stale_payout: 'Retrait en cours depuis plus d’un jour',
   stale_refund: 'Remboursement en cours depuis plus d’un jour',

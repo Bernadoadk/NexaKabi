@@ -8,13 +8,12 @@
  *   · Le MOYEN      — ce que le participant reconnaît : « MTN MoMo », « Wave »,
  *                     « Carte bancaire ». Un catalogue de marques, pas de code
  *                     métier.
- *   · Le PRESTATAIRE — qui traite réellement l'argent : KPay aujourd'hui,
+ *   · Le PRESTATAIRE — qui traite réellement l'argent : Kkiapay aujourd'hui,
  *                     un autre demain. Le participant ne le voit jamais.
  *
  * Ce qui relie les trois est une CONFIGURATION, pas du code : « au Bénin, MTN
- * MoMo est collecté ET versé par KPay sous le code `MTN_MOMO_BEN` ». Ouvrir
- * la Côte d'Ivoire consiste à ajouter des lignes de cette configuration, pas
- * à écrire un `if (country === 'CI')`.
+ * MoMo est encaissé par Kkiapay ». Ouvrir la Côte d'Ivoire consiste à ajouter
+ * des lignes de cette configuration, pas à écrire un `if (country === 'CI')`.
  *
  * ── Collecte et versement sont deux capacités distinctes ────────────────────
  * Qu'un moyen sache ENCAISSER ne dit rien de sa capacité à VERSER, et
@@ -261,7 +260,7 @@ export function paymentMethodRequiresPhone(kind: PaymentMethodKind): boolean {
  * les expliquer des mois plus tard. `LEGACY` dit exactement cela — on ne lui
  * confie plus RIEN de neuf, et on sait encore lire ce qu'il a fait.
  *
- * Un seul prestataire est `ACTIVE` au lancement : KPay. Le jour où un autre
+ * Un seul prestataire est `ACTIVE` au lancement : Kkiapay. Le jour où un autre
  * s'ajoute, il suffit de le déclarer ici — rien d'autre ne bouge.
  */
 export type PaymentProviderStatus = 'ACTIVE' | 'LEGACY';
@@ -275,6 +274,15 @@ export interface PaymentProviderDefinition {
    */
   readonly status: PaymentProviderStatus;
   /**
+   * Devises que le prestataire sait encaisser. Absent : aucune restriction
+   * connue.
+   *
+   * Contrôlé à la configuration d'un pays : confier un moyen à un prestataire
+   * qui ne parle pas la devise du pays produirait des paiements refusés un par
+   * un, au moment où l'acheteur a déjà choisi.
+   */
+  readonly currencies?: readonly CurrencyCode[];
+  /**
    * Codes de moyens tels que CE prestataire les nomme, par moyen du catalogue.
    *
    * Vaut pour tous les pays. Un prestataire qui nomme le même moyen
@@ -285,10 +293,10 @@ export interface PaymentProviderDefinition {
    * Codes qui DÉPENDENT du pays, indexés par code ISO alpha-2.
    *
    * ── Pourquoi cette seconde table ────────────────────────────────────────
-   * Bictorys nomme MTN MoMo `mtn_money` partout ; KPay le nomme
-   * `MTN_MOMO_BEN` au Bénin et `MTN_MOMO_CIV` en Côte d'Ivoire — chez lui, le
-   * code de moyen porte le pays, et c'est LUI qui en déduit la devise. Un seul
-   * code par moyen ne peut donc pas convenir à tous les prestataires.
+   * Certains prestataires font porter le pays au code du moyen — MTN MoMo y
+   * devient un code différent au Bénin et en Côte d'Ivoire, et c'est ce code
+   * qui fixe la devise chez eux. Un seul code par moyen ne peut donc pas
+   * convenir à tous les prestataires.
    *
    * Consultée AVANT `methodCodes` : un pays nommé ici l'emporte. Un moyen
    * absent des deux tables ne peut pas être confié à ce prestataire.
@@ -335,32 +343,37 @@ export const PAYMENT_PROVIDER_DEFINITIONS: readonly PaymentProviderDefinition[] 
   },
   {
     /**
-     * KPay — Mobile Money dans douze pays d'Afrique, derrière une seule API.
+     * Kkiapay — Mobile Money et carte bancaire, en francs CFA.
      *
-     * ── Ce qu'il couvre chez nous, et ce qu'il ne couvre pas ────────────────
-     * Son catalogue d'opérateurs (docs KPay, « Opérateurs & pays ») ne retient
-     * pour l'Afrique de l'Ouest que le Bénin, la Côte d'Ivoire et le Sénégal —
-     * le Togo n'y figure pas, ni Wave dans aucun pays. Les codes ci-dessous
-     * sont relevés un par un dans ce catalogue : aucun n'est déduit du motif
-     * `OPÉRATEUR_PAYS`, parce qu'il souffre des exceptions (`AIRTEL_OAPI_UGA`).
+     * ── Ce que désigne son code de moyen ────────────────────────────────────
+     * Le paiement se fait dans SA fenêtre, où l'acheteur choisit son opérateur
+     * et saisit son numéro. Cette fenêtre ne se règle qu'à la FAMILLE de
+     * paiement — `momo` ou `card`, les valeurs documentées de son attribut
+     * `paymentmethod`. C'est donc ce que porte le code de moyen : la fenêtre
+     * s'ouvre limitée à la famille du moyen choisi sur notre écran.
      *
-     * ── Pourquoi la carte n'y est pas ───────────────────────────────────────
-     * KPay encaisse bien Visa et Mastercard, mais sa page hébergée facture
-     * **en USD** (minimum 1 USD), l'acheteur payant l'équivalent en monnaie
-     * locale. Une commande Nexa-Kabi est libellée en entiers XOF : la faire
-     * transiter par une conversion dont nous ne maîtrisons ni le taux ni
-     * l'arrondi ferait diverger le montant encaissé du montant dû, et le grand
-     * livre avec. La carte reste donc à un prestataire qui encaisse en XOF.
+     * ── Les opérateurs retenus ─────────────────────────────────────────────
+     * Ceux que sa FAQ annonce : MTN, Moov, Celtiis, Orange, Free, T-Money.
+     * Wave y figure aussi, mais rien ne dit dans quelle famille la fenêtre le
+     * range : il n'est pas repris ici tant que ce n'est pas constaté sur le
+     * compte. Quel opérateur est ouvert DANS QUEL PAYS, la documentation ne le
+     * publie pas : cela se configure ligne par ligne, jamais par déduction.
+     *
+     * Devise : le franc CFA seulement (« Devises supportées »).
+     * Documentation : https://docs.kkiapay.me/v1/
      */
-    code: 'kpay',
-    label: 'KPay',
+    code: 'kkiapay',
+    label: 'Kkiapay',
     status: 'ACTIVE',
-    methodCodes: {},
-    methodCodesByCountry: {
-      BJ: { mtn_momo: 'MTN_MOMO_BEN', moov_money: 'MOOV_BEN' },
-      CI: { mtn_momo: 'MTN_MOMO_CIV', orange_money: 'ORANGE_CIV' },
-      SN: { orange_money: 'ORANGE_SEN', free_money: 'FREE_SEN' },
-      CM: { mtn_momo: 'MTN_MOMO_CMR', orange_money: 'ORANGE_CMR' },
+    currencies: ['XOF'],
+    methodCodes: {
+      mtn_momo: 'momo',
+      moov_money: 'momo',
+      celtiis_cash: 'momo',
+      orange_money: 'momo',
+      free_money: 'momo',
+      t_money: 'momo',
+      card: 'card',
     },
   },
   {
@@ -389,12 +402,18 @@ export function getPaymentProviderDefinition(code: string): PaymentProviderDefin
 /**
  * Ce prestataire peut-il recevoir un NOUVEAU paiement ?
  *
- * Le seul point où la question se pose, pour que « KPay est le seul
+ * Le seul point où la question se pose, pour que « Kkiapay est le seul
  * prestataire du lancement » soit une ligne de configuration et non une
  * condition répétée dans le routage, la console et le tunnel.
  */
 export function isPaymentProviderActive(code: string): boolean {
   return getPaymentProviderDefinition(code)?.status === 'ACTIVE';
+}
+
+/** Ce prestataire sait-il encaisser dans cette devise ? */
+export function providerAcceptsCurrency(code: string, currency: string): boolean {
+  const accepted = getPaymentProviderDefinition(code)?.currencies;
+  return accepted === undefined || (accepted as readonly string[]).includes(currency);
 }
 
 /** Prestataires auxquels on peut confier un moyen aujourd'hui. */
@@ -570,10 +589,69 @@ export type ProviderSyncResult = z.infer<typeof providerSyncResultSchema>;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Comment l'acheteur valide un paiement — cela dépend du prestataire ET du
+ * moyen, jamais du pays.
+ *
+ *   · `push`     — le prestataire envoie la demande sur le téléphone du
+ *                  payeur, dont le numéro se saisit sur NOTRE écran ;
+ *   · `redirect` — l'acheteur part sur une page du prestataire, puis revient ;
+ *   · `widget`   — le prestataire ouvre SA fenêtre de paiement par-dessus la
+ *                  nôtre, et c'est elle qui demande le numéro ou la carte.
+ *
+ * Dans les trois cas, rien de ce que dit le navigateur ne confirme un
+ * paiement : c'est le serveur qui le vérifie chez le prestataire.
+ */
+export const CHECKOUT_FLOWS = ['push', 'redirect', 'widget'] as const;
+export const checkoutFlowSchema = z.enum(CHECKOUT_FLOWS);
+export type CheckoutFlow = z.infer<typeof checkoutFlowSchema>;
+
+/**
+ * Ce qu'il faut à la page pour ouvrir la fenêtre de paiement Kkiapay.
+ *
+ * Tout vient de l'API, la clé publique comme le mode bac à sable : la page ne
+ * choisit jamais l'environnement, elle exécute. Les noms sont ceux des
+ * attributs documentés du SDK JavaScript de Kkiapay, pour être transmis tels
+ * quels à `openKkiapayWidget`.
+ */
+export const kkiapayWidgetSchema = z.object({
+  provider: z.literal('kkiapay'),
+  /** Clé API PUBLIQUE : Kkiapay la destine au navigateur. */
+  key: z.string().min(1),
+  sandbox: z.boolean(),
+  amount: z.number().int().positive(),
+  /**
+   * Notre identifiant de paiement. Kkiapay le renvoie avec la transaction —
+   * notification comme vérification — et c'est lui qui la lie, sans
+   * ambiguïté, à ce paiement et à cette commande.
+   */
+  partnerId: z.string().min(1),
+  /** Référence de commande, pour retrouver la transaction depuis Kkiapay. */
+  data: z.string(),
+  /** Famille de paiement autorisée dans la fenêtre : `momo` ou `card`. */
+  paymentmethod: z.array(z.enum(['momo', 'card'])).min(1),
+  /** Pays d'où le paiement est accepté — celui de la commande. */
+  countries: z.array(countryCodeSchema).optional(),
+  name: z.string().optional(),
+  email: z.string().optional(),
+  position: z.enum(['left', 'right', 'center']),
+  theme: z.string().optional(),
+});
+
+export type KkiapayWidget = z.infer<typeof kkiapayWidgetSchema>;
+
+/**
+ * Fenêtre de paiement d'un prestataire à widget, discriminée par prestataire :
+ * chacun a son SDK, et la page a un lanceur par SDK.
+ */
+export const paymentWidgetSchema = z.discriminatedUnion('provider', [kkiapayWidgetSchema]);
+
+export type PaymentWidget = z.infer<typeof paymentWidgetSchema>;
+
+/**
  * Moyen de collecte proposé au participant, écran A3.
  *
  * Généré depuis la configuration du pays de la commande. Le prestataire n'y
- * figure pas : le participant choisit « MTN MoMo », jamais « Bictorys ».
+ * figure pas : le participant choisit « MTN MoMo », jamais « Kkiapay ».
  */
 export const checkoutPaymentMethodSchema = z.object({
   code: paymentMethodCodeSchema,
@@ -581,9 +659,11 @@ export const checkoutPaymentMethodSchema = z.object({
   description: z.string(),
   kind: paymentMethodKindSchema,
   group: z.enum(['mobile_money', 'card', 'other']),
-  /** Le numéro à débiter est demandé — Mobile Money uniquement. */
+  /** Comment ce moyen se valide chez le prestataire qui le traite ici. */
+  flow: checkoutFlowSchema,
+  /** Le numéro à débiter est demandé sur notre écran — Mobile Money en `push`. */
   requiresPhone: z.boolean(),
-  /** Le paiement se poursuit sur une page du prestataire — carte bancaire. */
+  /** Le paiement se poursuit sur une page du prestataire (`redirect`). */
   redirects: z.boolean(),
   /** Nom du fichier de logo dans `/paiements/`, sans extension. */
   logo: z.string().nullable(),

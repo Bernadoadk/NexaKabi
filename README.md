@@ -101,7 +101,7 @@ sessions de 8 h révocables, chaque geste tracé dans le journal d'audit.
 objets distincts. Le **pays** (table `country`) porte sa devise et son indicatif, et s'ouvre depuis
 la console — le Bénin est ouvert et par défaut, les autres pays d'Afrique de l'Ouest attendent. Le
 **moyen** (`mtn_momo`, `wave`, `card`, `bank_transfer`…) est ce que le participant reconnaît. Le
-**prestataire** (`bictorys`, `mock`) est celui qui traite l'argent, et le participant ne le voit
+**prestataire** (`kkiapay`, `mock`) est celui qui traite l'argent, et le participant ne le voit
 jamais. La table `country_payment_method` relie les trois, avec deux drapeaux indépendants par
 ligne — **collecte** (ce que le participant peut payer) et **versement** (ce sur quoi l'organisateur
 peut recevoir) —, plus le constat synchronisé depuis le compte marchand du prestataire. Ouvrir la
@@ -109,18 +109,16 @@ Côte d'Ivoire avec Wave se fait dans l'écran « Pays & paiements » de la cons
 moyen de réception d'un organisateur est choisi parmi ceux de SON pays, jamais déduit du moyen par
 lequel ses acheteurs ont payé : recevoir sur MTN ce qui a été réglé par carte est le cas normal.
 
-**KPay est le seul prestataire du lancement.** Mobile Money au Bénin (MTN, Moov), en Côte
-d'Ivoire (MTN, Orange), au Sénégal (Orange, Free) et au Cameroun (MTN, Orange), en validation sur
-le téléphone. Chez lui le code du moyen porte le pays (`MTN_MOMO_BEN`, `MTN_MOMO_CIV`), et c'est
-le **préfixe de la clé** qui décide si l'argent bouge — `kpay_test_` simule, `kpay_live_` débite ;
-l'API refuse de démarrer si ce préfixe contredit l'environnement. La **carte ne lui est pas
-confiée** : sa page hébergée facture en USD, alors qu'une commande Nexa-Kabi est un entier de
-francs CFA. Il ne rembourse pas par API non plus — cela se fait depuis son tableau de bord.
-
-**L'état des opérateurs se relève chez lui, toutes les cinq minutes.** Un opérateur `CLOSED`
-disparaît de l'écran de choix le temps de la panne ; `DELAYED` reste proposé avec la mention
-« retards en cours ». Un relevé impossible ne ferme rien — notre incident ne doit pas devenir une
-panne de paiement.
+**Kkiapay est le seul prestataire du lancement** (KPay, envisagé un temps, a été abandonné le
+23 septembre 2026 sans jamais avoir encaissé). Mobile Money (MTN, Moov au Bénin) et carte
+Visa/Mastercard, en francs CFA. Le paiement se fait dans la **fenêtre de paiement de Kkiapay**,
+ouverte par-dessus notre écran par son SDK officiel ; la page ne fait que rapporter la référence
+de la transaction, et c'est le **serveur** qui la vérifie chez Kkiapay — statut, montant, et notre
+identifiant de paiement rattaché à la transaction — avant d'émettre un seul billet. Le bac à sable
+ou la production se choisit côté serveur (`KKIAPAY_SANDBOX`), et l'API refuse de démarrer si ce
+réglage contredit l'environnement. Kkiapay rembourse par API les paiements Mobile Money, en totalité ;
+il ne verse pas aux organisateurs — leurs retraits se font à la main depuis la console. Détail :
+`docs/PAYMENT_PROVIDER_KKIAPAY.md`.
 
 **Bictorys est HÉRITÉ.** Son code et ses lignes de configuration restent en place pour relire,
 interroger et rembourser ce qu'il a encaissé, mais il ne reçoit plus aucun paiement neuf : le

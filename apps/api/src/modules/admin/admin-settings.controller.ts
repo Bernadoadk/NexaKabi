@@ -90,9 +90,9 @@ export class AdminSettingsController {
         // Tous les moyens qu'il traite QUELQUE PART : ce qui décrit le
         // prestataire, et ce sur quoi retombe un pays qu'il ne distingue pas.
         methodCodes: listProviderMethodCodes(provider.code),
-        // Les pays où il en traite d'AUTRES — KPay ne propose pas les mêmes
-        // opérateurs au Bénin et au Sénégal. La console s'en sert pour ne
-        // proposer que ce qui marchera vraiment dans le pays affiché.
+        // Les pays où il en traite d'AUTRES — un prestataire ne propose pas
+        // toujours les mêmes opérateurs d'un pays à l'autre. La console s'en
+        // sert pour ne proposer que ce qui marchera vraiment dans le pays affiché.
         methodCodesByCountry: provider.methodCodesByCountry
           ? Object.fromEntries(
               Object.keys(provider.methodCodesByCountry).map((countryCode) => [

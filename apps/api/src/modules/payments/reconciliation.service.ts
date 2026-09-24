@@ -139,9 +139,32 @@ export class ReconciliationService {
       if (after?.status === 'EXPIRED') expired += 1;
     }
 
+    /**
+     * Les paiements sans référence de prestataire, arrivés à échéance.
+     *
+     * Une fenêtre de paiement ouverte puis abandonnée ne reçoit jamais de
+     * référence : il n'y a rien à interroger, et le balayage ci-dessus ne la
+     * voit pas. Sans ce second passage, elle resterait « en attente » pour
+     * toujours — et la commande avec, aux yeux de l'acheteur.
+     */
+    const overdue = await this.prisma.payment.findMany({
+      where: {
+        status: { in: ['INITIATED', 'PENDING', 'PROCESSING'] },
+        providerReference: null,
+        expiresAt: { lt: new Date(now) },
+      },
+      select: { id: true },
+      orderBy: { expiresAt: 'asc' },
+      take: POLL_BATCH_SIZE,
+    });
+
+    for (const payment of overdue) {
+      if (await this.payments.expireIfOverdue(payment.id)) expired += 1;
+    }
+
     const orphanWebhooks = await this.replayOrphanWebhooks();
 
-    return { inspected: pending.length, recovered, expired, orphanWebhooks };
+    return { inspected: pending.length + overdue.length, recovered, expired, orphanWebhooks };
   }
 
   /**
@@ -189,8 +212,9 @@ export class ReconciliationService {
 
     for (const orphan of orphans) {
       const providerReference = this.referenceOf(orphan.providerCode, orphan.rawBody);
+      const merchantReference = this.merchantReferenceOf(orphan.providerCode, orphan.rawBody);
 
-      if (!providerReference) {
+      if (!providerReference && !merchantReference) {
         await this.prisma.webhookEvent.update({
           where: { id: orphan.id },
           data: { status: 'FAILED', error: 'Référence opérateur illisible' },
@@ -198,16 +222,30 @@ export class ReconciliationService {
         continue;
       }
 
+      // Par la référence du prestataire, ou par NOTRE identifiant quand il le
+      // renvoie : une transaction faite dans la fenêtre de paiement n'est
+      // connue de nous que par lui tant que la page ne l'a pas transmise.
       const payment = await this.prisma.payment.findFirst({
-        where: { providerCode: orphan.providerCode, providerReference },
+        where: {
+          providerCode: orphan.providerCode,
+          OR: [
+            ...(providerReference ? [{ providerReference }] : []),
+            ...(merchantReference ? [{ id: merchantReference }] : []),
+          ],
+        },
         select: { id: true },
       });
 
       if (!payment) continue;
 
-      // Le paiement existe désormais : on force une interrogation plutôt que de
-      // rejouer un corps dont la signature a déjà été consommée.
-      await this.payments.pollProvider(payment.id);
+      // Le paiement existe désormais : on relit la transaction chez le
+      // prestataire plutôt que de rejouer un corps dont l'authentification a
+      // déjà été consommée — c'est la lecture qui fait foi.
+      if (providerReference) {
+        await this.payments.reconcileTransaction(payment.id, providerReference);
+      } else {
+        await this.payments.pollProvider(payment.id);
+      }
 
       await this.prisma.webhookEvent.update({
         where: { id: orphan.id },
@@ -224,11 +262,12 @@ export class ReconciliationService {
    * Retrouve la référence du prestataire dans un corps conservé.
    *
    * ── Pourquoi le prestataire doit répondre lui-même ──────────────────────
-   * Chacun nomme cette référence à sa façon : `id` chez Bictorys, `paymentId`
-   * chez KPay, `providerReference` chez le simulateur. Chercher un seul nom
-   * ici revenait à ne retrouver QUE les notifications du simulateur — les
-   * autres finissaient en `FAILED`, et l'acheteur payé restait sans billet,
-   * silencieusement, dans le cas précis que ce filet doit rattraper.
+   * Chacun nomme cette référence à sa façon : `id` chez Bictorys,
+   * `transactionId` chez Kkiapay, `providerReference` chez le simulateur.
+   * Chercher un seul nom ici revenait à ne retrouver QUE les notifications du
+   * simulateur — les autres finissaient en `FAILED`, et l'acheteur payé
+   * restait sans billet, silencieusement, dans le cas précis que ce filet
+   * doit rattraper.
    *
    * Le repli sur `providerReference` couvre le simulateur et tout prestataire
    * qui n'aurait pas déclaré la méthode.
@@ -250,5 +289,14 @@ export class ReconciliationService {
     } catch {
       return null;
     }
+  }
+
+  /** Notre identifiant de paiement dans un corps conservé, si le prestataire le renvoie. */
+  private merchantReferenceOf(providerCode: string, rawBody: string): string | null {
+    const code = providerCode as PaymentProviderCode;
+
+    if (!this.registry.has(code)) return null;
+
+    return this.registry.get(code).extractMerchantReference?.(rawBody) ?? null;
   }
 }

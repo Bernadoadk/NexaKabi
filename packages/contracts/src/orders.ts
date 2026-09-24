@@ -13,7 +13,7 @@ import {
   paymentProviderSchema,
   paymentStatusSchema,
 } from './enums.js';
-import { countryCodeSchema } from './payments.js';
+import { countryCodeSchema, paymentWidgetSchema } from './payments.js';
 
 /** Durée pendant laquelle les places restent bloquées. */
 export const RESERVATION_TTL_MINUTES = 30;
@@ -155,6 +155,25 @@ export const initiatePaymentSchema = z.object({
 
 export type InitiatePaymentInput = z.infer<typeof initiatePaymentSchema>;
 
+/**
+ * Référence de transaction rendue par la fenêtre de paiement du prestataire.
+ *
+ * Ce n'est PAS une preuve : n'importe quel script de la page peut l'inventer.
+ * C'est une piste — le serveur va lire cette transaction chez le prestataire,
+ * vérifie qu'elle appartient bien à CE paiement et porte le bon montant, et
+ * n'agit que sur ce qu'il y lit.
+ */
+export const confirmPaymentSchema = z.object({
+  providerReference: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .regex(/^[A-Za-z0-9_-]+$/, 'Référence de transaction invalide'),
+});
+
+export type ConfirmPaymentInput = z.infer<typeof confirmPaymentSchema>;
+
 export const paymentStateSchema = z.object({
   paymentId: idSchema,
   orderReference: orderReferenceSchema,
@@ -183,8 +202,18 @@ export const paymentStateSchema = z.object({
    */
   confirmationUrl: z.string().nullable(),
   /**
+   * Fenêtre de paiement du prestataire, à ouvrir par-dessus l'écran — tant que
+   * le paiement attend. `null` pour un paiement qui se valide sur le téléphone
+   * ou sur une page du prestataire.
+   */
+  widget: paymentWidgetSchema.nullable(),
+  /**
    * Cause probable d'un échec, en français.
    * Le prototype interdit d'afficher un code brut seul.
+   *
+   * Présente sur un paiement ENCORE en attente, elle dit que la dernière
+   * tentative dans la fenêtre du prestataire a échoué : l'acheteur peut en
+   * refaire une, sur le même paiement.
    */
   failureReason: z.string().nullable(),
 });
@@ -238,9 +267,20 @@ export const PAYMENT_STATUS_TRANSITIONS: Readonly<
    * une incohérence bien pire que l'anomalie qu'on croit corriger.
    */
   SUCCEEDED: ['REFUNDED', 'PARTIALLY_REFUNDED'],
-  FAILED: [],
-  EXPIRED: [],
-  CANCELLED: [],
+  /**
+   * Un échec, une expiration ou un abandon ne peuvent plus devenir QUE des
+   * succès — et seulement quand le prestataire confirme avoir encaissé.
+   *
+   * Cela arrive : l'acheteur valide dans la fenêtre de paiement une minute
+   * après la fin de sa réservation, ou la confirmation de l'opérateur arrive
+   * après que nous avons renoncé. L'argent est parti ; refuser de le voir le
+   * laisserait sans billet ET sans trace. Le paiement passe donc à `SUCCEEDED`
+   * — et la commande est honorée si ses places sont encore libres, signalée
+   * au rapprochement sinon (voir `PaymentsService.applyOutcome`).
+   */
+  FAILED: ['SUCCEEDED'],
+  EXPIRED: ['SUCCEEDED'],
+  CANCELLED: ['SUCCEEDED'],
   REFUNDED: [],
   PARTIALLY_REFUNDED: ['REFUNDED'],
 };

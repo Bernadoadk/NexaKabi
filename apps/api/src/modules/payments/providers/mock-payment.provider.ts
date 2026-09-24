@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { PaymentProviderCode } from '@nexakabi/contracts';
+import type { CheckoutFlow, PaymentMethodKind, PaymentProviderCode } from '@nexakabi/contracts';
 import type { Env } from '../../../config/env';
 import {
   PaymentProvider,
@@ -76,6 +76,7 @@ export class MockPaymentProvider extends PaymentProvider {
   readonly capabilities = {
     refund: true,
     partialRefund: true,
+    refundMethodKinds: null,
     refundWindowDays: null,
     payout: true,
     statusPolling: true,
@@ -102,6 +103,11 @@ export class MockPaymentProvider extends PaymentProvider {
   // ───────────────────────────────────────────────────────────────────────────
   // Encaissement
   // ───────────────────────────────────────────────────────────────────────────
+
+  /** Le Mobile Money se valide sur le téléphone ; la carte, sur la page simulée. */
+  checkoutFlow(kind: PaymentMethodKind): CheckoutFlow {
+    return kind === 'CARD' ? 'redirect' : 'push';
+  }
 
   async initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
     const now = Date.now();

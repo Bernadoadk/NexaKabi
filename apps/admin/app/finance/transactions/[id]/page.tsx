@@ -14,6 +14,7 @@ import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { AccessDenied } from '../../../access';
 import { PaymentStatusBadge } from '../../badges';
 import { FinancePage } from '../../finance-page';
+import { AttachTransactionForm } from './attach-form';
 
 export const metadata: Metadata = { title: 'Transaction' };
 
@@ -57,6 +58,7 @@ export default async function TransactionPage({ params }: { params: Promise<{ id
 
   const payment = result.data;
   const { breakdown } = payment;
+  const canAttach = payment.canAttachTransaction && hasAdminAccess(user, 'finance', 'act');
 
   return (
     <FinancePage
@@ -74,6 +76,10 @@ export default async function TransactionPage({ params }: { params: Promise<{ id
             <span className="block text-micro text-text-3">Code : {payment.failureCode}</span>
           ) : null}
         </Alert>
+      ) : null}
+
+      {canAttach ? (
+        <AttachTransactionForm paymentId={payment.id} providerLabel={payment.providerLabel} />
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">

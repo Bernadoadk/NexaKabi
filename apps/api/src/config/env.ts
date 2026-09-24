@@ -137,22 +137,38 @@ const envSchema = z.object({
   BICTORYS_PAYOUT_SECRET_CODE: z.string().default(''),
 
   /**
-   * KPay — Mobile Money au Bénin, en Côte d'Ivoire et au Sénégal.
+   * Kkiapay — Mobile Money et carte bancaire, en francs CFA.
    *
-   * ── Pas de variable d'environnement, contrairement à Bictorys ───────────
-   * KPay expose UNE seule adresse : c'est le PRÉFIXE DE LA CLÉ qui décide si
-   * l'argent bouge (`kpay_test_` → bac à sable, `kpay_live_` → production).
-   * Ajouter un réglage `KPAY_ENVIRONMENT` ferait croire qu'on peut viser le
-   * bac à sable avec une clé de production : on ne peut pas, et le prétendre
-   * serait la pire des confusions sur un système de paiement.
+   * Trois clés d'API, toutes dans le tableau de bord (Développeurs → Clés
+   * API), et chacune a son rôle :
+   *   · la clé PUBLIQUE ouvre la fenêtre de paiement dans le navigateur ;
+   *   · la clé PRIVÉE, côté serveur seulement, vérifie les transactions ;
+   *   · la clé SECRÈTE, côté serveur seulement, les modifie (remboursement).
+   * Vide = Kkiapay n'est pas branché ; hors production, le simulateur prend
+   * sa place.
    */
-  KPAY_API_URL: z.string().url().default('https://admin.kpay.site'),
-  /** Clé d'API, en-tête `X-API-Key`. Vide = KPay n'est pas branché. */
-  KPAY_API_KEY: z.string().default(''),
-  /** Clé secrète, en-tête `X-Secret-Key`. Accompagne toujours la clé d'API. */
-  KPAY_SECRET_KEY: z.string().default(''),
-  /** Secret de signature des notifications (HMAC-SHA256, en-tête `X-KPAY-Signature`). */
-  KPAY_WEBHOOK_SECRET: z.string().default(''),
+  KKIAPAY_PUBLIC_KEY: z.string().trim().default(''),
+  KKIAPAY_PRIVATE_KEY: z.string().trim().default(''),
+  KKIAPAY_SECRET_KEY: z.string().trim().default(''),
+  /**
+   * Le « secret hash » saisi dans le formulaire du webhook, au tableau de
+   * bord. Kkiapay le renvoie dans l'en-tête `x-kkiapay-secret` de chaque
+   * notification : c'est ce qui la distingue d'une requête forgée.
+   */
+  KKIAPAY_WEBHOOK_SECRET: z.string().trim().default(''),
+  /**
+   * Bac à sable (`true`) ou production (`false`).
+   *
+   * Les clés de test et de production sont différentes, et chaque
+   * environnement a son adresse d'API : ce réglage choisit l'adresse ET le
+   * mode de la fenêtre de paiement. Sa cohérence avec `NODE_ENV` est
+   * vérifiée plus bas — c'est le serveur, jamais la page, qui décide si
+   * l'argent est réel.
+   */
+  KKIAPAY_SANDBOX: z
+    .enum(['true', 'false'], { message: 'KKIAPAY_SANDBOX vaut true ou false' })
+    .default('true')
+    .transform((value) => value === 'true'),
 
   /**
    * Fournisseur d'envoi des codes.
@@ -305,45 +321,55 @@ function assertConsistency(env: Env, addIssue: (path: string, message: string) =
     );
   }
 
-  // Les trois valeurs KPay vont ensemble. Une clé d'API sans clé secrète
-  // échouerait à chaque appel ; une clé sans secret de webhook accepterait
-  // n'importe quelle notification, donc n'importe qui pourrait déclarer un
-  // paiement réussi. La relecture systématique chez KPay avant tout crédit
-  // limite le dégât, mais un secret vide reste une porte ouverte.
-  if (env.KPAY_API_KEY) {
-    if (!env.KPAY_SECRET_KEY) {
+  // Les quatre valeurs Kkiapay vont ensemble. Sans la clé privée, aucune
+  // transaction ne peut être vérifiée — et un paiement non vérifié n'émet
+  // jamais de billet ; sans la clé secrète, aucun remboursement ; sans le
+  // secret du webhook, n'importe qui pourrait nous notifier un « succès ».
+  // Une configuration partielle se refuse au démarrage, pas au premier achat.
+  const kkiapayValues: Array<[keyof Env & string, string]> = [
+    ['KKIAPAY_PUBLIC_KEY', env.KKIAPAY_PUBLIC_KEY],
+    ['KKIAPAY_PRIVATE_KEY', env.KKIAPAY_PRIVATE_KEY],
+    ['KKIAPAY_SECRET_KEY', env.KKIAPAY_SECRET_KEY],
+    ['KKIAPAY_WEBHOOK_SECRET', env.KKIAPAY_WEBHOOK_SECRET],
+  ];
+
+  if (kkiapayValues.some(([, value]) => value.length > 0)) {
+    for (const [name, value] of kkiapayValues) {
+      if (!value) {
+        addIssue(
+          name,
+          `${name} est obligatoire dès qu'une clé Kkiapay est renseignée : ` +
+            'les quatre valeurs vont ensemble (tableau de bord Kkiapay → Développeurs).',
+        );
+      }
+    }
+
+    // Le serveur, et lui seul, décide si l'argent est réel. Le bac à sable en
+    // production n'encaisserait rien, et personne ne s'en apercevrait avant le
+    // premier billet non payé ; la production sur un poste de développement
+    // débiterait de vrais acheteurs dès le premier essai.
+    if (isProduction && env.KKIAPAY_SANDBOX) {
       addIssue(
-        'KPAY_SECRET_KEY',
-        'KPAY_SECRET_KEY est obligatoire dès que KPAY_API_KEY est renseignée : ' +
-          'KPay authentifie chaque appel par la PAIRE de clés.',
+        'KKIAPAY_SANDBOX',
+        'KKIAPAY_SANDBOX=true en production : aucun paiement ne serait réellement encaissé. ' +
+          'Passe KKIAPAY_SANDBOX=false avec les clés LIVE du tableau de bord.',
       );
     }
 
-    if (!env.KPAY_WEBHOOK_SECRET) {
+    if (!isProduction && !env.KKIAPAY_SANDBOX) {
       addIssue(
-        'KPAY_WEBHOOK_SECRET',
-        'KPAY_WEBHOOK_SECRET est obligatoire dès que KPAY_API_KEY est renseignée : ' +
-          'sans lui, aucune notification ne peut être authentifiée.',
+        'KKIAPAY_SANDBOX',
+        'KKIAPAY_SANDBOX=false hors production : le premier essai débiterait de vrais ' +
+          'acheteurs. Garde KKIAPAY_SANDBOX=true et les clés de TEST du tableau de bord.',
       );
     }
 
-    // Le préfixe de la clé EST l'environnement. Une clé de bac à sable en
-    // production n'encaisserait rien, et personne ne s'en apercevrait avant
-    // le premier billet non payé ; une clé de production sur un poste de
-    // développement débiterait de vrais acheteurs dès le premier essai.
-    if (isProduction && env.KPAY_API_KEY.startsWith('kpay_test_')) {
+    // Le secret du webhook est la seule chose qui authentifie une notification.
+    if (env.KKIAPAY_WEBHOOK_SECRET && env.KKIAPAY_WEBHOOK_SECRET.length < 16) {
       addIssue(
-        'KPAY_API_KEY',
-        'Clé KPay de bac à sable (kpay_test_…) en production : aucun paiement ne serait ' +
-          'réellement encaissé. Utilise la clé kpay_live_… du tableau de bord.',
-      );
-    }
-
-    if (!isProduction && env.KPAY_API_KEY.startsWith('kpay_live_')) {
-      addIssue(
-        'KPAY_API_KEY',
-        'Clé KPay de PRODUCTION (kpay_live_…) hors production : le premier essai débiterait ' +
-          'de vrais acheteurs. Utilise la clé kpay_test_… du tableau de bord.',
+        'KKIAPAY_WEBHOOK_SECRET',
+        'KKIAPAY_WEBHOOK_SECRET est trop court (16 caractères minimum) : choisis un secret long ' +
+          'et aléatoire, puis saisis le même dans le formulaire du webhook Kkiapay.',
       );
     }
   }

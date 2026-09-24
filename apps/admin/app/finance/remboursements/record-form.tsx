@@ -9,10 +9,10 @@ import { Alert, Button, Field, Input, Textarea } from '@nexakabi/ui';
  * Consigner un remboursement fait hors API.
  *
  * ── Quand ce geste sert ─────────────────────────────────────────────────────
- * KPay ne rembourse que la totalité d'un paiement, et seulement dans les sept
- * jours. Au-delà — le cas courant d'un événement annulé des semaines après
- * l'achat — l'argent se renvoie à la main : depuis le tableau de bord de
- * l'opérateur, ou par transfert Mobile Money vers le numéro qui a payé. Ce
+ * Kkiapay ne rembourse par API que la totalité d'un paiement Mobile Money.
+ * Une carte, un remboursement partiel, un refus de Kkiapay : l'argent se
+ * renvoie à la main — depuis le tableau de bord de Kkiapay (Transactions →
+ * Rembourser), ou par transfert Mobile Money vers le numéro qui a payé. Ce
  * formulaire en garde la trace ; le grand livre, lui, l'a déjà inscrit à la
  * décision.
  */

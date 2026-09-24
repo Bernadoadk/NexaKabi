@@ -15,14 +15,17 @@ import { createZodDto } from 'nestjs-zod';
 import {
   adminLedgerQuerySchema,
   adminPaymentsQuerySchema,
+  attachPaymentTransactionSchema,
   createCommissionPolicySchema,
   financeReportGroupingSchema,
   type AdminLedgerQuery,
   type AdminPaymentsQuery,
+  type AttachPaymentTransactionResult,
   type FinanceReportGrouping,
 } from '@nexakabi/contracts';
 import type { ZodType } from 'zod';
 import { Public } from '../auth/decorators/public.decorator';
+import { PaymentsService } from '../payments/payments.service';
 import { AdminCommissionsService } from './admin-commissions.service';
 import { AdminFinanceService } from './admin-finance.service';
 import { AdminReconciliationService } from './admin-reconciliation.service';
@@ -34,6 +37,7 @@ import {
 } from './admin-session.guard';
 
 class CreateCommissionPolicyDto extends createZodDto(createCommissionPolicySchema) {}
+class AttachPaymentTransactionDto extends createZodDto(attachPaymentTransactionSchema) {}
 
 type RawQuery = Record<string, string | undefined>;
 
@@ -57,6 +61,7 @@ export class AdminFinanceController {
     private readonly finance: AdminFinanceService,
     private readonly reconciliation: AdminReconciliationService,
     private readonly commissions: AdminCommissionsService,
+    private readonly payments: PaymentsService,
   ) {}
 
   @RequireAdminAccess('finance', 'read')
@@ -88,6 +93,24 @@ export class AdminFinanceController {
   @ApiOperation({ summary: 'Un paiement et sa chronologie' })
   paymentDetail(@Param('id') id: string) {
     return this.finance.paymentDetail(id);
+  }
+
+  /**
+   * Rattacher une transaction du prestataire à un paiement resté sans issue.
+   *
+   * Décider que de l'argent est arrivé — et émettre des billets en
+   * conséquence — demande la décision de l'espace Finance. La référence
+   * n'est qu'une piste : le serveur la lit chez le prestataire.
+   */
+  @RequireAdminAccess('finance', 'act')
+  @Post('payments/:id/attach')
+  @ApiOperation({ summary: 'Rattacher une transaction du prestataire à un paiement' })
+  attachTransaction(
+    @Param('id') id: string,
+    @Body() body: AttachPaymentTransactionDto,
+    @Req() request: AdminRequest,
+  ): Promise<AttachPaymentTransactionResult> {
+    return this.payments.attachTransaction(id, body.providerReference, request.admin.id);
   }
 
   @RequireAdminAccess('finance', 'read')

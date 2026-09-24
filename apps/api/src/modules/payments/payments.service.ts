@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
@@ -8,50 +10,134 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
+  RESERVATION_TTL_MINUTES,
   canTransitionPayment,
   getPaymentMethodDefinition,
+  getPaymentProviderDefinition,
   isPaymentPending,
   paymentMethodRequiresPhone,
+  resolveProviderMethodCode,
+  type AttachPaymentTransactionResult,
+  type CheckoutFlow,
   type CheckoutPaymentMethods,
   type InitiatePaymentInput,
   type PaymentMethodCode,
   type PaymentState,
   type PaymentStatus,
   type PaymentProviderCode,
+  type PaymentWidget,
 } from '@nexakabi/contracts';
-import { maskPhone } from '@nexakabi/utils';
+import { maskPhone, tryNormalizePhoneForCountry } from '@nexakabi/utils';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { CountriesService } from '../countries/countries.service';
 import { OrdersService } from '../orders/orders.service';
-import type { Prisma } from '../../generated/prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import { PaymentRoutingService } from './payment-routing.service';
 import { PaymentProviderRegistry } from './provider.registry';
-import type { NormalizedPaymentWebhook } from './providers/payment-provider';
+import {
+  ProviderTransactionNotFoundError,
+  type InitiatePaymentInput as ProviderInitiateInput,
+  type NormalizedPaymentWebhook,
+  type PaymentProvider,
+  type ProviderPaymentStatus,
+} from './providers/payment-provider';
 
 /** Origine d'un changement d'état, conservée pour le diagnostic. */
-export type OutcomeSource = 'initiate' | 'webhook' | 'poll' | 'expiry';
+export type OutcomeSource = 'initiate' | 'checkout' | 'webhook' | 'poll' | 'expiry' | 'admin';
 
 export interface PaymentOutcome {
   readonly status: PaymentStatus;
   readonly failureCode?: string;
   readonly failureReason?: string;
   readonly providerFeeAmount?: number;
+  /**
+   * Transaction qui a réglé le paiement, à lui rattacher — quand elle n'était
+   * pas connue à l'initiation (fenêtre de paiement du prestataire).
+   */
+  readonly providerReference?: string;
+  /** Numéro débité, quand il n'était pas connu à l'initiation. */
+  readonly payerPhone?: string;
   readonly source: OutcomeSource;
   readonly rawPayload?: unknown;
 }
 
 export type OutcomeResult = 'applied' | 'ignored' | 'unchanged';
 
+/** Ce que devient la COMMANDE quand son paiement réussit. */
+type Settlement = 'paid' | 'unfulfillable';
+
+/**
+ * Verdict sur une transaction de fenêtre de paiement : en plus des issues
+ * ordinaires, `rejected` — la transaction n'appartient pas à ce paiement.
+ */
+type WidgetVerdict = OutcomeResult | 'rejected';
+
+/** Un paiement qui a encaissé — remboursé depuis ou non. */
+const SETTLED_PAYMENT_STATUSES: readonly PaymentStatus[] = [
+  'SUCCEEDED',
+  'REFUNDED',
+  'PARTIALLY_REFUNDED',
+];
+
+/** Une commande déjà réglée — remboursée depuis ou non. */
+const SETTLED_ORDER_STATUSES: readonly string[] = [
+  'PAID',
+  'COMPLETED',
+  'REFUNDED',
+  'PARTIALLY_REFUNDED',
+];
+
+/**
+ * Écart minimal entre deux lectures chez le prestataire commandées par
+ * l'écran d'attente, qui interroge toutes les trois secondes. La
+ * notification arrive d'ordinaire bien avant ; inutile de lire plus souvent.
+ */
+const PAGE_POLL_MIN_INTERVAL_MS = 6_000;
+
+/**
+ * Vérifications qu'une page peut demander pour un même paiement, par minute.
+ * Chacune coûte un appel au prestataire : sans plafond, une boucle sur une
+ * référence inventée ferait de notre compte marchand un générateur de trafic.
+ */
+const CHECKOUT_VERIFICATIONS_PER_MINUTE = 10;
+
+/** Un paiement avec ce qu'il faut de sa commande pour reconstruire une fenêtre. */
+const paymentWithOrder = Prisma.validator<Prisma.PaymentDefaultArgs>()({
+  include: {
+    order: {
+      select: {
+        reference: true,
+        buyerName: true,
+        buyerPhone: true,
+        buyerEmail: true,
+        expiresAt: true,
+        event: { select: { title: true } },
+      },
+    },
+  },
+});
+
+type PaymentWithOrder = Prisma.PaymentGetPayload<typeof paymentWithOrder>;
+
+/** Ce qu'il faut d'un paiement pour juger une transaction de sa fenêtre. */
+interface WidgetPayment {
+  readonly id: string;
+  readonly amount: number;
+  readonly status: PaymentStatus;
+  readonly providerReference: string | null;
+}
+
 /**
  * Paiements.
  *
  * La partie la plus risquée du produit. Trois faits gouvernent sa conception :
  *
- *  1. **Le Mobile Money est asynchrone.** L'utilisateur quitte l'écran pour
- *     valider sur son téléphone. Le navigateur ne sait rien ; seul le
- *     prestataire sait. Aucun délai côté client ne doit donc conclure à l'échec.
+ *  1. **Le paiement est asynchrone.** L'acheteur valide sur son téléphone ou
+ *     dans la fenêtre du prestataire. Le navigateur ne sait rien de sûr ; seul
+ *     le prestataire sait. Aucun délai côté client ne doit donc conclure à
+ *     l'échec, et aucun « succès » côté client ne vaut preuve.
  *  2. **Les prestataires rejouent leurs webhooks**, parfois dans le désordre.
  *     L'idempotence n'est pas une précaution, c'est une condition de
  *     fonctionnement.
@@ -62,6 +148,8 @@ export type OutcomeResult = 'applied' | 'ignored' | 'unchanged';
  * Quel prestataire traite quel moyen dans quel pays. Il le demande au routage
  * à chaque fois, et enregistre la réponse sur le paiement — `providerCode`
  * pour retrouver l'implémentation, `methodCode` pour le dire au participant.
+ * Il ne sait pas non plus COMMENT l'acheteur valide : il le demande au
+ * prestataire (`checkoutFlow`), et s'y règle.
  *
  * Voir docs/TECHNICAL_ARCHITECTURE.md §6.
  */
@@ -136,14 +224,20 @@ export class PaymentsService {
     // ouvert ou un prestataire absent se voient au clic, pas trois appels plus loin.
     const route = await this.routing.resolveCollection(order.countryCode, input.method);
     const country = await this.countries.requireActive(order.countryCode);
+    const flow = route.provider.checkoutFlow(route.method.kind);
+
+    // Le numéro ne se demande chez nous que si c'est NOUS qui envoyons la
+    // demande à son téléphone. Dans la fenêtre du prestataire, c'est elle qui
+    // le demande — et c'est le seul numéro qui compte.
+    const asksPhone = flow === 'push' && paymentMethodRequiresPhone(route.method.kind);
 
     // Le numéro appartient au pays de paiement, pas à celui de l'identifiant
     // de connexion : un payeur sénégalais donne un numéro en +221.
-    const payerPhone = paymentMethodRequiresPhone(route.method.kind)
+    const payerPhone = asksPhone
       ? this.countries.normalizePhone(input.payerPhone ?? '', country)
       : null;
 
-    if (paymentMethodRequiresPhone(route.method.kind) && !payerPhone) {
+    if (asksPhone && !payerPhone) {
       throw new BadRequestException('Indique le numéro Mobile Money à débiter.');
     }
 
@@ -153,10 +247,34 @@ export class PaymentsService {
     });
 
     if (inFlight) {
+      const sameProvider = inFlight.providerCode === route.provider.code;
+
+      /**
+       * ── Une fenêtre de paiement : on garde LE MÊME paiement ────────────────
+       * Son identifiant est la référence que la fenêtre porte chez le
+       * prestataire. Une tentative ratée, un changement de moyen, une fenêtre
+       * refermée : l'acheteur recommence SUR CE PAIEMENT. En créer un autre
+       * ferait abandonner le premier — et si l'acheteur avait en fait validé
+       * dessus, son argent arriverait sur un paiement clos.
+       */
+      if (sameProvider && flow === 'widget' && this.flowOf(inFlight) === 'widget') {
+        const reopened = await this.prisma.payment.update({
+          where: { id: inFlight.id },
+          data: { methodCode: route.method.code, failureCode: null, failureReason: null },
+          ...paymentWithOrder,
+        });
+
+        return this.toState(reopened, reference, { widget: this.widgetFor(reopened) });
+      }
+
       // Une demande identique en cours : on renvoie la même, sans rappeler
       // le prestataire. Une demande sur un AUTRE numéro ou moyen suppose que
       // la première a échoué côté client — elle est abandonnée explicitement.
-      if (inFlight.methodCode === input.method && inFlight.payerPhone === payerPhone) {
+      if (
+        sameProvider &&
+        inFlight.methodCode === input.method &&
+        inFlight.payerPhone === payerPhone
+      ) {
         return this.toState(inFlight, reference);
       }
 
@@ -214,14 +332,17 @@ export class PaymentsService {
       // ne suffit pas : deux appels vraiment simultanés le franchissent tous
       // les deux. C'est l'index unique qui tranche, et le perdant repart avec
       // la demande du gagnant plutôt qu'avec une erreur.
-      const winner = await this.prisma.payment.findUnique({ where: { idempotencyKey } });
+      const winner = await this.prisma.payment.findUnique({
+        where: { idempotencyKey },
+        ...paymentWithOrder,
+      });
 
       if (!winner) throw error;
 
       this.logger.log(
         `Demande de paiement concurrente sur ${order.reference} — reprise du gagnant`,
       );
-      return this.toState(winner, reference);
+      return this.toState(winner, reference, { widget: this.widgetFor(winner) });
     }
 
     const startedAt = Date.now();
@@ -253,6 +374,7 @@ export class PaymentsService {
             method: route.method.code,
             country: route.countryCode,
             amount: order.totalAmount,
+            flow,
           },
           responsePayload: toJson(result.rawResponse),
           durationMs: Date.now() - startedAt,
@@ -262,9 +384,12 @@ export class PaymentsService {
       const updated = await this.prisma.payment.update({
         where: { id: payment.id },
         data: {
-          providerReference: result.providerReference,
+          providerReference: result.providerReference ?? null,
           status: result.status,
-          expiresAt: result.expiresAt,
+          // Sans échéance du prestataire, le paiement vit aussi longtemps que
+          // la réservation : l'acheteur qui valide dans la fenêtre à la
+          // vingt-neuvième minute doit être servi.
+          expiresAt: result.expiresAt ?? reservationEnd(order.expiresAt),
           // Une seule colonne pour le lien du prestataire ; sa nature — page
           // où l'on va, ou lien à ouvrir à côté — se déduit du moyen.
           redirectUrl: result.redirectUrl ?? result.confirmationUrl ?? null,
@@ -287,10 +412,14 @@ export class PaymentsService {
           country: route.countryCode,
           amount: order.totalAmount,
           status: result.status,
+          flow,
         },
       });
 
-      return this.toState(updated, reference, result.instructions);
+      return this.toState(updated, reference, {
+        instructions: result.instructions,
+        widget: isPaymentPending(updated.status) ? (result.widget ?? null) : null,
+      });
     } catch (error) {
       await this.prisma.paymentAttempt.create({
         data: {
@@ -328,14 +457,152 @@ export class PaymentsService {
       throw new NotFoundException("Ce paiement n'existe pas.");
     }
 
-    if (isPaymentPending(payment.status)) {
+    if (isPaymentPending(payment.status) && (await this.providerCheckIsDue(payment.id))) {
       await this.pollProvider(payment.id);
-
-      const refreshed = await this.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
-      return this.toState(refreshed, reference);
     }
 
-    return this.toState(payment, reference);
+    const refreshed = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      ...paymentWithOrder,
+    });
+
+    return this.buyerState(refreshed, reference);
+  }
+
+  /**
+   * L'état à montrer à l'acheteur pour ce paiement.
+   *
+   * Celui du paiement — sauf quand la commande a été réglée par un AUTRE : un
+   * onglet resté sur une tentative abandonnée ne doit pas annoncer « paiement
+   * non abouti » pour une commande payée. C'est alors le règlement qui compte,
+   * et la page file vers la confirmation.
+   */
+  private async buyerState(payment: PaymentWithOrder, reference: string): Promise<PaymentState> {
+    if (payment.status !== 'SUCCEEDED') {
+      const settled = await this.prisma.payment.findFirst({
+        where: { orderId: payment.orderId, status: 'SUCCEEDED' },
+      });
+
+      if (settled) return this.toState(settled, reference);
+    }
+
+    return this.toState(payment, reference, { widget: this.widgetFor(payment) });
+  }
+
+  /**
+   * La page annonce qu'une transaction a eu lieu dans la fenêtre du prestataire.
+   *
+   * ── Une piste, pas une preuve ───────────────────────────────────────────
+   * La référence vient du navigateur : n'importe quel script de la page peut
+   * l'inventer, ou la reprendre d'une autre commande. Elle ne sert qu'à SAVOIR
+   * QUOI LIRE chez le prestataire. Ce que la lecture établit — statut, montant,
+   * et notre identifiant de paiement rattaché à la transaction — est la seule
+   * chose appliquée. Une transaction qui n'appartient pas à ce paiement est
+   * refusée et consignée.
+   */
+  async confirmFromCheckout(
+    reference: string,
+    paymentId: string,
+    providerReference: string,
+  ): Promise<PaymentState> {
+    const payment = await this.prisma.payment.findFirst({
+      where: { id: paymentId, order: { reference } },
+      ...paymentWithOrder,
+    });
+
+    if (!payment) {
+      throw new NotFoundException("Ce paiement n'existe pas.");
+    }
+
+    if (this.flowOf(payment) !== 'widget') {
+      throw new BadRequestException('Ce paiement ne se confirme pas depuis la page.');
+    }
+
+    // Déjà réglé par cette transaction : rien à relire.
+    if (payment.status === 'SUCCEEDED' && payment.providerReference === providerReference) {
+      return this.toState(payment, reference);
+    }
+
+    const recentChecks = await this.prisma.paymentAttempt.count({
+      where: {
+        paymentId: payment.id,
+        kind: 'STATUS_POLL',
+        createdAt: { gt: new Date(Date.now() - 60_000) },
+      },
+    });
+
+    if (recentChecks >= CHECKOUT_VERIFICATIONS_PER_MINUTE) {
+      throw new HttpException(
+        'Trop de vérifications pour ce paiement. Patiente une minute : la confirmation arrive aussi toute seule.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const provider = this.registry.get(payment.providerCode as PaymentProviderCode);
+    const startedAt = Date.now();
+    let verified: ProviderPaymentStatus;
+
+    try {
+      verified = await provider.getStatus(providerReference);
+    } catch (error) {
+      await this.prisma.paymentAttempt.create({
+        data: {
+          paymentId: payment.id,
+          kind: 'STATUS_POLL',
+          requestPayload: { providerReference, source: 'checkout' },
+          error: error instanceof Error ? error.message : String(error),
+          durationMs: Date.now() - startedAt,
+        },
+      });
+
+      if (error instanceof ProviderTransactionNotFoundError) {
+        await this.rejectTransaction(payment, providerReference, error.message, 'checkout');
+        throw new BadRequestException(
+          'Cette transaction est introuvable chez le prestataire. Si tu as été débité, ' +
+            'garde ta référence de commande : la confirmation peut encore arriver.',
+        );
+      }
+
+      // Prestataire injoignable : l'issue n'est pas connue, et elle le sera
+      // par la notification ou la réconciliation. L'écran d'attente patiente.
+      this.logger.warn(
+        { err: error, paymentId: payment.id },
+        'Vérification demandée par la page impossible — la notification ou la réconciliation conclura',
+      );
+
+      return this.toState(payment, reference, { widget: this.widgetFor(payment) });
+    }
+
+    await this.prisma.paymentAttempt.create({
+      data: {
+        paymentId: payment.id,
+        kind: 'STATUS_POLL',
+        requestPayload: { providerReference, source: 'checkout' },
+        responsePayload: toJson(verified),
+        durationMs: Date.now() - startedAt,
+      },
+    });
+
+    const verdict = await this.applyWidgetTransaction(
+      payment,
+      providerReference,
+      verified,
+      'checkout',
+    );
+
+    if (verdict === 'rejected') {
+      throw new BadRequestException(
+        'Cette transaction ne correspond pas à ce paiement. Si tu as été débité, garde ta ' +
+          'référence de commande et contacte le support.',
+      );
+    }
+
+    const refreshed = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      ...paymentWithOrder,
+    });
+
+    return this.buyerState(refreshed, reference);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -364,7 +631,7 @@ export class PaymentsService {
   ): Promise<{
     received: true;
     duplicate: boolean;
-    outcome: OutcomeResult | 'unknown_payment' | 'unverified';
+    outcome: OutcomeResult | 'unknown_payment' | 'unverified' | 'rejected';
   }> {
     const existing = await this.prisma.webhookEvent.findUnique({
       where: { providerCode_externalId: { providerCode, externalId: event.externalId } },
@@ -388,14 +655,14 @@ export class PaymentsService {
         // arrière-plan. L'index unique a tranché : l'autre s'en occupe.
         if (!isUniqueViolation(error)) throw error;
 
-        this.logger.log(`Webhook ${providerCode}/${event.externalId} déjà en cours — doublon écarté`);
+        this.logger.log(
+          `Webhook ${providerCode}/${event.externalId} déjà en cours — doublon écarté`,
+        );
         return { received: true, duplicate: true, outcome: 'ignored' };
       }
     }
 
-    const payment = await this.prisma.payment.findFirst({
-      where: { providerCode, providerReference: event.providerReference },
-    });
+    const payment = await this.findNotifiedPayment(providerCode, event);
 
     if (!payment) {
       // Peut arriver légitimement : le prestataire notifie parfois avant que
@@ -457,6 +724,15 @@ export class PaymentsService {
       return { received: true, duplicate: Boolean(existing), outcome: 'ignored' };
     }
 
+    const provider = this.registry.get(providerCode);
+
+    // Fenêtre de paiement : chaque notification décrit UNE tentative, que
+    // l'on relit chez le prestataire — succès comme échec — avant d'en tirer
+    // quoi que ce soit.
+    if (this.flowOf(payment) === 'widget') {
+      return this.handleWidgetWebhook(provider, payment, event, record.id, Boolean(existing));
+    }
+
     let outcome: PaymentOutcome = {
       status: event.status,
       failureCode: event.failureCode,
@@ -465,8 +741,6 @@ export class PaymentsService {
       source: 'webhook',
       rawPayload: event,
     };
-
-    const provider = this.registry.get(providerCode);
 
     if (provider.capabilities.verifyWebhookByFetch && event.status === 'SUCCEEDED') {
       try {
@@ -520,6 +794,304 @@ export class PaymentsService {
     return { received: true, duplicate: Boolean(existing), outcome: result };
   }
 
+  /**
+   * Retrouve le paiement d'une notification : par la référence du
+   * prestataire d'abord, puis par NOTRE identifiant quand il le renvoie — le
+   * seul lien possible quand la page n'a pas encore transmis la référence de
+   * la transaction.
+   */
+  private async findNotifiedPayment(
+    providerCode: PaymentProviderCode,
+    event: NormalizedPaymentWebhook,
+  ): Promise<PaymentWithOrder | null> {
+    const byReference = await this.prisma.payment.findFirst({
+      where: { providerCode, providerReference: event.providerReference },
+      ...paymentWithOrder,
+    });
+
+    if (byReference || !event.merchantReference) return byReference;
+
+    return this.prisma.payment.findFirst({
+      where: { id: event.merchantReference, providerCode },
+      ...paymentWithOrder,
+    });
+  }
+
+  private async handleWidgetWebhook(
+    provider: PaymentProvider,
+    payment: PaymentWithOrder,
+    event: NormalizedPaymentWebhook,
+    recordId: string,
+    duplicate: boolean,
+  ): Promise<{
+    received: true;
+    duplicate: boolean;
+    outcome: OutcomeResult | 'unverified' | 'rejected';
+  }> {
+    let verified: ProviderPaymentStatus;
+
+    try {
+      verified = await provider.getStatus(event.providerReference);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (error instanceof ProviderTransactionNotFoundError) {
+        await this.prisma.webhookEvent.update({
+          where: { id: recordId },
+          data: { status: 'FAILED', paymentId: payment.id, error: message },
+        });
+
+        return { received: true, duplicate, outcome: 'rejected' };
+      }
+
+      // La transaction est connue désormais : on la rattache, pour que la
+      // réconciliation la relise d'elle-même, même si cette notification-ci
+      // ne revient jamais. Rattacher n'applique rien — la relecture décidera.
+      if (isPaymentPending(payment.status) && !payment.providerReference) {
+        await this.bindPendingReference(payment.id, event.providerReference);
+      }
+
+      await this.prisma.webhookEvent.update({
+        where: { id: recordId },
+        data: {
+          status: 'RECEIVED',
+          paymentId: payment.id,
+          error: `Relecture impossible : ${message}`,
+        },
+      });
+
+      this.logger.warn(
+        { err: error, paymentId: payment.id },
+        'Webhook reçu, relecture chez le prestataire impossible — la réconciliation reprendra',
+      );
+
+      return { received: true, duplicate, outcome: 'unverified' };
+    }
+
+    const verdict = await this.applyWidgetTransaction(
+      payment,
+      event.providerReference,
+      verified,
+      'webhook',
+    );
+
+    await this.prisma.webhookEvent.update({
+      where: { id: recordId },
+      data:
+        verdict === 'rejected'
+          ? {
+              status: 'FAILED',
+              paymentId: payment.id,
+              error: describeBindingProblem(payment, verified) ?? 'Transaction refusée',
+            }
+          : {
+              status: verdict === 'applied' ? 'PROCESSED' : 'IGNORED',
+              paymentId: payment.id,
+              processedAt: new Date(),
+              error: null,
+            },
+    });
+
+    return { received: true, duplicate, outcome: verdict };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Fenêtre de paiement
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Applique ce que le prestataire dit d'UNE transaction faite dans sa fenêtre.
+   *
+   * ── Le lien d'abord ─────────────────────────────────────────────────────
+   * La transaction doit porter NOTRE identifiant de paiement et, si elle a
+   * réussi, EXACTEMENT le montant dû. Sinon elle est refusée : une page ne
+   * règle pas une commande à 5 000 F avec une transaction de 100 F, ni avec
+   * celle d'une autre commande.
+   *
+   * ── Un échec n'est qu'une tentative ─────────────────────────────────────
+   * Dans la fenêtre, l'acheteur peut se tromper de code puis réessayer, sur
+   * le MÊME paiement. Un échec y est donc consigné, montré à l'acheteur, et le
+   * paiement reste ouvert — jusqu'au succès, ou jusqu'à la fin de la
+   * réservation. Le clore au premier échec ferait arriver la tentative
+   * suivante, réussie, sur un paiement terminé.
+   */
+  private async applyWidgetTransaction(
+    payment: WidgetPayment,
+    providerReference: string,
+    verified: ProviderPaymentStatus,
+    source: OutcomeSource,
+  ): Promise<WidgetVerdict> {
+    const problem = describeBindingProblem(payment, verified);
+
+    if (problem) {
+      await this.rejectTransaction(payment, providerReference, problem, source);
+      return 'rejected';
+    }
+
+    if (verified.status === 'SUCCEEDED') {
+      // Une SECONDE transaction réussie pour un paiement déjà réglé par une
+      // autre : l'acheteur a payé deux fois — deux onglets, une fenêtre
+      // rouverte. Rien à émettre de plus, mais de l'argent à rendre.
+      if (
+        SETTLED_PAYMENT_STATUSES.includes(payment.status) &&
+        payment.providerReference !== null &&
+        payment.providerReference !== providerReference
+      ) {
+        await this.flagDuplicate(payment.id, {
+          providerReference,
+          settledBy: payment.providerReference,
+          source,
+        });
+        return 'ignored';
+      }
+
+      try {
+        return await this.applyOutcome(payment.id, {
+          status: 'SUCCEEDED',
+          providerFeeAmount: verified.providerFeeAmount,
+          providerReference,
+          payerPhone: verified.payerPhone,
+          source,
+          rawPayload: verified.rawResponse,
+        });
+      } catch (error) {
+        // La transaction est déjà rattachée à un AUTRE paiement : impossible
+        // si elle porte bien notre identifiant — sauf manipulation. Refusée.
+        if (!isUniqueViolation(error)) throw error;
+
+        await this.rejectTransaction(
+          payment,
+          providerReference,
+          'Transaction déjà rattachée à un autre paiement.',
+          source,
+        );
+        return 'rejected';
+      }
+    }
+
+    if (!isPaymentPending(payment.status)) {
+      // Un échec ou un « en cours » sur un paiement déjà terminé ne change rien.
+      return 'unchanged';
+    }
+
+    if (verified.status === 'FAILED' || verified.status === 'CANCELLED') {
+      const reason = verified.failureReason ?? "Le paiement n'a pas abouti. Réessaie.";
+
+      await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          failureCode: verified.failureCode ?? 'FAILED',
+          failureReason: reason,
+          // Cette transaction est close : la réconciliation n'a plus à la
+          // relire. La suivante, s'il y en a une, sera rattachée à son tour.
+          ...(payment.providerReference === providerReference ? { providerReference: null } : {}),
+        },
+      });
+
+      await this.audit.record({
+        action: AUDIT_ACTIONS.paymentAttemptFailed,
+        entityType: 'payment',
+        entityId: payment.id,
+        actorType: 'SYSTEM',
+        changes: { providerReference, reason: verified.failureCode ?? reason, source },
+      });
+
+      return 'applied';
+    }
+
+    // En cours chez le prestataire : on garde sa référence, pour que la
+    // réconciliation la relise si la notification se perd.
+    if (payment.providerReference !== providerReference) {
+      await this.bindPendingReference(payment.id, providerReference);
+    }
+
+    return 'unchanged';
+  }
+
+  /**
+   * Rattache une transaction EN COURS à un paiement ouvert, sans rien conclure.
+   * Une nouvelle tentative efface la cause de l'échec précédent : l'écran ne
+   * doit pas annoncer un échec pendant que l'acheteur valide la suivante.
+   */
+  private async bindPendingReference(paymentId: string, providerReference: string): Promise<void> {
+    try {
+      await this.prisma.payment.updateMany({
+        where: { id: paymentId, status: { in: ['INITIATED', 'PENDING', 'PROCESSING'] } },
+        data: { providerReference, failureCode: null, failureReason: null },
+      });
+    } catch (error) {
+      // Déjà rattachée ailleurs : on n'écrase rien, la relecture tranchera.
+      if (!isUniqueViolation(error)) throw error;
+    }
+  }
+
+  /**
+   * Consigne un encaissement EN TROP : une seconde transaction réussie sur un
+   * paiement déjà réglé, ou un paiement qui aboutit sur une commande que
+   * d'autres ont déjà réglée. Rien n'est émis de plus — mais l'argent est à
+   * rendre, et le rapprochement le montre.
+   *
+   * Une fois par transaction, quel que soit le chemin qui la rapporte : la
+   * page, la notification et la réconciliation peuvent toutes la voir passer.
+   */
+  private async flagDuplicate(
+    paymentId: string,
+    details: {
+      providerReference?: string;
+      settledBy?: string | null;
+      orderId?: string;
+      source: OutcomeSource;
+    },
+  ): Promise<void> {
+    const already = await this.prisma.auditLog.findFirst({
+      where: {
+        action: AUDIT_ACTIONS.paymentDuplicate,
+        entityId: paymentId,
+        ...(details.providerReference
+          ? { changes: { path: ['providerReference'], equals: details.providerReference } }
+          : {}),
+      },
+      select: { id: true },
+    });
+
+    if (already) return;
+
+    this.logger.error(
+      `Encaissement en trop sur le paiement ${paymentId}` +
+        `${details.providerReference ? ` (transaction ${details.providerReference})` : ''} : à rembourser`,
+    );
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.paymentDuplicate,
+      entityType: 'payment',
+      entityId: paymentId,
+      actorType: 'SYSTEM',
+      changes: {
+        ...details,
+        reason: 'Encaissé en double : à rembourser depuis le tableau de bord du prestataire',
+      },
+    });
+  }
+
+  private async rejectTransaction(
+    payment: { id: string },
+    providerReference: string,
+    reason: string,
+    source: OutcomeSource,
+  ): Promise<void> {
+    this.logger.warn(
+      `Transaction ${providerReference} refusée pour le paiement ${payment.id} (${source}) : ${reason}`,
+    );
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.paymentVerificationRejected,
+      entityType: 'payment',
+      entityId: payment.id,
+      actorType: 'SYSTEM',
+      changes: { providerReference, reason, source },
+    });
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Machine à états
   // ───────────────────────────────────────────────────────────────────────────
@@ -535,12 +1107,28 @@ export class PaymentsService {
    * une interrogation arrivant en même temps sur le même paiement. Sans lui,
    * les deux pourraient confirmer la commande, et le stock serait décrémenté
    * deux fois.
+   *
+   * ── Un succès règle la commande… si elle peut encore l'être ─────────────
+   *   · commande en attente → payée, billets émis ;
+   *   · réservation terminée (succès tardif) → payée si ses places sont
+   *     encore libres, sinon laissée telle quelle — l'argent est encaissé,
+   *     et le rapprochement montre ce paiement à rembourser ;
+   *   · commande déjà réglée par un autre paiement → rien de plus : c'est un
+   *     paiement en double, à rembourser, que le rapprochement montre aussi.
    */
   async applyOutcome(paymentId: string, outcome: PaymentOutcome): Promise<OutcomeResult> {
     const result = await this.prisma.$transaction(
       async (tx) => {
-        const locked = await tx.$queryRaw<{ id: string; status: PaymentStatus; orderId: string }[]>`
-        SELECT id, status::text AS status, "orderId"
+        const locked = await tx.$queryRaw<
+          {
+            id: string;
+            status: PaymentStatus;
+            orderId: string;
+            payerPhone: string | null;
+            countryCode: string;
+          }[]
+        >`
+        SELECT id, status::text AS status, "orderId", "payerPhone", "countryCode"
         FROM payment
         WHERE id = ${paymentId}
         FOR UPDATE
@@ -577,6 +1165,36 @@ export class PaymentsService {
         }
 
         const now = new Date();
+        const late = !isPaymentPending(current.status);
+
+        /**
+         * ── Un succès sur une commande déjà réglée ne s'applique pas ─────────
+         * La base n'admet qu'UN paiement réussi par commande (index
+         * `payment_one_success_per_order`), et c'est voulu : les billets, le
+         * grand livre et les rapports en dépendent. Un second encaissement —
+         * paiement abandonné qui aboutit après coup, commande déjà remboursée —
+         * n'est donc pas marqué réussi : il est consigné, à rembourser, et le
+         * rapprochement le montre. Tranché AVANT d'écrire, sous le verrou de la
+         * commande, pour qu'aucune course ne le fasse passer.
+         */
+        let orderStatus: string | null = null;
+
+        if (outcome.status === 'SUCCEEDED') {
+          const orders = await tx.$queryRaw<{ status: string }[]>`
+            SELECT status::text AS status FROM "order" WHERE id = ${current.orderId} FOR UPDATE
+          `;
+
+          orderStatus = orders[0]?.status ?? null;
+
+          const settledElsewhere = await tx.payment.findFirst({
+            where: { orderId: current.orderId, status: 'SUCCEEDED', id: { not: paymentId } },
+            select: { id: true },
+          });
+
+          if (settledElsewhere || SETTLED_ORDER_STATUSES.includes(orderStatus ?? '')) {
+            return { duplicate: true, orderId: current.orderId } as const;
+          }
+        }
 
         await tx.payment.update({
           where: { id: paymentId },
@@ -591,21 +1209,33 @@ export class PaymentsService {
             // cette valeur que le grand livre consigne en `PROVIDER_FEE`.
             providerFeeAmount:
               outcome.status === 'SUCCEEDED' ? (outcome.providerFeeAmount ?? 0) : undefined,
+            providerReference: outcome.providerReference,
+            // Le numéro que le prestataire dit avoir débité, remis à NOTRE
+            // format — Kkiapay peut l'écrire selon l'ancien plan béninois à
+            // huit chiffres. Illisible pour ce pays : on ne l'écrit pas.
+            payerPhone:
+              current.payerPhone === null && outcome.payerPhone
+                ? (tryNormalizePhoneForCountry(outcome.payerPhone, current.countryCode) ??
+                  undefined)
+                : undefined,
             providerPayload:
               outcome.rawPayload === undefined ? undefined : toJson(outcome.rawPayload),
           },
         });
 
-        if (outcome.status === 'SUCCEEDED') {
-          await this.orders.markPaid(tx, current.orderId, now, outcome.providerFeeAmount ?? 0);
-        }
+        // Commande encore en attente — ou réservation écoulée, que `markPaid`
+        // honore si les places sont encore libres (`secureForPayment`).
+        const settlement: Settlement | null =
+          outcome.status === 'SUCCEEDED'
+            ? await this.orders.markPaid(tx, current.orderId, now, outcome.providerFeeAmount ?? 0)
+            : null;
 
         // Un échec ne touche PAS à la commande : elle reste en AWAITING_PAYMENT
         // et ses places restent réservées jusqu'à l'expiration, pour que
         // l'acheteur puisse réessayer avec un autre numéro ou un autre moyen.
         // « Aucun montant n'a été débité · panier conservé » (écran A6).
 
-        return { orderId: current.orderId } as const;
+        return { orderId: current.orderId, settlement, late } as const;
       },
       {
         /**
@@ -637,7 +1267,16 @@ export class PaymentsService {
       return result;
     }
 
-    await this.afterTransition(paymentId, result.orderId, outcome);
+    if ('duplicate' in result) {
+      await this.flagDuplicate(paymentId, {
+        providerReference: outcome.providerReference,
+        orderId: result.orderId,
+        source: outcome.source,
+      });
+      return 'ignored';
+    }
+
+    await this.afterTransition(paymentId, result.orderId, outcome, result.settlement, result.late);
 
     return 'applied';
   }
@@ -648,10 +1287,19 @@ export class PaymentsService {
    * C'est le filet contre le webhook perdu. Renvoie `true` si l'état a changé.
    */
   async pollProvider(paymentId: string): Promise<boolean> {
-    const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+      ...paymentWithOrder,
+    });
 
-    if (!payment || !payment.providerReference || !isPaymentPending(payment.status)) {
+    if (!payment || !isPaymentPending(payment.status)) {
       return false;
+    }
+
+    // Rien à lire chez le prestataire — fenêtre de paiement pas encore
+    // validée, ou prestataire muet à l'initiation : seule l'échéance conclut.
+    if (!payment.providerReference) {
+      return this.expireIfDue(payment);
     }
 
     if (!this.registry.has(payment.providerCode as PaymentProviderCode)) {
@@ -667,60 +1315,10 @@ export class PaymentsService {
     }
 
     const startedAt = Date.now();
+    let status: ProviderPaymentStatus;
 
     try {
-      const status = await provider.getStatus(payment.providerReference);
-
-      await this.prisma.paymentAttempt.create({
-        data: {
-          paymentId,
-          kind: 'STATUS_POLL',
-          responsePayload: toJson(status),
-          durationMs: Date.now() - startedAt,
-        },
-      });
-
-      // L'expiration est décidée par NOUS, pas par le prestataire : passé le
-      // délai annoncé à l'acheteur, une demande toujours en attente est abandonnée.
-      const expired =
-        isPaymentPending(status.status) &&
-        payment.expiresAt !== null &&
-        payment.expiresAt.getTime() < Date.now();
-
-      const outcome: PaymentOutcome = expired
-        ? {
-            status: 'EXPIRED',
-            failureReason: "La demande n'a pas été validée à temps.",
-            source: 'expiry',
-          }
-        : {
-            status: status.status,
-            failureCode: status.failureCode,
-            failureReason: status.failureReason,
-            providerFeeAmount: status.providerFeeAmount,
-            source: 'poll',
-            rawPayload: status.rawResponse,
-          };
-
-      if (!expired && status.status === payment.status) {
-        return false;
-      }
-
-      const applied = await this.applyOutcome(paymentId, outcome);
-
-      if (applied === 'applied' && outcome.source === 'poll' && outcome.status === 'SUCCEEDED') {
-        // Le webhook ne nous est jamais parvenu : l'écart est consigné, il
-        // alimente le KPI de fiabilité du prestataire.
-        await this.audit.record({
-          action: AUDIT_ACTIONS.paymentReconciled,
-          entityType: 'payment',
-          entityId: paymentId,
-          actorType: 'SYSTEM',
-          changes: { providerCode: payment.providerCode, recoveredBy: 'status_poll' },
-        });
-      }
-
-      return applied === 'applied';
+      status = await provider.getStatus(payment.providerReference);
     } catch (error) {
       await this.prisma.paymentAttempt.create({
         data: {
@@ -732,8 +1330,307 @@ export class PaymentsService {
       });
 
       this.logger.warn({ err: error, paymentId }, 'Interrogation du prestataire en échec');
+
+      // Une transaction que le prestataire ne connaît pas ne se lira jamais :
+      // pour une fenêtre de paiement, on la détache — l'échéance conclura.
+      if (error instanceof ProviderTransactionNotFoundError && this.flowOf(payment) === 'widget') {
+        await this.prisma.payment.updateMany({
+          where: { id: paymentId, providerReference: payment.providerReference },
+          data: { providerReference: null },
+        });
+      }
+
+      return this.expireIfDue(payment);
+    }
+
+    await this.prisma.paymentAttempt.create({
+      data: {
+        paymentId,
+        kind: 'STATUS_POLL',
+        responsePayload: toJson(status),
+        durationMs: Date.now() - startedAt,
+      },
+    });
+
+    if (this.flowOf(payment) === 'widget') {
+      const verdict = await this.applyWidgetTransaction(
+        payment,
+        payment.providerReference,
+        status,
+        'poll',
+      );
+
+      if (verdict === 'applied' && status.status === 'SUCCEEDED') {
+        await this.recordRecovery(paymentId, payment.providerCode);
+        return true;
+      }
+
+      return (await this.expireIfDue(payment)) || verdict === 'applied';
+    }
+
+    // L'expiration est décidée par NOUS, pas par le prestataire : passé le
+    // délai annoncé à l'acheteur, une demande toujours en attente est abandonnée.
+    const expired =
+      isPaymentPending(status.status) &&
+      payment.expiresAt !== null &&
+      payment.expiresAt.getTime() < Date.now();
+
+    const outcome: PaymentOutcome = expired
+      ? {
+          status: 'EXPIRED',
+          failureReason: "La demande n'a pas été validée à temps.",
+          source: 'expiry',
+        }
+      : {
+          status: status.status,
+          failureCode: status.failureCode,
+          failureReason: status.failureReason,
+          providerFeeAmount: status.providerFeeAmount,
+          source: 'poll',
+          rawPayload: status.rawResponse,
+        };
+
+    if (!expired && status.status === payment.status) {
       return false;
     }
+
+    const applied = await this.applyOutcome(paymentId, outcome);
+
+    if (applied === 'applied' && outcome.source === 'poll' && outcome.status === 'SUCCEEDED') {
+      await this.recordRecovery(paymentId, payment.providerCode);
+    }
+
+    return applied === 'applied';
+  }
+
+  /**
+   * Ce paiement peut-il recevoir, à la main, une transaction du prestataire ?
+   * Seulement s'il se valide dans la fenêtre du prestataire — les autres
+   * reçoivent leur référence à l'initiation — et s'il n'est pas déjà réglé.
+   */
+  canAttachTransaction(payment: {
+    providerCode: string;
+    methodCode: string;
+    status: PaymentStatus;
+  }): boolean {
+    return this.flowOf(payment) === 'widget' && !SETTLED_PAYMENT_STATUSES.includes(payment.status);
+  }
+
+  /**
+   * Rattache à la main une transaction du prestataire à un paiement.
+   *
+   * Depuis la console, quand un acheteur débité se présente au support avec
+   * la référence de sa transaction : ni sa page ni la notification ne nous
+   * ont rapporté l'issue. La référence est lue chez le prestataire et n'est
+   * retenue que si elle porte l'identifiant de CE paiement et le bon montant
+   * — exactement comme celle que rapporte la page. Réussie, elle règle la
+   * commande, même après la fin de la réservation si les places sont encore
+   * libres ; sinon le paiement est signalé, à rembourser.
+   */
+  async attachTransaction(
+    paymentId: string,
+    providerReference: string,
+    actorUserId: string,
+  ): Promise<AttachPaymentTransactionResult> {
+    const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
+
+    if (!payment) {
+      throw new NotFoundException("Ce paiement n'existe pas.");
+    }
+
+    if (payment.status === 'SUCCEEDED' && payment.providerReference === providerReference) {
+      return { outcome: 'already', message: 'Ce paiement est déjà réglé par cette transaction.' };
+    }
+
+    if (!this.canAttachTransaction(payment)) {
+      throw new BadRequestException(
+        this.flowOf(payment) === 'widget'
+          ? 'Ce paiement est déjà réglé : une autre transaction ne peut plus lui être rattachée.'
+          : 'Ce paiement ne se valide pas dans la fenêtre d’un prestataire : sa transaction lui est rattachée d’office.',
+      );
+    }
+
+    const label = getPaymentProviderDefinition(payment.providerCode)?.label ?? payment.providerCode;
+    const provider = this.registry.get(payment.providerCode as PaymentProviderCode);
+    const startedAt = Date.now();
+    let verified: ProviderPaymentStatus;
+
+    try {
+      verified = await provider.getStatus(providerReference);
+    } catch (error) {
+      await this.prisma.paymentAttempt.create({
+        data: {
+          paymentId,
+          kind: 'STATUS_POLL',
+          requestPayload: { providerReference, source: 'admin' },
+          error: error instanceof Error ? error.message : String(error),
+          durationMs: Date.now() - startedAt,
+        },
+      });
+
+      if (error instanceof ProviderTransactionNotFoundError) {
+        throw new BadRequestException(error.message);
+      }
+
+      throw new HttpException(
+        `${label} ne répond pas : réessaie dans un instant.`,
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    await this.prisma.paymentAttempt.create({
+      data: {
+        paymentId,
+        kind: 'STATUS_POLL',
+        requestPayload: { providerReference, source: 'admin' },
+        responsePayload: toJson(verified),
+        durationMs: Date.now() - startedAt,
+      },
+    });
+
+    const verdict = await this.applyWidgetTransaction(
+      payment,
+      providerReference,
+      verified,
+      'admin',
+    );
+
+    if (verdict === 'rejected') {
+      throw new BadRequestException(
+        describeBindingProblem(payment, verified) ??
+          'Cette transaction ne correspond pas à ce paiement.',
+      );
+    }
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.paymentTransactionAttached,
+      entityType: 'payment',
+      entityId: paymentId,
+      actorType: 'ADMIN',
+      actorUserId,
+      changes: { providerReference, status: verified.status },
+    });
+
+    if (verified.status === 'FAILED' || verified.status === 'CANCELLED') {
+      return {
+        outcome: 'failed',
+        message: `Cette transaction a échoué chez ${label} : rien n'a été encaissé. ${
+          verified.failureReason ?? ''
+        }`.trim(),
+      };
+    }
+
+    if (verified.status !== 'SUCCEEDED') {
+      return {
+        outcome: 'pending',
+        message: `Cette transaction est encore en cours chez ${label}. Elle est rattachée au paiement et sera relue automatiquement.`,
+      };
+    }
+
+    const after = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      select: { status: true, order: { select: { status: true } } },
+    });
+
+    // Non appliqué alors que Kkiapay confirme : la commande était déjà réglée
+    // par un autre paiement (voir `applyOutcome`) — un encaissement en trop.
+    if (after.status !== 'SUCCEEDED') {
+      return {
+        outcome: 'duplicate',
+        message:
+          'Transaction encaissée, mais la commande était déjà réglée : ' +
+          `rembourse ce paiement en double depuis le tableau de bord de ${label}.`,
+      };
+    }
+
+    if (after.order.status !== 'PAID' && after.order.status !== 'COMPLETED') {
+      return {
+        outcome: 'unfulfillable',
+        message:
+          'Transaction encaissée, mais les places de la commande ne sont plus disponibles : ' +
+          `rembourse l'acheteur depuis le tableau de bord de ${label}.`,
+      };
+    }
+
+    return {
+      outcome: 'settled',
+      message: 'Transaction encaissée : la commande est payée et les billets sont émis.',
+    };
+  }
+
+  /**
+   * Relit UNE transaction précise chez le prestataire et applique ce qu'elle
+   * dit.
+   *
+   * Pour la réconciliation, qui retrouve une notification restée sans
+   * paiement : la transaction qu'elle nomme peut n'être rattachée à rien
+   * encore (fenêtre de paiement). Pour un paiement qui ne se valide pas dans
+   * une fenêtre, c'est l'interrogation ordinaire, sur la référence connue.
+   */
+  async reconcileTransaction(paymentId: string, providerReference: string): Promise<boolean> {
+    const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
+
+    if (!payment) return false;
+
+    if (this.flowOf(payment) !== 'widget') return this.pollProvider(paymentId);
+
+    const provider = this.registry.get(payment.providerCode as PaymentProviderCode);
+    const startedAt = Date.now();
+
+    try {
+      const verified = await provider.getStatus(providerReference);
+
+      await this.prisma.paymentAttempt.create({
+        data: {
+          paymentId,
+          kind: 'STATUS_POLL',
+          requestPayload: { providerReference, source: 'reconciliation' },
+          responsePayload: toJson(verified),
+          durationMs: Date.now() - startedAt,
+        },
+      });
+
+      const verdict = await this.applyWidgetTransaction(
+        payment,
+        providerReference,
+        verified,
+        'poll',
+      );
+
+      if (verdict === 'applied' && verified.status === 'SUCCEEDED') {
+        await this.recordRecovery(paymentId, payment.providerCode);
+      }
+
+      return verdict === 'applied';
+    } catch (error) {
+      await this.prisma.paymentAttempt.create({
+        data: {
+          paymentId,
+          kind: 'STATUS_POLL',
+          requestPayload: { providerReference, source: 'reconciliation' },
+          error: error instanceof Error ? error.message : String(error),
+          durationMs: Date.now() - startedAt,
+        },
+      });
+
+      this.logger.warn({ err: error, paymentId }, 'Relecture de transaction impossible');
+      return false;
+    }
+  }
+
+  /**
+   * Clôt un paiement en attente dont l'échéance est passée.
+   *
+   * Pour la réconciliation, qui balaie aussi les paiements sans référence de
+   * prestataire — une fenêtre de paiement ouverte puis abandonnée n'en a
+   * jamais reçu.
+   */
+  async expireIfOverdue(paymentId: string): Promise<boolean> {
+    const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
+
+    if (!payment || !isPaymentPending(payment.status)) return false;
+
+    return this.expireIfDue(payment);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -748,6 +1645,85 @@ export class PaymentsService {
     });
 
     return applied === 'applied';
+  }
+
+  /** Le webhook ne nous est jamais parvenu : l'écart alimente le KPI de fiabilité. */
+  private async recordRecovery(paymentId: string, providerCode: string): Promise<void> {
+    await this.audit.record({
+      action: AUDIT_ACTIONS.paymentReconciled,
+      entityType: 'payment',
+      entityId: paymentId,
+      actorType: 'SYSTEM',
+      changes: { providerCode, recoveredBy: 'status_poll' },
+    });
+  }
+
+  /**
+   * L'écran d'attente interroge toutes les trois secondes ; le prestataire,
+   * lui, n'est relu qu'à intervalle raisonnable.
+   */
+  private async providerCheckIsDue(paymentId: string): Promise<boolean> {
+    const recent = await this.prisma.paymentAttempt.findFirst({
+      where: {
+        paymentId,
+        kind: 'STATUS_POLL',
+        createdAt: { gt: new Date(Date.now() - PAGE_POLL_MIN_INTERVAL_MS) },
+      },
+      select: { id: true },
+    });
+
+    return recent === null;
+  }
+
+  /** Comment se valide ce paiement, selon son prestataire — `null` s'il n'est plus branché. */
+  private flowOf(payment: { providerCode: string; methodCode: string }): CheckoutFlow | null {
+    const code = payment.providerCode as PaymentProviderCode;
+    const kind = getPaymentMethodDefinition(payment.methodCode)?.kind;
+
+    if (!kind || !this.registry.has(code)) return null;
+
+    return this.registry.get(code).checkoutFlow(kind);
+  }
+
+  /**
+   * Fenêtre de paiement d'un paiement encore ouvert, reconstruite à la
+   * demande : rouvrir après une fenêtre fermée, reprendre après un
+   * rechargement. `null` pour tout paiement qui ne s'y valide pas.
+   */
+  private widgetFor(payment: PaymentWithOrder): PaymentWidget | null {
+    if (!isPaymentPending(payment.status) || this.flowOf(payment) !== 'widget') return null;
+
+    const provider = this.registry.get(payment.providerCode as PaymentProviderCode);
+    const kind = getPaymentMethodDefinition(payment.methodCode)?.kind;
+
+    if (!provider.widget || !kind) return null;
+
+    const input: ProviderInitiateInput = {
+      paymentId: payment.id,
+      orderReference: payment.order.reference,
+      amount: payment.amount,
+      currency: payment.currency,
+      countryCode: payment.countryCode,
+      method: {
+        code: payment.methodCode as PaymentMethodCode,
+        kind,
+        providerMethodCode:
+          resolveProviderMethodCode(
+            payment.providerCode,
+            payment.methodCode as PaymentMethodCode,
+            payment.countryCode,
+          ) ?? payment.methodCode,
+      },
+      customer: {
+        name: payment.order.buyerName,
+        phone: payment.order.buyerPhone,
+        email: payment.order.buyerEmail ?? undefined,
+      },
+      description: `Nexa-Kabi · ${payment.order.event.title}`,
+      returnUrls: this.returnUrls(payment.order.reference, payment.id),
+    };
+
+    return provider.widget(input);
   }
 
   /**
@@ -771,6 +1747,8 @@ export class PaymentsService {
     paymentId: string,
     orderId: string,
     outcome: PaymentOutcome,
+    settlement: Settlement | null,
+    late: boolean,
   ): Promise<void> {
     if (outcome.status === 'SUCCEEDED') {
       await this.audit.record({
@@ -778,12 +1756,44 @@ export class PaymentsService {
         entityType: 'payment',
         entityId: paymentId,
         actorType: 'SYSTEM',
-        changes: { orderId, source: outcome.source },
+        changes: { orderId, source: outcome.source, settlement, late },
       });
 
-      // La phase 7 s'y abonne pour émettre les billets. L'émission ne peut pas
-      // vivre ici : elle appartient au domaine du billet, pas du paiement.
-      this.events.emit('order.paid', { orderId, paymentId });
+      if (settlement === 'paid') {
+        if (late) {
+          await this.audit.record({
+            action: AUDIT_ACTIONS.paymentLateSettled,
+            entityType: 'payment',
+            entityId: paymentId,
+            actorType: 'SYSTEM',
+            changes: { orderId, source: outcome.source },
+          });
+        }
+
+        // La phase 7 s'y abonne pour émettre les billets. L'émission ne peut pas
+        // vivre ici : elle appartient au domaine du billet, pas du paiement.
+        this.events.emit('order.paid', { orderId, paymentId });
+        return;
+      }
+
+      // Encaissé, mais sans commande à honorer : le rapprochement le montre
+      // (« paiement réussi, commande non payée »), et un remboursement doit
+      // suivre. Le journal le crie dès maintenant.
+      this.logger.error(
+        `Paiement ${paymentId} encaissé sur la commande ${orderId}, dont les places ne sont plus disponibles : à rembourser`,
+      );
+
+      await this.audit.record({
+        action: AUDIT_ACTIONS.paymentUnfulfillable,
+        entityType: 'payment',
+        entityId: paymentId,
+        actorType: 'SYSTEM',
+        changes: {
+          orderId,
+          source: outcome.source,
+          reason: 'Places plus disponibles : à rembourser depuis le tableau de bord du prestataire',
+        },
+      });
       return;
     }
 
@@ -812,9 +1822,10 @@ export class PaymentsService {
       redirectUrl: string | null;
     },
     reference: string,
-    instructions?: string,
+    extras: { instructions?: string; widget?: PaymentWidget | null } = {},
   ): PaymentState {
     const method = payment.methodCode as PaymentMethodCode;
+    const pending = isPaymentPending(payment.status);
 
     return {
       paymentId: payment.id,
@@ -827,23 +1838,54 @@ export class PaymentsService {
       currency: payment.currency,
       // Jamais le numéro complet : cet écran est souvent montré à quelqu'un
       // d'autre pour qu'il valide le paiement.
-      maskedPayerPhone: payment.payerPhone ? maskPhone(payment.payerPhone) : '',
+      maskedPayerPhone: payment.payerPhone ? safeMask(payment.payerPhone) : '',
       expiresAt: payment.expiresAt?.toISOString() ?? null,
-      instructions: instructions ?? null,
+      instructions: extras.instructions ?? null,
       // Le lien du prestataire n'a de sens que tant que le paiement attend.
       // Pour la carte, c'est la page où le tunnel ENVOIE l'acheteur ; pour le
       // Mobile Money, un lien de validation à ouvrir à côté de l'écran d'attente.
       redirectUrl:
-        isPaymentPending(payment.status) && getPaymentMethodDefinition(method)?.kind === 'CARD'
-          ? payment.redirectUrl
-          : null,
+        pending && getPaymentMethodDefinition(method)?.kind === 'CARD' ? payment.redirectUrl : null,
       confirmationUrl:
-        isPaymentPending(payment.status) && getPaymentMethodDefinition(method)?.kind !== 'CARD'
-          ? payment.redirectUrl
-          : null,
+        pending && getPaymentMethodDefinition(method)?.kind !== 'CARD' ? payment.redirectUrl : null,
+      widget: pending ? (extras.widget ?? null) : null,
       failureReason: payment.failureReason,
     };
   }
+}
+
+/** Fin de la réservation, ou à défaut la durée d'une réservation à partir de maintenant. */
+function reservationEnd(orderExpiresAt: Date | null): Date {
+  return orderExpiresAt ?? new Date(Date.now() + RESERVATION_TTL_MINUTES * 60 * 1000);
+}
+
+/**
+ * Pourquoi une transaction ne peut pas régler ce paiement — `null` si elle le peut.
+ *
+ * Elle doit porter NOTRE identifiant de paiement ; et, réussie, exactement le
+ * montant dû. Un montant absent ne se présume pas : il se refuse.
+ */
+function describeBindingProblem(
+  payment: { id: string; amount: number },
+  verified: ProviderPaymentStatus,
+): string | null {
+  if (verified.merchantReference !== payment.id) {
+    return verified.merchantReference
+      ? `Transaction rattachée au paiement ${verified.merchantReference}, pas à celui-ci.`
+      : 'Transaction sans référence Nexa-Kabi : elle ne vient pas de ce paiement.';
+  }
+
+  if (verified.status === 'SUCCEEDED') {
+    if (verified.amount === undefined) {
+      return 'Montant non communiqué par le prestataire : impossible de vérifier ce paiement.';
+    }
+
+    if (verified.amount !== payment.amount) {
+      return `Montant annoncé ${verified.amount}, attendu ${payment.amount}.`;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -869,6 +1911,19 @@ function describeAmountMismatch(
   }
 
   return null;
+}
+
+/**
+ * Masque un numéro sans jamais faire échouer la réponse : un numéro que nos
+ * règles ne savent pas lire s'affiche vide plutôt que de rendre l'écran
+ * d'attente inutilisable au moment où l'acheteur vient de payer.
+ */
+function safeMask(phone: string): string {
+  try {
+    return maskPhone(phone);
+  } catch {
+    return '';
+  }
 }
 
 function isUniqueViolation(error: unknown): boolean {

@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Check, ExternalLink, Lock } from 'lucide-react';
+import { Check, ExternalLink, Lock, ShieldCheck } from 'lucide-react';
 import {
   isPaymentPending,
   type ApiError,
@@ -27,6 +27,7 @@ import {
   cn,
   startRouteProgress,
 } from '@nexakabi/ui';
+import { openPaymentWidget } from '@/lib/payment-widget';
 
 /**
  * Paiement — écrans A3, A4 et A6.
@@ -46,10 +47,15 @@ import {
  *
  * ── Ce que l'écran ne sait pas ─────────────────────────────────────────────
  * Quel prestataire traite le paiement. Il reçoit les MOYENS ouverts dans le
- * pays de la commande — « MTN MoMo », « Wave », « Carte bancaire » — et
- * demande un numéro quand le moyen l'exige, ou envoie l'acheteur sur une
- * page de paiement quand le moyen le veut. Un pays de plus n'ajoute pas une
- * ligne ici.
+ * pays de la commande — « MTN MoMo », « Carte bancaire » — et, pour chacun,
+ * COMMENT il se valide : numéro saisi ici (`push`), page du prestataire
+ * (`redirect`), ou fenêtre du prestataire ouverte par-dessus (`widget`). Un
+ * pays de plus n'ajoute pas une ligne ici.
+ *
+ * ── Ce que l'écran ne décide jamais ────────────────────────────────────────
+ * Qu'un paiement a réussi. Même quand la fenêtre du prestataire l'annonce, la
+ * page ne fait que transmettre la référence de la transaction au serveur, qui
+ * la vérifie chez le prestataire. Les billets n'existent qu'après.
  */
 
 /** Cadence d'interrogation. Assez rapide pour paraître instantané, assez lente
@@ -73,6 +79,10 @@ export function PaymentFlow({
   const [payment, setPayment] = React.useState<PaymentState | null>(initialPayment);
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
+  /** La fenêtre du prestataire se charge. */
+  const [opening, setOpening] = React.useState(false);
+  /** Le serveur vérifie une transaction annoncée par la fenêtre. */
+  const [verifying, setVerifying] = React.useState(false);
 
   const [method, setMethod] = React.useState<PaymentMethodCode | null>(
     initialPayment?.method ?? methods.methods[0]?.code ?? null,
@@ -86,6 +96,11 @@ export function PaymentFlow({
 
   const selected = methods.methods.find((entry) => entry.code === method) ?? null;
   const waiting = payment !== null && isPaymentPending(payment.status);
+
+  const goToConfirmation = React.useCallback(() => {
+    startRouteProgress();
+    router.push(`/commandes/${order.reference}/confirmation`);
+  }, [order.reference, router]);
 
   // Interrogation de l'état pendant l'attente. C'est le serveur qui interroge
   // le prestataire : la page ne fait que demander le verdict connu.
@@ -105,6 +120,16 @@ export function PaymentFlow({
         const next = (await response.json()) as PaymentState;
         if (cancelled) return;
 
+        // Une réponse identique ne remplace pas l'état : l'intervalle n'est
+        // réarmé que lorsque quelque chose change vraiment.
+        if (
+          next.status === payment.status &&
+          next.failureReason === payment.failureReason &&
+          next.method === payment.method
+        ) {
+          return;
+        }
+
         setPayment(next);
 
         if (next.status === 'SUCCEEDED') {
@@ -113,8 +138,7 @@ export function PaymentFlow({
           // répondre. Sans le filet, l'écran d'attente resterait identique à
           // lui-même pendant que la confirmation se charge — juste au moment
           // où l'argent vient de partir.
-          startRouteProgress();
-          router.push(`/commandes/${order.reference}/confirmation`);
+          goToConfirmation();
         }
       })();
     }, POLL_INTERVAL_MS);
@@ -123,7 +147,91 @@ export function PaymentFlow({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [payment, order.reference, router]);
+  }, [payment, order.reference, goToConfirmation]);
+
+  /**
+   * Transmet au serveur la transaction annoncée par la fenêtre du prestataire.
+   *
+   * Le serveur la lit chez le prestataire, vérifie qu'elle appartient à CE
+   * paiement et porte le bon montant, et répond par l'état qui en découle —
+   * c'est le seul verdict que la page affiche.
+   */
+  const confirmTransaction = React.useCallback(
+    async (paymentId: string, providerReference: string, announced: 'success' | 'other') => {
+      if (announced === 'success') setVerifying(true);
+
+      try {
+        const response = await fetch(
+          `/api/checkout/orders/${order.reference}/payments/${paymentId}/confirm`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ providerReference }),
+          },
+        );
+
+        const body: unknown = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          // Refus de vérification, prestataire injoignable : l'écran reste en
+          // attente — la notification du prestataire peut encore conclure.
+          setError(
+            (body as ApiError | null)?.message ??
+              'La vérification du paiement n’a pas abouti. La confirmation peut encore arriver.',
+          );
+          return;
+        }
+
+        const next = body as PaymentState;
+
+        if (next.status === 'SUCCEEDED') {
+          goToConfirmation();
+          return;
+        }
+
+        setError(null);
+        setPayment(next);
+      } finally {
+        if (announced === 'success') setVerifying(false);
+      }
+    },
+    [order.reference, goToConfirmation],
+  );
+
+  /** Ouvre la fenêtre du prestataire pour un paiement qui l'attend. */
+  const launchWidget = React.useCallback(
+    async (state: PaymentState) => {
+      if (!state.widget) return;
+
+      setOpening(true);
+      setError(null);
+
+      // L'adresse garde le paiement : un rafraîchissement reprend cet écran
+      // au lieu de repartir de zéro.
+      const url = new URL(window.location.href);
+      url.searchParams.set('paiement', state.paymentId);
+      url.searchParams.delete('retour');
+      window.history.replaceState(window.history.state, '', url);
+
+      try {
+        await openPaymentWidget(state.widget, {
+          onSuccess: (reference) => void confirmTransaction(state.paymentId, reference, 'success'),
+          onFailed: (reference) => {
+            if (reference) void confirmTransaction(state.paymentId, reference, 'other');
+          },
+          onPending: (reference) => void confirmTransaction(state.paymentId, reference, 'other'),
+          onClose: () => setOpening(false),
+        });
+      } catch {
+        setError(
+          'La fenêtre de paiement n’a pas pu s’ouvrir. Vérifie ta connexion, puis réessaie.',
+        );
+      } finally {
+        setOpening(false);
+      }
+    },
+    [confirmTransaction],
+  );
 
   async function initiate() {
     if (!selected) return;
@@ -151,8 +259,16 @@ export function PaymentFlow({
     const state = body as PaymentState;
 
     if (state.status === 'SUCCEEDED') {
-      startRouteProgress();
-      router.push(`/commandes/${order.reference}/confirmation`);
+      goToConfirmation();
+      return;
+    }
+
+    // Fenêtre du prestataire : elle s'ouvre par-dessus cet écran, qui passe
+    // en attente derrière elle.
+    if (state.widget && isPaymentPending(state.status)) {
+      setPending(false);
+      setPayment(state);
+      void launchWidget(state);
       return;
     }
 
@@ -168,37 +284,50 @@ export function PaymentFlow({
     setPayment(state);
   }
 
+  function backToChoice() {
+    // On n'« annule » pas la demande en cours : elle peut encore aboutir.
+    // Revenir au choix relancera simplement une demande, et le serveur
+    // reprendra ou abandonnera la précédente à ce moment-là.
+    setPayment(null);
+    setError(null);
+
+    // L'adresse porte encore l'identifiant du paiement : un rafraîchissement
+    // le rechargerait. On revient à l'adresse nue.
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('paiement') || url.searchParams.has('retour')) {
+      url.searchParams.delete('paiement');
+      url.searchParams.delete('retour');
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }
+
+  if (waiting && payment?.widget) {
+    return (
+      <WidgetState
+        payment={payment}
+        method={selected}
+        error={error}
+        opening={opening}
+        verifying={verifying}
+        onOpen={() => void launchWidget(payment)}
+        onChangeMethod={backToChoice}
+      />
+    );
+  }
+
   if (waiting && payment) {
     return (
       <WaitingState
         payment={payment}
         method={selected}
         returnedFromProvider={returnedFromProvider}
-        onChangeMethod={() => {
-          // On ne « annule » pas la demande en cours : elle peut encore
-          // aboutir. Revenir au choix relancera simplement une demande, et le
-          // serveur abandonnera la précédente à ce moment-là.
-          setPayment(null);
-          setError(null);
-        }}
+        onChangeMethod={backToChoice}
       />
     );
   }
 
   if (payment && payment.status !== 'SUCCEEDED') {
-    return (
-      <FailedState
-        order={order}
-        payment={payment}
-        onRetry={() => {
-          setPayment(null);
-          setError(null);
-          // L'adresse porte encore l'identifiant du paiement échoué : un
-          // rafraîchissement le rechargerait. On revient à l'adresse nue.
-          if (returnedFromProvider) router.replace(`/checkout/${order.reference}/paiement`);
-        }}
-      />
-    );
+    return <FailedState order={order} payment={payment} onRetry={backToChoice} />;
   }
 
   return (
@@ -317,6 +446,16 @@ function ChooseState({
             onValueChange={(e164, raw) => onPayerPhoneChange(e164 ?? raw)}
           />
         </Field>
+      ) : null}
+
+      {selected?.flow === 'widget' ? (
+        <Alert tone="info" title="Paiement dans une fenêtre sécurisée">
+          {selected.kind === 'CARD'
+            ? 'La fenêtre de paiement s’ouvre sur cette page : tu y saisis ta carte, puis tu reviens ici automatiquement.'
+            : 'La fenêtre de paiement s’ouvre sur cette page : tu y saisis ton numéro, puis tu valides sur ton téléphone.'}{' '}
+          Des frais de l’opérateur peuvent s’ajouter au montant : ils s’affichent dans la fenêtre,
+          avant que tu valides.
+        </Alert>
       ) : null}
 
       {selected?.redirects ? (
@@ -445,7 +584,142 @@ function MethodList({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A4 · Attente
+// A4 · Attente — fenêtre de paiement du prestataire
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Derrière la fenêtre du prestataire, et après elle.
+ *
+ * Trois moments : la fenêtre est ouverte (ou vient d'être fermée), une
+ * transaction annoncée réussie est en cours de vérification, ou la dernière
+ * tentative a échoué. Dans les trois, le paiement reste ouvert — réessayer
+ * se fait sur LE MÊME paiement, jamais sur un second.
+ */
+function WidgetState({
+  payment,
+  method,
+  error,
+  opening,
+  verifying,
+  onOpen,
+  onChangeMethod,
+}: {
+  payment: PaymentState;
+  method: CheckoutPaymentMethod | null;
+  error: string | null;
+  opening: boolean;
+  verifying: boolean;
+  onOpen: () => void;
+  onChangeMethod: () => void;
+}) {
+  const failed = payment.failureReason !== null && !verifying;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Surface variant="panel" className="flex flex-col items-center gap-4 py-8 text-center">
+        {failed ? (
+          <Badge tone="danger">Paiement non abouti</Badge>
+        ) : (
+          <span className="relative flex items-center justify-center">
+            <ProgressRing
+              size={72}
+              thickness={4}
+              label={verifying ? 'Vérification du paiement' : 'Paiement en attente'}
+            />
+            {method ? (
+              <span className="absolute">
+                <PaymentMethodLogo
+                  logo={method.logo}
+                  label={method.label}
+                  brandColor={method.brandColor}
+                  brandColorIsLight={method.brandColorIsLight}
+                  size="compact"
+                />
+              </span>
+            ) : null}
+          </span>
+        )}
+
+        <div className="flex flex-col gap-1">
+          <h2 className="text-h3 font-bold">
+            {verifying
+              ? 'Vérification du paiement…'
+              : failed
+                ? 'Le paiement n’a pas abouti'
+                : 'Termine ton paiement dans la fenêtre sécurisée'}
+          </h2>
+          <p className="text-body-s text-text-2">
+            {verifying ? (
+              'Nous confirmons ton paiement auprès de l’opérateur. Ne ferme pas cette page.'
+            ) : failed ? (
+              <>
+                {payment.failureReason} Tes places restent réservées : tu peux réessayer ou changer
+                de moyen.
+              </>
+            ) : (
+              <>
+                Paiement de{' '}
+                <Money amount={payment.amount} currency={payment.currency} size="small" /> par{' '}
+                <span className="font-semibold">{method?.label ?? payment.methodLabel}</span>. Une
+                fois validé, la confirmation arrive ici toute seule.
+              </>
+            )}
+          </p>
+        </div>
+
+        {/* La phrase qui évite le double paiement : un acheteur inquiet qui
+            ne voit rien venir recommence — ici, il sait qu'il ne doit pas. */}
+        <p className="flex max-w-[44ch] items-start gap-2 text-left text-micro text-text-3">
+          <ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          Si tu as déjà validé le paiement, n’en refais pas un autre : la confirmation arrive ici,
+          et tes billets t’attendront dans « Mes commandes ».
+        </p>
+      </Surface>
+
+      {error ? (
+        <Alert tone="warning" title="Vérification en attente">
+          {error}
+        </Alert>
+      ) : null}
+
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button
+          variant="primary"
+          size="primary"
+          block
+          loading={opening}
+          disabled={verifying}
+          onClick={onOpen}
+        >
+          {failed ? 'Réessayer' : 'Ouvrir la fenêtre de paiement'}
+        </Button>
+        <Button
+          variant="secondary"
+          size="primary"
+          block
+          disabled={verifying}
+          onClick={onChangeMethod}
+        >
+          Changer de moyen de paiement
+        </Button>
+      </div>
+
+      <Button asChild variant="tertiary" size="primary" block>
+        <a
+          href="https://wa.me/2290100000000"
+          target="_blank"
+          rel="noreferrer"
+          className="text-center"
+        >
+          Contacter le support
+        </a>
+      </Button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A4 · Attente — téléphone ou page du prestataire
 // ─────────────────────────────────────────────────────────────────────────────
 
 function WaitingState({

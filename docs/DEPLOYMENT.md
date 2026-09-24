@@ -137,6 +137,17 @@ Les deux front-ends ont besoin de l'URL de l'API ; elle vient donc en premier.
 | `CORS_ORIGINS`                 | laisser vide pour l'instant, complété au §7                                          |
 | `GOOGLE_MAPS_SERVER_KEY`       | facultatif — clé serveur (Places + Geocoding)                                        |
 | `EMAIL_PROVIDER`, `SMTP_*`     | facultatif — `smtp` + réglages Gmail pour envoyer les billets par e-mail             |
+| `KKIAPAY_PUBLIC_KEY`           | clé publique Kkiapay (Développeurs → Clés API) — clés de **TEST** tant que `NODE_ENV=development` |
+| `KKIAPAY_PRIVATE_KEY`          | clé privée Kkiapay — serveur seulement                                               |
+| `KKIAPAY_SECRET_KEY`           | clé secrète Kkiapay — serveur seulement                                              |
+| `KKIAPAY_WEBHOOK_SECRET`       | le secret saisi dans le formulaire du webhook Kkiapay (16 caractères minimum)        |
+| `KKIAPAY_SANDBOX`              | `true` — `false` seulement avec `NODE_ENV=production` et les clés LIVE (voir §8)     |
+
+Les quatre valeurs Kkiapay vont ensemble : sans elles, le paiement passe par le simulateur ; avec
+une partie seulement, l'API refuse de démarrer. Webhook à déclarer au tableau de bord Kkiapay
+(Développeurs → Clés API → Webhook) : URL `https://nexakabi-api.vercel.app/api/webhooks/payments/kkiapay`,
+événements `transaction.success` et `transaction.failed`, secret = `KKIAPAY_WEBHOOK_SECRET`.
+Détail et procédure de test : `docs/PAYMENT_PROVIDER_KKIAPAY.md`.
 
 Ne **pas** définir `PORT` ni `API_PREFIX`.
 
@@ -211,14 +222,16 @@ c'est cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-
 | Tâche                    | Planning                     | Rôle                                                 |
 | ------------------------ | ---------------------------- | ---------------------------------------------------- |
 | `release-expired-orders` | chaque minute                | rend les places des réservations arrivées à échéance |
-| `poll-pending-payments`  | chaque minute                | interroge l'opérateur sur les paiements en attente   |
+| `poll-pending-payments`  | chaque minute                | relit chez Kkiapay les transactions en attente, clôt les paiements arrivés à échéance |
 | `reconcile-payouts`      | chaque minute                | conclut les versements et remboursements en cours    |
-| `sync-payment-availability` | toutes les 5 minutes      | relève chez KPay l'état des opérateurs (panne, retards) |
 | `retry-outbound`         | toutes les 10 minutes        | réessaie les e-mails et SMS en échec                 |
 | `purge-staged-uploads`   | tous les jours à 4 h 30      | supprime les dépôts directs jamais conclus (transit) |
 | `send-reminders`         | chaque heure, à la 7ᵉ minute | rappels avant événement                              |
-| `sync-payment-providers` | chaque heure, à la 17ᵉ minute | constate les moyens ouverts sur le compte marchand — **facultatif en V1** : KPay n'expose pas cette liste, la tâche ne fait rien |
 | `nightly-sweep`          | tous les jours à 3 h         | reprise des webhooks orphelins                       |
+
+Deux tâches existent aussi mais **ne sont pas à créer en V1** : `sync-payment-availability` (relève
+l'état des opérateurs) et `sync-payment-providers` (constate les moyens ouverts sur le compte
+marchand). Kkiapay ne publie ni l'un ni l'autre : elles ne feraient rien.
 
 3. Vérifier depuis la page d'un job (exécution de test) : réponse `200` avec
    `{"job":"…","durationMs":…}`. Un `403` signifie que l'en-tête est absent ou que le secret
@@ -263,17 +276,17 @@ refuse de démarrer si un fournisseur simulé est en jeu. Or aujourd'hui :
 
 - le seul fournisseur SMS existant est `console` (`ConsoleSmsProvider` lève une erreur en
   production) ;
-- sans clé Bictorys, le paiement passe par le simulateur (`MockPaymentProvider`, interdit en
-  production) — et avec `BICTORYS_API_KEY` vide en production, il n'y a **aucun** moyen de
-  paiement.
+- sans clés Kkiapay, le paiement passe par le simulateur (`MockPaymentProvider`, interdit en
+  production) ; avec les clés, `KKIAPAY_SANDBOX=true` est imposé hors production — donc
+  **uniquement le bac à sable** : aucun argent réel ne peut circuler en `development`.
 
-Tant que l'app n'est pas branchée à un opérateur SMS et à Bictorys, la mise en ligne tourne donc en
-mode développement. Ce que cela implique, concrètement :
+Tant que l'app n'est pas branchée à un opérateur SMS et au compte Kkiapay LIVE, la mise en ligne
+tourne donc en mode développement. Ce que cela implique, concrètement :
 
 | Comportement en `development`                       | Conséquence sur la mise en ligne actuelle                                                             |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | Le code OTP est renvoyé et affiché à l'écran        | **N'importe qui peut se connecter avec n'importe quel numéro.** Aucune donnée réelle ne doit y vivre. |
-| Simulateur de paiement actif (scénarios `00/11/22`) | Aucun argent ne circule                                                                               |
+| Kkiapay en bac à sable, ou simulateur sans clé      | Aucun argent ne circule                                                                               |
 | Pas de HSTS, secrets d'exemple tolérés              | Vercel force déjà HTTPS ; **générer quand même de vrais secrets**                                     |
 | Swagger possible                                    | Désactivé par `SWAGGER_ENABLED=false`                                                                 |
 | Journaux lisibles par défaut                        | Forcés en JSON par `LOG_PRETTY=false`                                                                 |
@@ -281,16 +294,15 @@ mode développement. Ce que cela implique, concrètement :
 **Passer en production**, le jour venu :
 
 1. Brancher un fournisseur SMS réel (à implémenter : `SMS_PROVIDER` n'accepte que `console`).
-2. Renseigner `BICTORYS_API_KEY` **et** `BICTORYS_WEBHOOK_SECRET` (plus
-   `BICTORYS_PAYOUT_SECRET_CODE` pour les versements), `BICTORYS_ENVIRONMENT=live`, et déclarer
-   le webhook `https://<api>/api/webhooks/payments/bictorys` sur le tableau de bord Bictorys.
-   Puis, dans la console, « Pays & paiements » → **Synchroniser** : les moyens que le compte
-   marchand ne sait pas traiter se ferment d'eux-mêmes.
+2. Faire activer le compte Kkiapay (Activer mon compte : RCCM, IFU, pièce du gérant), puis
+   remplacer les quatre valeurs Kkiapay par celles du compte LIVE — clés LIVE, et un webhook
+   déclaré sur le compte LIVE avec son propre secret — et passer `KKIAPAY_SANDBOX=false`.
+   Vérifier dans la console « Pays & paiements » les moyens ouverts au Bénin.
 3. `PUBLIC_WEB_URL`, `CORS_ORIGINS` et `PUBLIC_API_URL` en `https://` uniquement,
-   `SWAGGER_ENABLED=false`. `PUBLIC_WEB_URL` est l'adresse de retour d'un paiement par carte.
+   `SWAGGER_ENABLED=false`.
 4. Mettre `NODE_ENV=production` sur le projet API, redéployer. La validation de démarrage
-   vérifie tout le reste (secrets restés à l'exemple, Cloudinary complet, cohérence Bictorys) et
-   refuse net si quelque chose manque — c'est voulu.
+   vérifie tout le reste (secrets restés à l'exemple, Cloudinary complet, cohérence Kkiapay :
+   bac à sable interdit en production) et refuse net si quelque chose manque — c'est voulu.
 
 `installCommand: pnpm install --prod=false` est déjà en place pour ce moment-là : sans lui,
 `NODE_ENV=production` ferait sauter les `devDependencies` à l'installation, donc le CLI Nest, donc

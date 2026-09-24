@@ -31,10 +31,11 @@ const SEVERITY_LABELS: Readonly<Record<ReconciliationIssue['severity'], string>>
  * bonne page est une page vide. Les passes automatiques tournent chaque
  * minute ; celle-ci se lance à la demande.
  *
- * ── Ce qui ne se voit que par le solde ──────────────────────────────────────
- * KPay ne publie pas la liste de ses transactions. Une transaction que nous
- * ne connaissons pas ne se découvre que par sa notification — « sans objet »
- * ci-dessous — ou par l'écart du solde de son wallet.
+ * ── Ce qui ne se voit pas d'ici ─────────────────────────────────────────────
+ * Kkiapay ne publie ni la liste de ses transactions ni son solde par API.
+ * Une transaction que nous ne connaissons pas ne se découvre que par sa
+ * notification — « sans objet » ci-dessous ; le solde se rapproche depuis son
+ * tableau de bord, dont l'export CSV des transactions fait foi.
  */
 export default async function ReconciliationPage() {
   const user = await getAdminUser();
@@ -150,8 +151,9 @@ function Wallets({ wallets }: { wallets: ProviderWallet[] }) {
 
       {wallets.length === 0 ? (
         <p className="px-5 py-4 text-body-s text-text-2">
-          Aucun prestataire branché ne publie son solde. Avec les clés KPay, son wallet apparaîtra
-          ici.
+          Aucun prestataire branché ne publie son solde par API. Celui de Kkiapay se lit dans son
+          tableau de bord (solde de disponibilité), à rapprocher de l’export CSV de ses
+          transactions.
         </p>
       ) : (
         <ul>

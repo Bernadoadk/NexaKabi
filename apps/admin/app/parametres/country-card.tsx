@@ -320,8 +320,8 @@ function AddMethodForm({
   const [providerCode, setProviderCode] = React.useState(catalogue.providers[0]?.code ?? '');
 
   // Un moyen ne se confie qu'à un prestataire qui le connaît DANS CE PAYS :
-  // KPay traite MTN au Bénin et en Côte d'Ivoire, mais pas au Sénégal, où il
-  // propose Orange et Free. Proposer l'impossible ferait échouer l'ajout.
+  // un prestataire ne propose pas toujours les mêmes opérateurs d'un pays à
+  // l'autre. Proposer l'impossible ferait échouer l'ajout.
   const providers = catalogue.providers.filter(
     (provider) =>
       // Un prestataire hérité ne reçoit plus rien de neuf : il reste visible

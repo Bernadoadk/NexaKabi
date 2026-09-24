@@ -1,7 +1,12 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { PaymentProviderCode, PaymentStatus } from '@nexakabi/contracts';
+import type {
+  CheckoutFlow,
+  PaymentMethodKind,
+  PaymentProviderCode,
+  PaymentStatus,
+} from '@nexakabi/contracts';
 import type { Env } from '../../../config/env';
 import {
   PaymentProvider,
@@ -130,6 +135,7 @@ export class BictorysProvider extends PaymentProvider {
   readonly capabilities = {
     refund: true,
     partialRefund: false,
+    refundMethodKinds: null,
     refundWindowDays: null,
     payout: true,
     statusPolling: true,
@@ -157,6 +163,11 @@ export class BictorysProvider extends PaymentProvider {
   // ───────────────────────────────────────────────────────────────────────────
   // Encaissement
   // ───────────────────────────────────────────────────────────────────────────
+
+  /** Le Mobile Money se valide sur le téléphone ; la carte, sur sa page hébergée. */
+  checkoutFlow(kind: PaymentMethodKind): CheckoutFlow {
+    return kind === 'CARD' ? 'redirect' : 'push';
+  }
 
   async initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult> {
     const isCard = input.method.kind === 'CARD';

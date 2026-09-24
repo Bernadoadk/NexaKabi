@@ -24,6 +24,7 @@ const STALE_PAYMENT_AFTER = 30 * MINUTE;
 const ORPHAN_WEBHOOK_AFTER = 10 * MINUTE;
 const STALE_OUTGOING_AFTER = 24 * HOUR;
 const OVERDUE_REFUND_AFTER = 72 * HOUR;
+const DUPLICATE_WINDOW = 30 * 24 * HOUR;
 
 /** Écarts listés par catégorie : au-delà, le problème n'est plus un cas mais une panne. */
 const ISSUES_PER_KIND = 50;
@@ -39,9 +40,10 @@ const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 } as const;
  * répondre. Une page vide est le bon résultat.
  *
  * ── Ce que le rapprochement ne peut pas voir ────────────────────────────────
- * KPay ne publie pas la liste de ses transactions : une transaction que nous
- * ne connaissons pas ne se découvre que par sa notification (« sans objet »)
- * ou par l'écart du solde de son wallet. Les deux sont ici.
+ * Kkiapay ne publie ni la liste de ses transactions ni son solde par API :
+ * une transaction que nous ne connaissons pas ne se découvre que par sa
+ * notification (« sans objet »). Le solde se rapproche à la main, depuis son
+ * tableau de bord.
  */
 @Injectable()
 export class AdminReconciliationService {
@@ -65,6 +67,7 @@ export class AdminReconciliationService {
       orphanWebhooks,
       mismatches,
       paidWithoutOrder,
+      duplicatePayments,
       ordersWithoutLedger,
       stalePayouts,
       staleRefunds,
@@ -118,6 +121,28 @@ export class AdminReconciliationService {
           order: { select: { reference: true, status: true } },
         },
       }),
+      // Argent encaissé en double : un second paiement réussi sur une commande
+      // déjà réglée, ou une seconde transaction réussie sur un même paiement.
+      // Les deux sont consignés à l'instant où ils sont constatés ; sur trente
+      // jours — au-delà, un double non rendu relève de la comptabilité.
+      this.prisma.$queryRaw<
+        {
+          paymentId: string;
+          reference: string;
+          amount: number;
+          currency: string;
+          at: Date;
+          providerReference: string | null;
+        }[]
+      >`
+        SELECT a."entityId" AS "paymentId", o.reference, p.amount, p.currency,
+               a."createdAt" AS at, a.changes->>'providerReference' AS "providerReference"
+        FROM audit_log a
+        JOIN payment p ON p.id = a."entityId"
+        JOIN "order" o ON o.id = p."orderId"
+        WHERE a.action = 'payment.duplicate' AND a."createdAt" > ${before(DUPLICATE_WINDOW)}
+        ORDER BY a."createdAt" DESC
+        LIMIT ${ISSUES_PER_KIND}`,
       this.prisma.$queryRaw<{ id: string; reference: string; paidAt: Date; total: number }[]>`
         SELECT o.id, o.reference, o."paidAt", o."totalAmount" AS total
         FROM "order" o
@@ -189,9 +214,24 @@ export class AdminReconciliationService {
         kind: 'paid_without_order',
         severity: 'high',
         title: `${payment.order.reference} · ${formatMoney(payment.amount, payment.currency)}`,
-        detail: `Paiement réussi, mais la commande est « ${payment.order.status} » : l’acheteur a payé, a-t-il ses billets ?`,
+        detail:
+          `Paiement encaissé, mais la commande est « ${payment.order.status} » : ses places ` +
+          'n’étaient plus disponibles quand le paiement a abouti. L’acheteur a payé sans billet — ' +
+          'rembourse-le depuis le tableau de bord du prestataire.',
         at: (payment.confirmedAt ?? new Date(now)).toISOString(),
         href: `/finance/transactions/${payment.id}`,
+      })),
+      ...duplicatePayments.map<ReconciliationIssue>((row) => ({
+        kind: 'duplicate_payment',
+        severity: 'high',
+        title: `${row.reference} · ${formatMoney(row.amount, row.currency)} encaissés en trop`,
+        detail: row.providerReference
+          ? `La transaction ${row.providerReference} a été payée en plus de celle qui a réglé la ` +
+            'commande. Rembourse-la depuis le tableau de bord du prestataire.'
+          : 'Ce paiement a réussi alors que la commande était déjà réglée par un autre. ' +
+            'Rembourse-le depuis le tableau de bord du prestataire.',
+        at: new Date(row.at).toISOString(),
+        href: `/finance/transactions/${row.paymentId}`,
       })),
       ...ordersWithoutLedger.map<ReconciliationIssue>((order) => ({
         kind: 'order_without_ledger',

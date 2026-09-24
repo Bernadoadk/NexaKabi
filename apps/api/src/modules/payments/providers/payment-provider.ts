@@ -1,8 +1,10 @@
 import type {
+  CheckoutFlow,
   PaymentMethodCode,
   PaymentMethodKind,
   PaymentProviderCode,
   PaymentStatus,
+  PaymentWidget,
 } from '@nexakabi/contracts';
 
 /**
@@ -45,11 +47,25 @@ export interface InitiatePaymentInput {
 }
 
 export interface InitiatePaymentResult {
-  /** Référence chez le prestataire, à conserver pour la réconciliation. */
-  readonly providerReference: string;
+  /**
+   * Référence chez le prestataire, à conserver pour la réconciliation.
+   *
+   * Absente quand le paiement se fait dans la fenêtre du prestataire : la
+   * transaction n'y existe qu'une fois que l'acheteur a validé, et sa
+   * référence arrive ensuite — par la page, ou par la notification.
+   */
+  readonly providerReference?: string;
   readonly status: Extract<PaymentStatus, 'PENDING' | 'PROCESSING' | 'FAILED'>;
-  /** Instant au-delà duquel le prestataire abandonnera la demande. */
-  readonly expiresAt: Date;
+  /**
+   * Instant au-delà duquel le prestataire abandonnera la demande. Absent :
+   * le paiement vit aussi longtemps que la réservation de la commande.
+   */
+  readonly expiresAt?: Date;
+  /**
+   * Fenêtre de paiement à ouvrir dans la page (`checkoutFlow` = `widget`).
+   * Ne porte que ce qu'un navigateur peut voir — jamais une clé privée.
+   */
+  readonly widget?: PaymentWidget;
   /** Consigne affichée au participant : « Compose *880# … ». */
   readonly instructions?: string;
   /**
@@ -81,8 +97,23 @@ export interface ProviderPaymentStatus {
   readonly status: PaymentStatus;
   readonly failureCode?: string;
   readonly failureReason?: string;
-  /** Frais réellement prélevés par le prestataire, s'il les communique. */
+  /**
+   * Frais que le prestataire a retenus SUR NOUS, s'il le dit. Des frais payés
+   * par l'acheteur en plus du prix n'en font pas partie : ils ne réduisent
+   * pas ce que nous encaissons. Absent : inconnu.
+   */
   readonly providerFeeAmount?: number;
+  /**
+   * Montant de la transaction chez le prestataire, et notre référence telle
+   * qu'il nous la renvoie. Les deux servent à LIER une transaction à un
+   * paiement : une référence rendue par une page ne vaut rien tant que le
+   * prestataire ne confirme pas qu'elle porte notre identifiant et le bon
+   * montant.
+   */
+  readonly amount?: number;
+  readonly merchantReference?: string;
+  /** Numéro débité, en E.164, quand le prestataire le communique. */
+  readonly payerPhone?: string;
   readonly rawResponse?: unknown;
 }
 
@@ -108,6 +139,15 @@ export interface NormalizedPaymentWebhook {
   /** Identifiant de l'événement chez le prestataire : la clé d'idempotence. */
   readonly externalId: string;
   readonly providerReference: string;
+  /**
+   * Notre identifiant de paiement, tel que le prestataire le renvoie.
+   *
+   * Indispensable quand le paiement se fait dans la fenêtre du prestataire :
+   * la notification peut arriver avant que la page nous ait transmis la
+   * référence de la transaction — elle est alors la seule à pouvoir dire de
+   * quel paiement il s'agit.
+   */
+  readonly merchantReference?: string;
   readonly status: Extract<PaymentStatus, 'SUCCEEDED' | 'FAILED' | 'PROCESSING' | 'EXPIRED'>;
   readonly failureCode?: string;
   readonly failureReason?: string;
@@ -155,6 +195,20 @@ export class WebhookIgnoredError extends Error {
   constructor(message = 'Notification sans objet pour nous.') {
     super(message);
     this.name = 'WebhookIgnoredError';
+  }
+}
+
+/**
+ * Le prestataire ne connaît pas cette transaction — ou elle n'est pas un
+ * paiement.
+ *
+ * Distincte d'une panne : une panne se retente, une référence inconnue non.
+ * La page qui l'a transmise s'est trompée, ou l'a inventée.
+ */
+export class ProviderTransactionNotFoundError extends Error {
+  constructor(message = 'Transaction inconnue du prestataire.') {
+    super(message);
+    this.name = 'ProviderTransactionNotFoundError';
   }
 }
 
@@ -284,10 +338,10 @@ export class WebhookSignatureError extends Error {
  * Contrat d'un PRESTATAIRE de paiement.
  *
  * Un prestataire traite plusieurs moyens dans plusieurs pays derrière une
- * seule API : KPay encaisse MTN et Moov au Bénin, Orange et Free au Sénégal. Le
- * moyen et le pays lui sont donc PASSÉS à chaque appel ; il n'en porte aucun
- * en dur. Ajouter un prestataire consiste à déposer une implémentation de
- * plus — aucun écran à redessiner, aucun service métier à modifier.
+ * seule API : Kkiapay encaisse MTN, Moov et la carte au Bénin. Le moyen et le
+ * pays lui sont donc PASSÉS à chaque appel ; il n'en porte aucun en dur.
+ * Ajouter un prestataire consiste à déposer une implémentation de plus —
+ * aucun écran à redessiner, aucun service métier à modifier.
  *
  * Voir docs/TECHNICAL_ARCHITECTURE.md §6.2.
  */
@@ -298,9 +352,15 @@ export abstract class PaymentProvider {
     readonly refund: boolean;
     readonly partialRefund: boolean;
     /**
+     * Natures de paiement que le prestataire sait rembourser par API —
+     * Kkiapay ne documente que le Mobile Money. `null` : toutes. Hors de
+     * cette liste, le remboursement reste dû et se fait à la main.
+     */
+    readonly refundMethodKinds: readonly PaymentMethodKind[] | null;
+    /**
      * Jours après l'encaissement au-delà desquels le prestataire refuse de
-     * rembourser — sept chez KPay. `null` : aucune limite connue. Au-delà, le
-     * remboursement reste dû et se fait à la main.
+     * rembourser. `null` : aucune limite connue. Au-delà, le remboursement
+     * reste dû et se fait à la main.
      */
     readonly refundWindowDays: number | null;
     readonly payout: boolean;
@@ -314,8 +374,24 @@ export abstract class PaymentProvider {
     readonly verifyWebhookByFetch: boolean;
   };
 
+  /**
+   * Comment l'acheteur valide un paiement de cette nature chez ce
+   * prestataire — sur son téléphone (`push`), sur une page du prestataire
+   * (`redirect`) ou dans sa fenêtre de paiement (`widget`). L'écran de choix
+   * et le service de paiement s'y règlent ; aucun ne connaît le prestataire.
+   */
+  abstract checkoutFlow(kind: PaymentMethodKind): CheckoutFlow;
+
   /** Déclenche la demande de paiement côté prestataire. */
   abstract initiate(input: InitiatePaymentInput): Promise<InitiatePaymentResult>;
+
+  /**
+   * Reconstruit la fenêtre de paiement d'un paiement DÉJÀ lancé — rouvrir la
+   * fenêtre fermée par l'acheteur, reprendre après un rechargement de page,
+   * changer de famille de paiement. Obligatoire pour un prestataire dont un
+   * moyen se valide en `widget`, sans objet pour les autres.
+   */
+  widget?(input: InitiatePaymentInput): PaymentWidget;
 
   /**
    * Interrogation de secours, quand le webhook tarde.
@@ -384,11 +460,18 @@ export abstract class PaymentProvider {
    * prestataire, et c'est cette lecture qui fait autorité.
    *
    * Chaque prestataire nomme cette référence à sa façon — `id` chez Bictorys,
-   * `paymentId` chez KPay : la chercher ici évite de coder un format dans le
-   * service de réconciliation, où elle divergerait au premier prestataire
-   * ajouté.
+   * `transactionId` chez Kkiapay : la chercher ici évite de coder un format
+   * dans le service de réconciliation, où elle divergerait au premier
+   * prestataire ajouté.
    */
   extractProviderReference?(rawBody: string): string | null;
+
+  /**
+   * Retrouve NOTRE identifiant de paiement dans un corps de notification
+   * conservé, quand le prestataire le renvoie (`partnerId` chez Kkiapay).
+   * Même usage, et même absence de confiance, que la méthode précédente.
+   */
+  extractMerchantReference?(rawBody: string): string | null;
 
   /**
    * État opérationnel de chaque moyen, en ce moment.

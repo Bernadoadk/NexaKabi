@@ -29,6 +29,7 @@ import { formatMoney, maskPhone } from '@nexakabi/utils';
 import { toCsv } from '../../common/csv';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { Prisma } from '../../generated/prisma/client';
+import { PaymentsService } from '../payments/payments.service';
 import { resolvePeriod, type ResolvedPeriod } from './finance-period';
 
 const PAGE_SIZE = 50;
@@ -72,7 +73,10 @@ const localMonth = (column: Prisma.Sql) =>
  */
 @Injectable()
 export class AdminFinanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly payments: PaymentsService,
+  ) {}
 
   // ───────────────────────────────────────────────────────────────────────────
   // Vue d'ensemble
@@ -528,6 +532,7 @@ export class AdminFinanceService {
         completedAt: refund.completedAt?.toISOString() ?? null,
       })),
       timeline,
+      canAttachTransaction: this.payments.canAttachTransaction(payment),
     };
   }
 
@@ -1051,6 +1056,27 @@ const AUDIT_LABELS: Readonly<
     tone: 'warning',
   },
   'payment.webhook_ignored': { title: 'Notification écartée', tone: 'warning' },
+  'payment.verification_rejected': {
+    title: 'Transaction refusée à la vérification — autre paiement ou mauvais montant',
+    tone: 'danger',
+  },
+  'payment.attempt_failed': {
+    title: 'Tentative échouée dans la fenêtre de paiement — le paiement reste ouvert',
+    tone: 'warning',
+  },
+  'payment.late_settled': {
+    title: 'Paiement arrivé après la réservation — places reprises, commande honorée',
+    tone: 'warning',
+  },
+  'payment.unfulfillable': {
+    title: 'Encaissé sans places disponibles — à rembourser',
+    tone: 'danger',
+  },
+  'payment.duplicate': { title: 'Paiement en double — à rembourser', tone: 'danger' },
+  'payment.transaction_attached': {
+    title: 'Transaction rattachée par un administrateur',
+    tone: 'info',
+  },
   'refund.requested': { title: 'Remboursement décidé par un administrateur', tone: 'neutral' },
   'refund.manual_required': { title: 'Remboursement à faire à la main', tone: 'warning' },
   'refund.failed': { title: 'Remboursement refusé par le prestataire', tone: 'danger' },

@@ -43,6 +43,7 @@ const ALLOWED: readonly RegExp[] = [
   /^refunds\/[\w-]+\/record$/,
   /^finance\/(payments|ledger|report)\.csv$/,
   /^finance\/reconciliation\/run$/,
+  /^finance\/payments\/[\w-]+\/attach$/,
   /^finance\/commissions$/,
   /^finance\/commissions\/[\w-]+\/close$/,
   /^organizations\/[\w-]+\/freeze$/,

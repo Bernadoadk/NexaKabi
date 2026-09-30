@@ -54,7 +54,21 @@ const ALLOWED: readonly RegExp[] = [
   /^settings\/countries\/[A-Z]{2}\/methods$/,
   /^settings\/countries\/[A-Z]{2}\/methods\/[\w-]+$/,
   /^settings\/providers\/[a-z_]+\/sync$/,
+  /^newsletter$/,
+  /^newsletter\/settings$/,
+  /^newsletter\/events$/,
+  /^newsletter\/subscribers$/,
+  /^newsletter\/subscribers\.csv$/,
+  /^newsletter\/subscribers\/[\w-]+\/unsubscribe$/,
+  /^newsletter\/campaigns$/,
+  /^newsletter\/campaigns\/[\w-]+$/,
+  /^newsletter\/campaigns\/[\w-]+\/(preview|test|send|cancel|retry|duplicate)$/,
 ];
+
+/** Noms de fichier en français, là où la route d'API ne l'est pas. */
+const CSV_NAMES: Readonly<Record<string, string>> = {
+  subscribers: 'abonnes-newsletter',
+};
 
 async function relay(
   request: NextRequest,
@@ -84,7 +98,8 @@ async function relay(
 
   // Un export se télécharge tel quel, sous un nom qui dit ce qu'il contient.
   if (upstream.ok && target.endsWith('.csv')) {
-    const name = target.split('/').pop()?.replace('.csv', '') ?? 'export';
+    const file = target.split('/').pop()?.replace('.csv', '') ?? 'export';
+    const name = CSV_NAMES[file] ?? file;
     const day = new Date().toISOString().slice(0, 10);
 
     return new Response(await upstream.text(), {

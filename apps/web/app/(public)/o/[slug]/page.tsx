@@ -2,7 +2,10 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { Check } from 'lucide-react';
 import { Badge, EventCardStandard, Surface } from '@nexakabi/ui';
+import { FollowButton } from '@/components/follow-button';
 import { fetchOrganizerPage } from '@/lib/events';
+import { fetchFollowState } from '@/lib/notifications';
+import { getCurrentUser } from '@/lib/session';
 import { toCard } from '../../page';
 
 export async function generateMetadata({
@@ -30,11 +33,12 @@ export default async function OrganizerPublicPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const page = await fetchOrganizerPage(slug);
+  const [page, user] = await Promise.all([fetchOrganizerPage(slug), getCurrentUser()]);
 
   if (!page) notFound();
 
   const { organization, upcoming, past } = page;
+  const followState = user ? await fetchFollowState(slug) : null;
 
   return (
     <main className="mx-auto flex max-w-[1440px] flex-col gap-8 px-5 py-8">
@@ -63,6 +67,16 @@ export default async function OrganizerPublicPage({
             <p className="max-w-[68ch] text-body text-text-2">{organization.description}</p>
           ) : null}
         </div>
+
+        {/* Suivre : être prévenu de ses prochaines dates. Le nombre d'abonnés
+            est un signal de confiance de plus, à côté du badge « vérifié ». */}
+        <FollowButton
+          slug={organization.slug}
+          organizationName={organization.name}
+          initial={followState}
+          signedIn={Boolean(user)}
+          followersCount={organization.followersCount}
+        />
       </Surface>
 
       {upcoming.length > 0 ? (

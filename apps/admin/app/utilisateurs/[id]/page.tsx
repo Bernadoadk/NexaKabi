@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import type { AdminUserDetail } from '@nexakabi/contracts';
 import { formatPhoneSafe } from '@nexakabi/utils';
-import { Alert, Badge, Stat, Surface } from '@nexakabi/ui';
+import { Alert, Badge, Stat, StatGrid, Surface } from '@nexakabi/ui';
 import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { AccessDenied, ReadOnlyNotice } from '../../access';
 import { AdminShell } from '../../shell';
@@ -66,7 +66,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           <div className="flex flex-col gap-5">
             <Surface variant="panel" padding="comfortable" className="flex flex-col gap-4">
               <h2 className="text-h3 font-bold">Coordonnées</h2>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3.5">
                 <Fact
                   label="Téléphone"
                   value={
@@ -92,10 +92,10 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
               </div>
             </Surface>
 
-            <div className="grid gap-3.5 sm:grid-cols-2">
+            <StatGrid wide={2}>
               <Stat label="Organisations" value={String(account.organizationsCount)} />
               <Stat label="Commandes" value={String(account.ordersCount)} />
-            </div>
+            </StatGrid>
 
             {account.organizations.length > 0 ? (
               <Surface variant="panel" padding="none" className="overflow-hidden">
@@ -148,14 +148,16 @@ function Fact({
   value: string;
   emphasis?: boolean;
 }) {
+  // Voir la fiche organisation : une adresse e-mail est un seul mot, et une
+  // case de grille qui ne peut pas la couper élargit toute la page.
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-micro text-text-3">{label}</span>
       <span
         className={
           emphasis
-            ? 'text-body font-bold text-text-strong'
-            : 'text-body-s font-semibold text-text-strong'
+            ? 'break-words text-body font-bold text-text-strong'
+            : 'break-words text-body-s font-semibold text-text-strong'
         }
       >
         {value}

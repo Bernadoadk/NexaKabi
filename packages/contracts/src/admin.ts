@@ -77,6 +77,11 @@ export const ADMIN_SPACES = [
     description: 'Comptes de la plateforme, suspension et réactivation.',
   },
   {
+    key: 'newsletter',
+    label: 'Newsletter',
+    description: 'Abonnés, campagnes e-mail et réglages des alertes envoyées aux participants.',
+  },
+  {
     key: 'payouts',
     label: 'Retraits',
     description: 'Demandes de retrait des organisateurs et leur exécution.',

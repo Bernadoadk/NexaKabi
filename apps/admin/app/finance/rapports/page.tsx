@@ -8,7 +8,7 @@ import {
   type FinanceReportGrouping,
   type FinanceReportRow,
 } from '@nexakabi/contracts';
-import { Alert, EmptyState, Money, Surface } from '@nexakabi/ui';
+import { Alert, EmptyState, Money, Surface, cn } from '@nexakabi/ui';
 import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { toQuery } from '@/lib/finance';
 import { AccessDenied } from '../../access';
@@ -134,16 +134,31 @@ function totals(rows: FinanceReportRow[]): FinanceReportRow[] {
   return [...byCurrency.values()];
 }
 
+/**
+ * Une ligne du rapport : le libellé, puis six à sept montants.
+ *
+ * ── Deux dispositions, un seul balisage ─────────────────────────────────────
+ * Sur un écran large, tout tient sur une rangée. Sur un téléphone, ces sept
+ * montants se repliaient deux par deux : quatre lignes par organisation, et un
+ * rapport de dix organisations devenait interminable à parcourir. Ils forment
+ * donc une grille de trois colonnes sous le libellé — deux rangées au lieu de
+ * quatre.
+ *
+ * `sm:contents` efface la grille au palier supérieur : ses montants
+ * redeviennent enfants directs de la rangée et retrouvent exactement la
+ * disposition du bureau, sans dupliquer le balisage.
+ */
 function ReportLine({ row, total = false }: { row: FinanceReportRow; total?: boolean }) {
   return (
     <li
-      className={
+      className={cn(
+        'flex flex-col gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-5 sm:gap-y-2 sm:px-5',
         total
-          ? 'flex flex-wrap items-center gap-x-5 gap-y-2 border-t-2 border-border bg-surface-alt px-5 py-3'
-          : 'flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border-subtle px-5 py-3 first:border-t-0'
-      }
+          ? 'border-t-2 border-border bg-surface-alt'
+          : 'border-t border-border-subtle first:border-t-0',
+      )}
     >
-      <div className="min-w-[180px] flex-1">
+      <div className="min-w-0 sm:min-w-[180px] sm:flex-1">
         <div
           className={
             total
@@ -157,14 +172,22 @@ function ReportLine({ row, total = false }: { row: FinanceReportRow; total?: boo
           {row.orders} commande{row.orders > 1 ? 's' : ''} · {row.currency}
         </div>
       </div>
-      <Figure label="Brut" amount={row.gross} currency={row.currency} strong={total} />
-      <Figure label="Frais opérateur" amount={row.providerFees} currency={row.currency} />
-      <Figure label="Commission" amount={row.commission} currency={row.currency} />
-      <Figure label="Net organisateurs" amount={row.organizerNet} currency={row.currency} strong />
-      <Figure label="Remboursé" amount={row.refunded} currency={row.currency} />
-      {row.paidOut !== null ? (
-        <Figure label="Versé" amount={row.paidOut} currency={row.currency} />
-      ) : null}
+
+      <div className="grid grid-cols-3 gap-x-3 gap-y-2 sm:contents">
+        <Figure label="Brut" amount={row.gross} currency={row.currency} strong={total} />
+        <Figure label="Frais opérateur" amount={row.providerFees} currency={row.currency} />
+        <Figure label="Commission" amount={row.commission} currency={row.currency} />
+        <Figure
+          label="Net organisateurs"
+          amount={row.organizerNet}
+          currency={row.currency}
+          strong
+        />
+        <Figure label="Remboursé" amount={row.refunded} currency={row.currency} />
+        {row.paidOut !== null ? (
+          <Figure label="Versé" amount={row.paidOut} currency={row.currency} />
+        ) : null}
+      </div>
     </li>
   );
 }
@@ -180,8 +203,11 @@ function Figure({
   currency: string;
   strong?: boolean;
 }) {
+  // La largeur plancher n'a de sens qu'à partir de `sm`, où les montants sont
+  // sur une rangée qui se replie. Dans la grille du téléphone, elle ferait
+  // déborder la colonne — et la page entière avec elle.
   return (
-    <div className="flex min-w-[96px] flex-col items-end">
+    <div className="flex min-w-0 flex-col items-end sm:min-w-[96px]">
       <span className="text-micro text-text-3">{label}</span>
       <Money
         amount={amount}

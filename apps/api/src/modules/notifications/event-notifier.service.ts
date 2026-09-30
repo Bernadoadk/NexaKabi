@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { buildPublicationMessage } from '@nexakabi/contracts';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { formatBeninMoment } from './benin-time';
 import { NotificationsService } from './notifications.service';
 
 /**
@@ -55,14 +57,103 @@ export class EventNotifierService {
 
     const body = describeChange(relevant);
 
+    // La page publique d'un événement vit à son adresse lisible, `/e/<slug>`.
+    // Le lien pointait sur `/evenements/<id>`, une page qui n'existe pas : le
+    // bouton « Voir l'événement » de l'alerte menait à une erreur 404.
+    const event = await this.prisma.event.findUnique({
+      where: { id: input.eventId },
+      select: { slug: true },
+    });
+
     return this.announce({
       eventId: input.eventId,
       title: `${input.eventTitle} — information modifiée`,
       body,
-      actionUrl: `/evenements/${input.eventId}`,
-      actionLabel: "Voir l'événement",
+      actionUrl: event ? `/e/${event.slug}` : '/mon-compte/billets',
+      actionLabel: event ? "Voir l'événement" : 'Voir mes billets',
       dedupeKey: `changed:${input.eventId}:${input.revision}`,
     });
+  }
+
+  /**
+   * Prévient les participants qui suivent l'organisation qu'elle publie.
+   *
+   * Appelée après la mise en ligne — directe, ou validée par la modération.
+   * Ne concerne que les événements PUBLICS et à venir : un événement privé
+   * s'atteint par son lien, et l'annoncer reviendrait à le rendre public.
+   *
+   * L'empreinte ne porte que l'événement : un événement retiré puis republié
+   * n'est pas annoncé deux fois.
+   */
+  async announcePublication(eventId: string, now = new Date()): Promise<{ notified: number }> {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        status: true,
+        visibility: true,
+        startsAt: true,
+        deletedAt: true,
+        organizationId: true,
+        organization: { select: { name: true } },
+        venue: { select: { name: true } },
+        city: { select: { name: true } },
+      },
+    });
+
+    if (
+      !event ||
+      event.deletedAt !== null ||
+      event.status !== 'PUBLISHED' ||
+      event.visibility !== 'PUBLIC' ||
+      event.startsAt.getTime() <= now.getTime()
+    ) {
+      return { notified: 0 };
+    }
+
+    const followers = await this.prisma.organizationFollow.findMany({
+      where: { organizationId: event.organizationId },
+      select: { userId: true },
+    });
+
+    if (followers.length === 0) return { notified: 0 };
+
+    const message = buildPublicationMessage({
+      organizationName: event.organization.name,
+      eventTitle: event.title,
+      when: formatBeninMoment(event.startsAt),
+      where: [event.venue?.name, event.city?.name].filter(Boolean).join(', ') || null,
+    });
+
+    let notified = 0;
+
+    for (const { userId } of followers) {
+      try {
+        const result = await this.notifications.notify({
+          userId,
+          type: 'ORGANIZER_PUBLISHED',
+          title: message.title,
+          body: message.body,
+          actionUrl: `/e/${event.slug}`,
+          actionLabel: "Voir l'événement",
+          eventId: event.id,
+          dedupeKey: `published:${event.id}`,
+        });
+
+        if (result.created) notified += 1;
+      } catch (error) {
+        // Un abonné en échec ne prive pas les suivants de l'annonce.
+        this.logger.error({ err: error }, `Annonce de ${event.id} impossible pour ${userId}`);
+      }
+    }
+
+    if (notified > 0) {
+      this.logger.log(`${notified} abonné(s) prévenu(s) de la publication de ${event.id}`);
+    }
+
+    return { notified };
   }
 
   /**

@@ -3,6 +3,7 @@ import { ApiExcludeController } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../auth/decorators/public.decorator';
 import { PayoutsScheduler } from '../finance/payouts.scheduler';
+import { NewsletterScheduler } from '../newsletter/newsletter.scheduler';
 import { NotificationsScheduler } from '../notifications/notifications.scheduler';
 import { PaymentRoutingService } from '../payments/payment-routing.service';
 import { ReconciliationService } from '../payments/reconciliation.service';
@@ -24,6 +25,8 @@ export const CRON_JOBS = [
   'nightly-sweep',
   'reconcile-payouts',
   'send-reminders',
+  'send-recommendations',
+  'send-newsletter',
   'retry-outbound',
   'purge-staged-uploads',
   'sync-payment-availability',
@@ -63,6 +66,7 @@ export class CronController {
     reconciliation: ReconciliationService,
     payouts: PayoutsScheduler,
     notifications: NotificationsScheduler,
+    newsletter: NewsletterScheduler,
     storage: StorageProvider,
     routing: PaymentRoutingService,
   ) {
@@ -72,6 +76,11 @@ export class CronController {
       'nightly-sweep': () => reconciliation.nightlySweep(),
       'reconcile-payouts': () => payouts.reconcileProcessing(),
       'send-reminders': () => notifications.hourly(),
+      // Toutes les heures ; chaque participant n'en reçoit qu'une par semaine,
+      // et jamais la nuit (voir `RecommendationsService`).
+      'send-recommendations': () => notifications.recommend(),
+      // Chaque minute : un lot d'envois de la campagne en cours, s'il y en a une.
+      'send-newsletter': () => newsletter.send(),
       'retry-outbound': () => notifications.retryOutbound(),
       // Dépôts directs jamais conclus (voir `StorageProvider.purgeStaged`) :
       // un ticket vaut une heure, on laisse une journée entière par prudence.

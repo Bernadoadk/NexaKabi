@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { BrandMark } from '@nexakabi/ui';
+import { fetchCategories, fetchCities } from '@/lib/events';
 import { getCurrentUser } from '@/lib/session';
 import { LoginFlow } from './login-flow';
 
@@ -16,7 +17,13 @@ export default async function LoginPage({
   searchParams: Promise<{ suite?: string }>;
 }) {
   const { suite } = await searchParams;
-  const user = await getCurrentUser();
+  const [user, categories, cities] = await Promise.all([
+    getCurrentUser(),
+    // Référentiels de l'étape 3 — mis en cache une heure : les charger ici
+    // ne coûte rien à qui ne fait que se reconnecter.
+    fetchCategories(),
+    fetchCities(),
+  ]);
 
   // Déjà connecté et profil complet : rien à faire ici.
   if (user && !user.needsProfileCompletion) {
@@ -32,7 +39,12 @@ export default async function LoginPage({
         </span>
       </Link>
 
-      <LoginFlow redirectTo={safeRedirect(suite)} context={contextFor(suite)} />
+      <LoginFlow
+        redirectTo={safeRedirect(suite)}
+        context={contextFor(suite)}
+        categories={categories}
+        cities={cities}
+      />
     </main>
   );
 }
@@ -61,6 +73,15 @@ function safeRedirect(target: string | undefined): string {
  */
 function contextFor(suite: string | undefined): { title: string; subtitle: string } | null {
   if (!suite) return null;
+
+  // Bouton « Suivre » d'une page organisateur ou événement : le suivi se fait
+  // tout seul au retour (voir `FollowButton`).
+  if (suite.includes('suivre=1')) {
+    return {
+      title: 'Connecte-toi pour suivre cet organisateur',
+      subtitle: 'Tu seras prévenu de ses prochains événements, là où tu le choisis.',
+    };
+  }
 
   if (suite.startsWith('/pro')) {
     return {

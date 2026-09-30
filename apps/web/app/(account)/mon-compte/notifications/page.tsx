@@ -1,16 +1,25 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { Bell, CalendarClock, CheckCircle2, Info, Mic2 } from 'lucide-react';
+import { Bell, CalendarClock, CheckCircle2, Info, Mic2, Sparkles } from 'lucide-react';
 import type { NotificationType } from '@nexakabi/contracts';
 import { formatRelative } from '@nexakabi/utils';
 import { EmptyState, Surface, cn } from '@nexakabi/ui';
+import { fetchCategories, fetchCities } from '@/lib/events';
 import {
+  fetchAccountNewsletter,
+  fetchFollows,
+  fetchInterests,
   fetchNotificationPreferences,
   fetchNotifications,
+  fetchPushStatus,
   type NotificationItem,
 } from '@/lib/notifications';
+import { getCurrentUser } from '@/lib/session';
+import { FollowedOrganizers } from './followed-organizers';
+import { InterestsForm } from './interests-form';
 import { MarkAllReadButton } from './mark-all-read';
+import { NewsletterToggle } from './newsletter-toggle';
 import { PreferencesForm } from './preferences-form';
 
 export const metadata: Metadata = { title: 'Alertes' };
@@ -26,13 +35,22 @@ export const metadata: Metadata = { title: 'Alertes' };
  *
  * Les réglages vivent au bas de la même page plutôt que derrière un écran de
  * plus : c'est ici qu'on se dit « j'en reçois trop », et l'endroit où on le
- * pense doit être l'endroit où on le corrige.
+ * pense doit être l'endroit où on le corrige. Goûts, suivis et newsletter
+ * suivent, dans l'ordre où l'on s'en sert.
  */
 export default async function NotificationsPage() {
-  const [feed, preferences] = await Promise.all([
-    fetchNotifications(),
-    fetchNotificationPreferences(),
-  ]);
+  const [feed, preferences, push, user, interests, categories, cities, follows, newsletter] =
+    await Promise.all([
+      fetchNotifications(),
+      fetchNotificationPreferences(),
+      fetchPushStatus(),
+      getCurrentUser(),
+      fetchInterests(),
+      fetchCategories(),
+      fetchCities(),
+      fetchFollows(),
+      fetchAccountNewsletter(),
+    ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -53,7 +71,7 @@ export default async function NotificationsPage() {
         <EmptyState
           icon={<Bell size={26} />}
           title="Aucune alerte"
-          description="Tes confirmations de paiement et les rappels avant tes événements arriveront ici."
+          description="Tes confirmations de paiement, les rappels avant tes événements et les nouveautés des organisateurs que tu suis arriveront ici."
         />
       ) : (
         <ul className="flex flex-col gap-2">
@@ -65,7 +83,13 @@ export default async function NotificationsPage() {
         </ul>
       )}
 
-      <PreferencesForm initial={preferences} />
+      <PreferencesForm initial={preferences} push={push} hasEmail={Boolean(user?.email)} />
+
+      <InterestsForm categories={categories} cities={cities} initial={interests} />
+
+      <FollowedOrganizers initial={follows} />
+
+      <NewsletterToggle initial={newsletter} accountEmail={user?.email ?? null} />
     </div>
   );
 }
@@ -132,6 +156,7 @@ const ICONS: Readonly<Record<NotificationType, ReactNode>> = {
   EVENT_REMINDER: <CalendarClock className="size-4" />,
   EVENT_UPDATED: <Info className="size-4" />,
   ORGANIZER_PUBLISHED: <Mic2 className="size-4" />,
+  RECOMMENDATION: <Sparkles className="size-4" />,
 };
 
 const ICON_STYLES: Readonly<Record<NotificationType, string>> = {
@@ -139,4 +164,5 @@ const ICON_STYLES: Readonly<Record<NotificationType, string>> = {
   EVENT_REMINDER: 'bg-amber-50 text-amber-700',
   EVENT_UPDATED: 'bg-blue-50 text-blue-700',
   ORGANIZER_PUBLISHED: 'bg-coral-50 text-coral-700',
+  RECOMMENDATION: 'bg-ink text-mint-300',
 };

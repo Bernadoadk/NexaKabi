@@ -202,6 +202,26 @@ const envSchema = z.object({
   SMTP_FROM: z.string().default('Nexa-Kabi <no-reply@nexakabi.bj>'),
 
   /**
+   * Notifications sur l'appareil (Web Push) — paire de clés VAPID.
+   *
+   * Elle identifie la plateforme auprès des services de notification des
+   * navigateurs (Google, Mozilla, Apple, Microsoft) : gratuite, générée une
+   * fois (`pnpm --filter @nexakabi/api exec web-push generate-vapid-keys`),
+   * et à ne JAMAIS changer ensuite — chaque appareil abonné l'a été avec la
+   * clé publique, et une nouvelle paire les rendrait tous muets.
+   *
+   * Vides = le push n'existe pas sur cette installation : l'écran de
+   * réglages le dit, le reste des notifications fonctionne normalement.
+   */
+  WEB_PUSH_PUBLIC_KEY: z.string().trim().default(''),
+  WEB_PUSH_PRIVATE_KEY: z.string().trim().default(''),
+  /**
+   * Contact de l'expéditeur, exigé par les services de notification : une
+   * adresse `mailto:` ou une URL `https://` (Apple refuse `localhost`).
+   */
+  WEB_PUSH_SUBJECT: z.string().trim().default(''),
+
+  /**
    * Google Maps Platform — clé SERVEUR.
    *
    * Recherche de lieux (Places API) et géocodage, appelés depuis l'API et
@@ -391,6 +411,25 @@ function assertConsistency(env: Env, addIssue: (path: string, message: string) =
 
   if (env.EMAIL_PROVIDER === 'smtp' && (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASSWORD)) {
     addIssue('SMTP_HOST', 'EMAIL_PROVIDER=smtp exige SMTP_HOST, SMTP_USER et SMTP_PASSWORD.');
+  }
+
+  // Les trois valeurs Web Push vont ensemble. Une clé sans l'autre, et chaque
+  // envoi échouerait à la signature — silencieusement, appareil par appareil.
+  const pushValues = [env.WEB_PUSH_PUBLIC_KEY, env.WEB_PUSH_PRIVATE_KEY, env.WEB_PUSH_SUBJECT];
+  if (pushValues.some(Boolean) && !pushValues.every(Boolean)) {
+    addIssue(
+      'WEB_PUSH_PUBLIC_KEY',
+      'WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY et WEB_PUSH_SUBJECT vont ensemble : ' +
+        'renseigne les trois, ou laisse les trois vides pour désactiver le push.',
+    );
+  }
+
+  if (env.WEB_PUSH_SUBJECT && !/^(mailto:|https:\/\/)/.test(env.WEB_PUSH_SUBJECT)) {
+    addIssue(
+      'WEB_PUSH_SUBJECT',
+      'WEB_PUSH_SUBJECT doit être une adresse mailto: ou une URL https:// — les services ' +
+        'de notification refusent tout le reste.',
+    );
   }
 
   // Les trois valeurs Cloudinary vont ensemble : un tableau de bord n'en donne

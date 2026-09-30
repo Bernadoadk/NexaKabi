@@ -26,6 +26,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { maskPhone } from '@nexakabi/utils';
 import type { User } from '../../generated/prisma/client';
 import { SmsProvider } from '../notifications/sms.provider';
+import { describeDevice } from './device-label';
 import { OtpService } from './domain/otp.service';
 import { TokenService } from './domain/token.service';
 import { AuthRepository } from './repositories/auth.repository';
@@ -284,7 +285,6 @@ export class AuthService {
     const user = await this.repository.updateProfile(userId, {
       fullName: input.fullName,
       email: input.email ?? null,
-      marketingOptIn: input.marketingOptIn,
       avatarUrl: input.avatarUrl,
       termsAcceptedAt: now,
     });
@@ -351,34 +351,7 @@ function toSessionUser(user: User): SessionUser {
     avatarUrl: user.avatarUrl,
     globalRole: user.globalRole,
     status: user.status,
-    marketingOptIn: user.marketingOptIn,
     // Tant que le nom est vide, l'étape 3 de l'inscription reste à faire.
     needsProfileCompletion: user.fullName.trim() === '',
   };
-}
-
-/** Libellé lisible d'un appareil : « Chrome sur Android ». */
-function describeDevice(userAgent?: string): string | undefined {
-  if (!userAgent) return undefined;
-
-  const browsers: Array<[RegExp, string]> = [
-    [/Edg\//, 'Edge'],
-    [/OPR\//, 'Opera'],
-    [/Chrome\//, 'Chrome'],
-    [/Firefox\//, 'Firefox'],
-    [/Safari\//, 'Safari'],
-  ];
-
-  const platforms: Array<[RegExp, string]> = [
-    [/Android/, 'Android'],
-    [/iPhone|iPad|iOS/, 'iOS'],
-    [/Windows/, 'Windows'],
-    [/Mac OS/, 'macOS'],
-    [/Linux/, 'Linux'],
-  ];
-
-  const browser = browsers.find(([pattern]) => pattern.test(userAgent))?.[1] ?? 'Navigateur';
-  const platform = platforms.find(([pattern]) => pattern.test(userAgent))?.[1];
-
-  return platform ? `${browser} sur ${platform}` : browser;
 }

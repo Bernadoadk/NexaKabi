@@ -160,12 +160,14 @@ function Wallets({ wallets }: { wallets: ProviderWallet[] }) {
           {wallets.map((wallet) => {
             const gap = wallet.reported ? wallet.reported.balance - wallet.expected : null;
 
+            // Grille de trois colonnes sur un téléphone, rangée qui se replie
+            // à partir de `sm` — voir `ReportLine` des rapports.
             return (
               <li
                 key={`${wallet.providerCode}-${wallet.currency}`}
-                className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border-subtle px-5 py-3 first:border-t-0"
+                className="flex flex-col gap-2 border-t border-border-subtle px-4 py-3 first:border-t-0 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6 sm:gap-y-2 sm:px-5"
               >
-                <div className="min-w-[140px] flex-1">
+                <div className="min-w-0 sm:min-w-[140px] sm:flex-1">
                   <div className="text-body-s font-bold text-text-strong">
                     {wallet.providerLabel} · {wallet.currency}
                   </div>
@@ -183,13 +185,15 @@ function Wallets({ wallets }: { wallets: ProviderWallet[] }) {
                     </div>
                   ) : null}
                 </div>
-                <Figure
-                  label="Annoncé"
-                  amount={wallet.reported?.balance ?? null}
-                  currency={wallet.currency}
-                />
-                <Figure label="Attendu" amount={wallet.expected} currency={wallet.currency} />
-                <Figure label="Écart" amount={gap} currency={wallet.currency} strong />
+                <div className="grid grid-cols-3 gap-x-3 sm:contents">
+                  <Figure
+                    label="Annoncé"
+                    amount={wallet.reported?.balance ?? null}
+                    currency={wallet.currency}
+                  />
+                  <Figure label="Attendu" amount={wallet.expected} currency={wallet.currency} />
+                  <Figure label="Écart" amount={gap} currency={wallet.currency} strong />
+                </div>
               </li>
             );
           })}
@@ -210,8 +214,10 @@ function Figure({
   currency: string;
   strong?: boolean;
 }) {
+  // Largeur plancher réservée au palier où les montants forment une rangée :
+  // dans la grille du téléphone, elle déborderait de la colonne.
   return (
-    <div className="flex min-w-[110px] flex-col items-end">
+    <div className="flex min-w-0 flex-col items-end sm:min-w-[110px]">
       <span className="text-micro text-text-3">{label}</span>
       {amount === null ? (
         <span className="text-body-s text-text-3">—</span>

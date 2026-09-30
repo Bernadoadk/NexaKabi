@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { CircleCheck } from 'lucide-react';
 import type { PaymentFailures } from '@nexakabi/contracts';
-import { Alert, EmptyState, Stat, Surface } from '@nexakabi/ui';
+import { Alert, EmptyState, Stat, StatGrid, Surface } from '@nexakabi/ui';
 import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { formatShare, toQuery } from '@/lib/finance';
 import { AccessDenied } from '../../access';
@@ -77,7 +77,7 @@ function FailureReport({ failures }: { failures: PaymentFailures }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <StatGrid>
         <Stat
           label="Échecs"
           value={String(failures.failed)}
@@ -101,7 +101,7 @@ function FailureReport({ failures }: { failures: PaymentFailures }) {
           tone={failures.lostOrders > 0 ? 'warning' : 'default'}
           hint="Jamais payées après un échec"
         />
-      </div>
+      </StatGrid>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Surface variant="panel" padding="none" className="overflow-hidden">

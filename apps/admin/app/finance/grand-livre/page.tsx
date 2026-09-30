@@ -81,12 +81,14 @@ export default async function LedgerPage({
           <p className="px-5 py-4 text-body-s text-text-2">Aucune écriture pour l’instant.</p>
         ) : (
           <ul>
+            {/* Grille de trois colonnes sur un téléphone, rangée qui se replie
+                à partir de `sm` — voir `ReportLine` des rapports. */}
             {balances.data.map((row) => (
               <li
                 key={`${row.organizationId}-${row.currency}`}
-                className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border-subtle px-5 py-3 first:border-t-0"
+                className="flex flex-col gap-2 border-t border-border-subtle px-4 py-3 first:border-t-0 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-5 sm:gap-y-2 sm:px-5"
               >
-                <div className="min-w-[180px] flex-1">
+                <div className="min-w-0 sm:min-w-[180px] sm:flex-1">
                   <Link
                     href={`/finance/grand-livre${toQuery({ organisation: row.organizationId })}`}
                     className="text-body-s font-bold text-text-strong hover:text-coral"
@@ -99,9 +101,11 @@ export default async function LedgerPage({
                     </Badge>
                   ) : null}
                 </div>
-                <Figure label="Disponible" amount={row.available} currency={row.currency} />
-                <Figure label="En attente" amount={row.pending} currency={row.currency} />
-                <Figure label="Total" amount={row.total} currency={row.currency} strong />
+                <div className="grid grid-cols-3 gap-x-3 sm:contents">
+                  <Figure label="Disponible" amount={row.available} currency={row.currency} />
+                  <Figure label="En attente" amount={row.pending} currency={row.currency} />
+                  <Figure label="Total" amount={row.total} currency={row.currency} strong />
+                </div>
               </li>
             ))}
           </ul>
@@ -234,8 +238,10 @@ function Figure({
   currency: string;
   strong?: boolean;
 }) {
+  // Largeur plancher réservée au palier où les montants forment une rangée :
+  // dans la grille du téléphone, elle déborderait de la colonne.
   return (
-    <div className="flex min-w-[110px] flex-col items-end">
+    <div className="flex min-w-0 flex-col items-end sm:min-w-[110px]">
       <span className="text-micro text-text-3">{label}</span>
       <Money
         amount={amount}

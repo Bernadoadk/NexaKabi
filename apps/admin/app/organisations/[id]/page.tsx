@@ -4,7 +4,7 @@ import { notFound, redirect } from 'next/navigation';
 import { Check } from 'lucide-react';
 import type { ActivityEntry, OrganizationAdminDetail } from '@nexakabi/contracts';
 import { formatMoney, formatPhoneSafe, formatRelative } from '@nexakabi/utils';
-import { Alert, Badge, Stat, Surface } from '@nexakabi/ui';
+import { Alert, Badge, Stat, StatGrid, Surface } from '@nexakabi/ui';
 import { adminFetch, canMoveMoney, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { AccessDenied, ReadOnlyNotice } from '../../access';
 import { AdminShell } from '../../shell';
@@ -20,7 +20,8 @@ export default async function OrganizationDetailPage({
 }) {
   const user = await getAdminUser();
   if (!user) redirect('/connexion');
-  if (!hasAdminAccess(user, 'organizations')) return <AccessDenied user={user} space="organizations" />;
+  if (!hasAdminAccess(user, 'organizations'))
+    return <AccessDenied user={user} space="organizations" />;
   const canAct = hasAdminAccess(user, 'organizations', 'act');
   const money = canMoveMoney(user);
 
@@ -74,7 +75,7 @@ export default async function OrganizationDetailPage({
           <div className="flex flex-col gap-5">
             <Surface variant="panel" padding="comfortable" className="flex flex-col gap-4">
               <h2 className="text-h3 font-bold">Identité</h2>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3.5">
                 <Fact label="Type" value={org.type} />
                 <Fact label="Ville" value={org.cityName ?? '—'} />
                 <Fact label="Raison sociale" value={org.legalName ?? '—'} />
@@ -88,12 +89,12 @@ export default async function OrganizationDetailPage({
               </div>
             </Surface>
 
-            <div className="grid gap-3.5 sm:grid-cols-2">
+            <StatGrid wide={2}>
               <Stat label="Solde total" amount={org.balance} tone="ink" />
               <Stat label="Événements" value={String(org.eventsCount)} />
               <Stat label="Membres de l’équipe" value={String(org.membersCount)} />
               <Stat label="Événements terminés" value={String(org.completedEventsCount)} />
-            </div>
+            </StatGrid>
 
             <Surface variant="panel" padding="none" className="overflow-hidden">
               <div className="border-b border-border-subtle px-5 py-3">
@@ -154,14 +155,17 @@ function Fact({
   value: string;
   emphasis?: boolean;
 }) {
+  // `min-w-0` et `break-words` : une adresse e-mail est un seul mot pour le
+  // navigateur. Dans une demi-colonne de téléphone, elle élargirait sa case,
+  // donc la grille, donc la page — qui se mettrait à glisser de côté.
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-micro text-text-3">{label}</span>
       <span
         className={
           emphasis
-            ? 'text-body font-bold text-text-strong'
-            : 'text-body-s font-semibold text-text-strong'
+            ? 'break-words text-body font-bold text-text-strong'
+            : 'break-words text-body-s font-semibold text-text-strong'
         }
       >
         {value}

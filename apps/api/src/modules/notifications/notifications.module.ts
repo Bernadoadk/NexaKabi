@@ -2,10 +2,18 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ConsoleEmailProvider, EmailProvider, SmtpEmailProvider } from './email.provider';
 import { EventNotifierService } from './event-notifier.service';
-import { NotificationsController } from './notifications.controller';
+import { InterestsService } from './interests.service';
+import {
+  InterestsController,
+  NotificationsController,
+  PushController,
+} from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationsScheduler } from './notifications.scheduler';
 import { OutboundService } from './outbound.service';
+import { PlatformSettingsService } from './platform-settings.service';
+import { PushService } from './push.service';
+import { RecommendationsService } from './recommendations.service';
 import { RemindersService } from './reminders.service';
 import { ConsoleSmsProvider, SmsProvider } from './sms.provider';
 import type { Env } from '../../config/env';
@@ -19,12 +27,16 @@ import type { Env } from '../../config/env';
  */
 @Global()
 @Module({
-  controllers: [NotificationsController],
+  controllers: [NotificationsController, InterestsController, PushController],
   providers: [
     NotificationsService,
     EventNotifierService,
     OutboundService,
     RemindersService,
+    RecommendationsService,
+    InterestsService,
+    PushService,
+    PlatformSettingsService,
     NotificationsScheduler,
     {
       provide: SmsProvider,
@@ -63,7 +75,10 @@ import type { Env } from '../../config/env';
     NotificationsService,
     EventNotifierService,
     RemindersService,
+    RecommendationsService,
     OutboundService,
+    PushService,
+    PlatformSettingsService,
     NotificationsScheduler,
   ],
 })

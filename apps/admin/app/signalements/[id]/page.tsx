@@ -92,10 +92,10 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
               <Surface variant="panel" padding="comfortable" className="flex flex-col gap-3">
                 <h2 className="text-h3 font-bold">{report.organization.name}</h2>
 
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3.5 sm:grid-cols-3">
                   <Amount label="Disponible maintenant" value={report.balance.availableAmount} />
                   <Amount label="Bloqué par palier" value={report.balance.pendingAmount} />
-                  <div className="flex flex-col gap-0.5">
+                  <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-micro text-text-3">Vérification</span>
                     <span className="text-body font-bold">
                       {report.organization.verificationStatus === 'VERIFIED'
@@ -189,9 +189,9 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
 
 function Amount({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-micro text-text-3">{label}</span>
-      <span className="text-body font-bold tabular-nums">{formatMoney(value)}</span>
+      <span className="break-words text-body font-bold tabular-nums">{formatMoney(value)}</span>
     </div>
   );
 }

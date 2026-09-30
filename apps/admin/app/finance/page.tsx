@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { Landmark } from 'lucide-react';
 import type { FinanceCurrencySummary, FinancePosition, FinanceSummary } from '@nexakabi/contracts';
-import { Alert, EmptyState, Money, SimpleBarChart, Stat, Surface } from '@nexakabi/ui';
+import { Alert, EmptyState, Money, SimpleBarChart, Stat, StatGrid, Surface } from '@nexakabi/ui';
 import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { formatDay, formatShare, toQuery } from '@/lib/finance';
 import { AccessDenied } from '../access';
@@ -112,7 +112,7 @@ function CurrencySection({
       ) : null}
 
       {summary ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatGrid>
           <Stat
             label="Encaissé brut"
             value={<Money amount={summary.grossCollected} currency={currency} size="medium" />}
@@ -134,7 +134,7 @@ function CurrencySection({
             value={settled > 0 ? formatShare(summary.paymentsSucceeded, settled) : '—'}
             hint={`${summary.paymentsFailed} échec${summary.paymentsFailed > 1 ? 's' : ''} sur ${settled} tentative${settled > 1 ? 's' : ''} conclue${settled > 1 ? 's' : ''}`}
           />
-        </div>
+        </StatGrid>
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">

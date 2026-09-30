@@ -37,15 +37,12 @@ export function ProfileForm({ user }: { user: SessionUser }) {
 
   async function save(payload: { fullName: string; email: string; avatarUrl?: string | null }) {
     try {
+      // Nom, e-mail et photo seulement : les consentements (sélection,
+      // newsletter) se règlent dans « Alertes », jamais en corrigeant son nom.
       const response = await fetch('/api/auth/complete-profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...payload,
-          // Préservé tel quel : ni la photo ni une correction de nom ne
-          // redemandent un consentement déjà donné.
-          marketingOptIn: user.marketingOptIn,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {

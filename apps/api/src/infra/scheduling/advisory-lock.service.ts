@@ -12,6 +12,8 @@ export const ADVISORY_LOCKS = {
   retryOutbound: 8_100_004,
   reconcilePayouts: 8_100_005,
   reconcileRefunds: 8_100_006,
+  sendRecommendations: 8_100_007,
+  sendNewsletter: 8_100_008,
 } as const;
 
 export type AdvisoryLockKey = (typeof ADVISORY_LOCKS)[keyof typeof ADVISORY_LOCKS];

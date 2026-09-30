@@ -85,6 +85,7 @@ export interface OrganizerPage {
     cityName: string | null;
     verified: boolean;
     whatsapp: string | null;
+    followersCount: number;
   };
   upcoming: EventSummary[];
   past: EventSummary[];

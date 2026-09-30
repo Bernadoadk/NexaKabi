@@ -1,27 +1,47 @@
 import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { waitUntil } from '@vercel/functions';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  isMandatory,
+  type NotificationChannel,
+  type NotificationType,
+  type PlatformNotificationSettings,
+} from '@nexakabi/contracts';
+import type { Env } from '../../config/env';
+import { publicWebUrl } from '../../config/public-urls';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { EmailProvider, type EmailAttachment } from './email.provider';
+import { renderNotificationEmail } from './email-layout';
+import { PlatformSettingsService } from './platform-settings.service';
+import { PushService } from './push.service';
 import { SmsProvider } from './sms.provider';
-import type { NotificationChannel } from '@nexakabi/contracts';
 
 /**
  * Diffusion sortante des notifications.
  *
- * ── Ce qui part réellement, et ce qui reste dans l'application ──────────────
+ * ── Le participant choisit ses canaux ───────────────────────────────────────
  * Tout arrive dans le centre de notifications : c'est gratuit, immédiat, et
- * consultable hors ligne. Seuls certains types partent AUSSI par SMS ou
- * WhatsApp, parce qu'un message sortant coûte de l'argent à chaque envoi et
- * qu'un participant qui en reçoit trop finit par tous les ignorer.
+ * consultable hors ligne. Au-delà, c'est le participant qui décide, dans ses
+ * réglages, par où il veut AUSSI être prévenu :
  *
- * La règle retenue : ne sort de l'application que ce qui a une conséquence si
- * on le rate. Un paiement confirmé — c'est le billet. Un événement annulé —
- * c'est un déplacement pour rien. Le reste attend l'ouverture de l'application.
+ *   · **l'appareil** (Web Push) — pour chaque type qu'il a gardé actif, dès
+ *     qu'un navigateur l'a autorisé ;
+ *   · **l'e-mail** — même règle, s'il a donné une adresse ;
+ *   · **WhatsApp** — même règle, sauf si la plateforme l'a coupé pour les
+ *     messages non urgents (console, « Réglages des envois ») : un WhatsApp
+ *     coûte à chaque envoi, et c'est à elle d'arbitrer ce qu'elle paie.
  *
- * ── Pourquoi un seul canal externe par notification ────────────────────────
+ * ── Le SMS, un secours et rien d'autre ──────────────────────────────────────
+ * Il ne porte que les messages critiques — un paiement confirmé (le billet),
+ * une annulation (un déplacement pour rien) — et seulement quand WhatsApp est
+ * refusé. Il arrive partout, y compris sur les téléphones à touches encore
+ * courants hors de Cotonou ; il coûte aussi à chaque message, et un rappel ou
+ * une sélection n'en valent pas le prix.
+ *
+ * ── Un seul canal téléphonique par notification ─────────────────────────────
  * Envoyer le même message par SMS ET WhatsApp double le coût pour ne rien
- * apporter : le participant l'a déjà lu. WhatsApp d'abord quand il est
- * disponible (moins cher, plus riche), SMS en repli — il arrive partout,
- * y compris sur les téléphones à touches encore courants hors de Cotonou.
+ * apporter : le participant l'a déjà lu.
  */
 @Injectable()
 export class OutboundService implements OnApplicationShutdown {
@@ -45,11 +65,18 @@ export class OutboundService implements OnApplicationShutdown {
    */
   private readonly inFlight = new Set<Promise<void>>();
 
+  private readonly webUrl: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly sms: SmsProvider,
     private readonly email: EmailProvider,
-  ) {}
+    private readonly push: PushService,
+    private readonly settings: PlatformSettingsService,
+    config: ConfigService<Env, true>,
+  ) {
+    this.webUrl = publicWebUrl(config);
+  }
 
   /**
    * Programme la diffusion, sans la retenir.
@@ -57,6 +84,13 @@ export class OutboundService implements OnApplicationShutdown {
    * Ne renvoie rien et ne lève jamais : l'appelant est en train de confirmer un
    * paiement ou de publier un événement, et un opérateur injoignable ne doit
    * pas faire échouer ces opérations. Le sort de l'envoi vit dans `MessageLog`.
+   *
+   * ── Pourquoi `waitUntil` ──────────────────────────────────────────────────
+   * Sur Vercel, une instance peut être suspendue dès la réponse envoyée : une
+   * diffusion simplement « lancée » y mourait avant d'avoir écrit la moindre
+   * ligne de journal — et la reprise, qui part des journaux, ne la voyait
+   * jamais. `waitUntil` garde l'instance en vie jusqu'à la fin de l'envoi ;
+   * ailleurs, il ne fait rien.
    *
    * ── Pourquoi pas une file de messages ─────────────────────────────────────
    * Redis + BullMQ seraient l'outil correct à l'échelle. Au volume du MVP —
@@ -76,6 +110,7 @@ export class OutboundService implements OnApplicationShutdown {
       });
 
     this.inFlight.add(running);
+    waitUntil(running);
   }
 
   /**
@@ -93,8 +128,17 @@ export class OutboundService implements OnApplicationShutdown {
     await this.drain();
   }
 
-  /** Diffuse une notification déjà écrite en base. */
-  async deliver(notificationId: string): Promise<void> {
+  /**
+   * Diffuse une notification déjà écrite en base.
+   *
+   * `only` restreint la diffusion à un canal : c'est ce que fait la reprise
+   * d'un envoi en échec. Sans lui, un WhatsApp refusé par l'opérateur
+   * renverrait aussi l'e-mail et la notification déjà reçus.
+   */
+  async deliver(
+    notificationId: string,
+    options: { only?: NotificationChannel } = {},
+  ): Promise<void> {
     const notification = await this.prisma.notification.findUnique({
       where: { id: notificationId },
       select: {
@@ -102,6 +146,8 @@ export class OutboundService implements OnApplicationShutdown {
         type: true,
         title: true,
         body: true,
+        actionUrl: true,
+        actionLabel: true,
         user: {
           select: {
             id: true,
@@ -117,49 +163,68 @@ export class OutboundService implements OnApplicationShutdown {
 
     if (!notification) return;
 
-    const preference = notification.user.notificationPreference;
+    const { user } = notification;
+    const preference = {
+      whatsapp: user.notificationPreference?.whatsapp ?? DEFAULT_NOTIFICATION_PREFERENCES.whatsapp,
+      sms: user.notificationPreference?.sms ?? DEFAULT_NOTIFICATION_PREFERENCES.sms,
+      email: user.notificationPreference?.email ?? DEFAULT_NOTIFICATION_PREFERENCES.email,
+    };
+    const wants = (channel: NotificationChannel) =>
+      options.only === undefined || options.only === channel;
 
-    /**
-     * L'e-mail est indépendant du reste de cette méthode : `leavesTheApp` et
-     * le plafond « un seul canal externe » existent pour contenir le COÛT du
-     * SMS/WhatsApp, une contrainte que l'e-mail n'a pas. Il part donc pour
-     * tout type de notification, dès que l'abonné l'a choisi et qu'une
-     * adresse existe sur son compte — indépendamment de ce qui suit.
-     */
-    if (notification.user.email && (preference?.email ?? false)) {
+    // ── 1. L'appareil ─────────────────────────────────────────────────────
+    if (wants('PUSH')) {
+      await this.push.sendToUser(
+        user.id,
+        {
+          title: notification.title,
+          body: notification.body,
+          url: notification.actionUrl,
+          tag: `${notification.type}:${notification.id}`,
+        },
+        { notificationId: notification.id, urgent: isMandatory(notification.type) },
+      );
+    }
+
+    // ── 2. L'e-mail ───────────────────────────────────────────────────────
+    if (wants('EMAIL') && user.email && preference.email) {
       await this.sendEmail({
-        userId: notification.user.id,
+        userId: user.id,
         notificationId: notification.id,
-        to: notification.user.email,
+        to: user.email,
         subject: notification.title,
-        html: renderSimpleEmail(notification.title, notification.body),
-        text: notification.body,
+        html: renderNotificationEmail({
+          title: notification.title,
+          body: notification.body,
+          actionLabel: notification.actionLabel,
+          actionUrl: `${this.webUrl}${notification.actionUrl}`,
+          settingsUrl: `${this.webUrl}/mon-compte/notifications`,
+        }),
+        text: `${notification.body}\n\n${notification.actionLabel} : ${this.webUrl}${notification.actionUrl}`,
       });
     }
 
-    if (!leavesTheApp(notification.type)) {
-      // Rien de plus à envoyer : la notification est déjà consultable dans
-      // l'application, et c'est suffisant pour ce type au-delà de l'e-mail.
-      return;
-    }
+    // ── 3. Le téléphone : WhatsApp, SMS en secours ────────────────────────
+    if (!(wants('WHATSAPP') || wants('SMS'))) return;
 
-    const channel = pickChannel({
-      whatsapp: preference?.whatsapp ?? true,
-      sms: preference?.sms ?? true,
-    });
+    const channel = pickPhoneChannel(
+      notification.type,
+      preference,
+      await this.settings.getNotificationSettings(),
+    );
 
     if (!channel) {
-      // Le participant a coupé les deux canaux externes. C'est son droit : la
-      // notification reste dans l'application.
+      // Le participant n'a pas choisi de canal téléphonique pour ce type, ou
+      // la plateforme l'a coupé. La notification reste dans l'application.
       return;
     }
 
     const log = await this.prisma.messageLog.create({
       data: {
         notificationId: notification.id,
-        userId: notification.user.id,
+        userId: user.id,
         channel,
-        destination: notification.user.phone,
+        destination: user.phone,
         status: 'QUEUED',
       },
       select: { id: true },
@@ -167,7 +232,7 @@ export class OutboundService implements OnApplicationShutdown {
 
     try {
       await this.sms.sendMessage({
-        phone: notification.user.phone,
+        phone: user.phone,
         channel: channel === 'WHATSAPP' ? 'WHATSAPP' : 'SMS',
         text: `${notification.title}\n${notification.body}`,
       });
@@ -188,7 +253,7 @@ export class OutboundService implements OnApplicationShutdown {
         },
       });
 
-      this.logger.warn(`Envoi ${channel} échoué pour ${notification.user.phone}`);
+      this.logger.warn(`Envoi ${channel} échoué pour ${user.phone}`);
     }
   }
 
@@ -196,15 +261,15 @@ export class OutboundService implements OnApplicationShutdown {
    * Envoi direct, sans passer par le centre de notifications.
    *
    * ── Pourquoi cette porte existe ──────────────────────────────────────────
-   * Le centre de notifications appartient au PARTICIPANT, et ses quatre types
-   * sont fermés à dessein. Certains messages ne lui sont pas destinés : la
-   * décision sur un dossier de vérification s'adresse à un organisateur, qui
-   * suit son dossier dans son espace professionnel.
+   * Le centre de notifications appartient au PARTICIPANT, et ses types sont
+   * fermés à dessein. Certains messages ne lui sont pas destinés : la décision
+   * sur un dossier de vérification s'adresse à un organisateur, qui suit son
+   * dossier dans son espace professionnel.
    *
    * Les faire passer par le centre obligerait à détourner un type existant —
    * annoncer une vérification sous l'étiquette « paiement confirmé » — ou à en
-   * ajouter un cinquième, ce que le produit refuse. Ils partent donc
-   * directement, et `MessageLog` en garde la trace comme pour les autres.
+   * ajouter un, ce que le produit refuse. Ils partent donc directement, et
+   * `MessageLog` en garde la trace comme pour les autres.
    *
    * Ne lève jamais, pour la même raison que `schedule` : l'appelant est en
    * train de statuer sur un dossier, et un opérateur injoignable ne doit pas
@@ -216,7 +281,7 @@ export class OutboundService implements OnApplicationShutdown {
       select: { whatsapp: true, sms: true },
     });
 
-    const channel = pickChannel({
+    const channel = pickCriticalChannel({
       whatsapp: preference?.whatsapp ?? true,
       sms: preference?.sms ?? true,
     });
@@ -257,7 +322,7 @@ export class OutboundService implements OnApplicationShutdown {
   }
 
   /**
-   * Envoi d'un e-mail — reçu, alerte, ou appelé directement pour un billet.
+   * Envoi d'un e-mail — reçu, alerte, confirmation, ou billet.
    *
    * ── Pourquoi ce n'est pas fusionné avec `sendMessage` (SMS/WhatsApp) ─────
    * Les deux journalisent dans `MessageLog` et ne lèvent jamais, mais
@@ -274,8 +339,9 @@ export class OutboundService implements OnApplicationShutdown {
     html: string;
     text: string;
     attachments?: readonly EmailAttachment[];
-  }): Promise<void> {
-    if (!input.to) return;
+    headers?: Readonly<Record<string, string>>;
+  }): Promise<boolean> {
+    if (!input.to) return false;
 
     const log = await this.prisma.messageLog.create({
       data: {
@@ -295,6 +361,8 @@ export class OutboundService implements OnApplicationShutdown {
         where: { id: log.id },
         data: { status: 'SENT', sentAt: new Date(), attemptCount: { increment: 1 } },
       });
+
+      return true;
     } catch (error) {
       await this.prisma.messageLog.update({
         where: { id: log.id },
@@ -306,6 +374,7 @@ export class OutboundService implements OnApplicationShutdown {
       });
 
       this.logger.warn(`Envoi e-mail échoué pour ${input.to}`);
+      return false;
     }
   }
 
@@ -318,6 +387,10 @@ export class OutboundService implements OnApplicationShutdown {
    * Trois tentatives au maximum. Au-delà, le problème n'est pas passager — un
    * numéro invalide, une ligne résiliée — et réessayer indéfiniment coûterait
    * de l'argent sans jamais aboutir.
+   *
+   * Le push n'est jamais repris : le service de notification garde déjà le
+   * message vingt-quatre heures, et ses refus sont définitifs (voir
+   * `PushService.sendToUser`).
    */
   async retryPending(limit = 50): Promise<{ retried: number }> {
     const stale = new Date(Date.now() - 5 * 60_000);
@@ -328,8 +401,9 @@ export class OutboundService implements OnApplicationShutdown {
         attemptCount: { lt: 3 },
         createdAt: { lt: stale },
         notificationId: { not: null },
+        channel: { not: 'PUSH' },
       },
-      select: { id: true, notificationId: true },
+      select: { id: true, notificationId: true, channel: true },
       take: limit,
     });
 
@@ -337,7 +411,7 @@ export class OutboundService implements OnApplicationShutdown {
     // conserver les deux ferait apparaître deux envois là où il n'y en a qu'un.
     for (const entry of pending) {
       await this.prisma.messageLog.delete({ where: { id: entry.id } });
-      await this.deliver(entry.notificationId as string);
+      await this.deliver(entry.notificationId as string, { only: entry.channel });
     }
 
     if (pending.length > 0) {
@@ -349,17 +423,27 @@ export class OutboundService implements OnApplicationShutdown {
 }
 
 /**
- * Ce type mérite-t-il de sortir de l'application ?
+ * Le canal téléphonique d'une notification.
  *
- * Un rappel J-7 dans le centre suffit. Une annulation, non : le participant
- * doit l'apprendre même s'il n'ouvre pas l'application avant de partir.
+ * Critique (billet, annulation) : WhatsApp d'abord, SMS en secours — le
+ * participant doit l'apprendre même sans ouvrir l'application. Le reste :
+ * WhatsApp seulement, s'il l'a choisi ET si la plateforme l'autorise.
  */
-function leavesTheApp(type: string): boolean {
-  return type === 'PAYMENT_CONFIRMED' || type === 'EVENT_UPDATED';
+function pickPhoneChannel(
+  type: NotificationType,
+  accepted: { whatsapp: boolean; sms: boolean },
+  settings: PlatformNotificationSettings,
+): NotificationChannel | null {
+  if (isMandatory(type)) return pickCriticalChannel(accepted);
+
+  return accepted.whatsapp && settings.whatsappForNonUrgent ? 'WHATSAPP' : null;
 }
 
 /** WhatsApp d'abord, SMS en repli, rien si les deux sont coupés. */
-function pickChannel(accepted: { whatsapp: boolean; sms: boolean }): NotificationChannel | null {
+function pickCriticalChannel(accepted: {
+  whatsapp: boolean;
+  sms: boolean;
+}): NotificationChannel | null {
   if (accepted.whatsapp) return 'WHATSAPP';
   if (accepted.sms) return 'SMS';
   return null;
@@ -368,39 +452,4 @@ function pickChannel(accepted: { whatsapp: boolean; sms: boolean }): Notificatio
 function describe(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) return error.message;
   return "L'opérateur n'a pas pu être joint.";
-}
-
-/**
- * Habillage minimal d'une notification générique en e-mail.
- *
- * Volontairement sobre — un titre, un corps, la marque en pied de page — pour
- * les alertes qui existaient déjà en texte court (rappel, événement mis à
- * jour…). Un e-mail qui porte quelque chose de plus riche, comme le billet,
- * compose son propre gabarit ailleurs plutôt que de détourner celui-ci.
- */
-function renderSimpleEmail(title: string, body: string): string {
-  return `<!doctype html>
-<html lang="fr">
-  <body style="margin:0;padding:32px 16px;background:#F5F4F8;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#12102B;">
-    <table role="presentation" width="100%" style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:16px;overflow:hidden;">
-      <tr><td style="background:#12102B;padding:20px 28px;">
-        <span style="color:#FFFFFF;font-weight:800;font-size:16px;">Nexa-Kabi</span>
-      </td></tr>
-      <tr><td style="padding:28px;">
-        <h1 style="margin:0 0 12px;font-size:20px;">${escapeHtml(title)}</h1>
-        <p style="margin:0;font-size:15px;line-height:1.6;color:#3A3752;">${escapeHtml(body)}</p>
-      </td></tr>
-    </table>
-  </body>
-</html>`;
-}
-
-/** Échappe les caractères sensibles au HTML — un titre ou un corps ne sont jamais du balisage de confiance. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }

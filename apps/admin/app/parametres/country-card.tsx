@@ -151,91 +151,168 @@ export function CountryCard({
           Aucun moyen de paiement configuré. Le pays ne peut ni encaisser ni verser.
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-body-s">
-            <thead>
-              <tr className="border-b border-border-subtle text-left text-micro uppercase tracking-wide text-text-3">
-                <th className="px-5 py-2.5 font-semibold">Moyen</th>
-                <th className="px-3 py-2.5 font-semibold">Prestataire</th>
-                <th className="px-3 py-2.5 text-center font-semibold">Collecte</th>
-                <th className="px-3 py-2.5 text-center font-semibold">Versement</th>
-                <th className="px-3 py-2.5 text-center font-semibold">Constat prestataire</th>
-                <th className="px-3 py-2.5 text-center font-semibold">Effectif</th>
-                {canAct ? <th className="px-3 py-2.5" /> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {country.methods.map((method) => (
-                <tr key={method.id} className="border-b border-border-subtle last:border-b-0">
-                  <td className="px-5 py-3">
-                    <div className="font-semibold">{method.label}</div>
-                    <div className="text-micro text-text-3">
-                      {method.methodCode} · {method.kind}
+        <>
+          {/*
+            Sous 768 px, une carte par moyen.
+
+            Six colonnes dans 720 px sur un écran de 390 : le tableau obligeait
+            à pousser l'écran de côté pour atteindre les deux interrupteurs —
+            qui sont pourtant la seule raison de venir ici. La carte les met
+            en premier, sous le nom du moyen.
+          */}
+          <ul className="md:hidden">
+            {country.methods.map((method) => (
+              <li
+                key={method.id}
+                className="flex flex-col gap-3 border-b border-border-subtle px-4 py-4 last:border-b-0"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-body font-semibold">{method.label}</div>
+                    <div className="break-words text-micro text-text-3">
+                      {method.methodCode} · {method.kind} · {method.providerCode}
+                      {method.providerMethodCode ? ` · ${method.providerMethodCode}` : ''}
                     </div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <div>{method.providerCode}</div>
-                    <div className="text-micro text-text-3">{method.providerMethodCode}</div>
-                  </td>
-                  <td className="px-3 py-3 text-center">
-                    <Toggle
-                      value={method.collectionEnabled}
-                      disabled={!canAct || pending}
-                      onChange={() => toggleMethod(method, 'collectionEnabled')}
-                      label={`Collecte ${method.label}`}
-                    />
-                  </td>
-                  <td className="px-3 py-3 text-center">
-                    <Toggle
-                      value={method.payoutEnabled}
-                      disabled={!canAct || pending}
-                      onChange={() => toggleMethod(method, 'payoutEnabled')}
-                      label={`Versement ${method.label}`}
-                    />
-                  </td>
-                  <td className="px-3 py-3 text-center">
-                    <div className="flex items-center justify-center gap-2">
-                      <Observed value={method.providerCollectionEnabled} label="collecte" />
-                      <Observed value={method.providerPayoutEnabled} label="versement" />
-                    </div>
-                    <div className="text-micro text-text-3">
-                      {method.providerSyncedAt
-                        ? `synchronisé le ${new Date(method.providerSyncedAt).toLocaleDateString('fr-FR')}`
-                        : 'jamais synchronisé'}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 text-center">
-                    <div className="flex items-center justify-center gap-2">
-                      <Badge tone={method.effectiveCollection ? 'success' : 'neutral'}>
-                        {method.effectiveCollection ? 'Collecte' : 'Pas de collecte'}
-                      </Badge>
-                      <Badge tone={method.effectivePayout ? 'success' : 'neutral'}>
-                        {method.effectivePayout ? 'Versement' : 'Pas de versement'}
-                      </Badge>
-                    </div>
-                  </td>
+                  </div>
                   {canAct ? (
-                    <td className="px-3 py-3 text-right">
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        size="compact"
-                        loading={pending}
-                        onClick={() => {
-                          if (window.confirm(`Retirer ${method.label} de ${country.name} ?`)) {
-                            void call(`countries/${country.code}/methods/${method.id}`, 'DELETE');
-                          }
-                        }}
-                      >
-                        Retirer
-                      </Button>
-                    </td>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      size="compact"
+                      loading={pending}
+                      onClick={() => {
+                        if (window.confirm(`Retirer ${method.label} de ${country.name} ?`)) {
+                          void call(`countries/${country.code}/methods/${method.id}`, 'DELETE');
+                        }
+                      }}
+                    >
+                      Retirer
+                    </Button>
                   ) : null}
+                </div>
+
+                <div className="flex flex-col gap-2 rounded-card bg-paper px-3 py-2.5">
+                  <SwitchRow
+                    label="Collecte"
+                    value={method.collectionEnabled}
+                    disabled={!canAct || pending}
+                    onChange={() => toggleMethod(method, 'collectionEnabled')}
+                    ariaLabel={`Collecte ${method.label}`}
+                  />
+                  <SwitchRow
+                    label="Versement"
+                    value={method.payoutEnabled}
+                    disabled={!canAct || pending}
+                    onChange={() => toggleMethod(method, 'payoutEnabled')}
+                    ariaLabel={`Versement ${method.label}`}
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={method.effectiveCollection ? 'success' : 'neutral'}>
+                    {method.effectiveCollection ? 'Collecte' : 'Pas de collecte'}
+                  </Badge>
+                  <Badge tone={method.effectivePayout ? 'success' : 'neutral'}>
+                    {method.effectivePayout ? 'Versement' : 'Pas de versement'}
+                  </Badge>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-text-3">
+                  <span className="font-semibold">Constat prestataire :</span>
+                  <Observed value={method.providerCollectionEnabled} label="collecte" />
+                  <Observed value={method.providerPayoutEnabled} label="versement" />
+                  <span>{describeSync(method.providerSyncedAt)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {/* Au-dessus de 768 px, le tableau : six colonnes comparables d'un
+              moyen à l'autre, ce qu'une pile de cartes ne donne pas. */}
+          <div className="hidden overflow-x-auto overscroll-x-contain md:block">
+            <table className="w-full min-w-[720px] text-body-s">
+              <thead>
+                <tr className="border-b border-border-subtle text-left text-micro uppercase tracking-wide text-text-3">
+                  <th className="px-5 py-2.5 font-semibold">Moyen</th>
+                  <th className="px-3 py-2.5 font-semibold">Prestataire</th>
+                  <th className="px-3 py-2.5 text-center font-semibold">Collecte</th>
+                  <th className="px-3 py-2.5 text-center font-semibold">Versement</th>
+                  <th className="px-3 py-2.5 text-center font-semibold">Constat prestataire</th>
+                  <th className="px-3 py-2.5 text-center font-semibold">Effectif</th>
+                  {canAct ? <th className="px-3 py-2.5" /> : null}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {country.methods.map((method) => (
+                  <tr key={method.id} className="border-b border-border-subtle last:border-b-0">
+                    <td className="px-5 py-3">
+                      <div className="font-semibold">{method.label}</div>
+                      <div className="text-micro text-text-3">
+                        {method.methodCode} · {method.kind}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div>{method.providerCode}</div>
+                      <div className="text-micro text-text-3">{method.providerMethodCode}</div>
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <Toggle
+                        value={method.collectionEnabled}
+                        disabled={!canAct || pending}
+                        onChange={() => toggleMethod(method, 'collectionEnabled')}
+                        label={`Collecte ${method.label}`}
+                      />
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <Toggle
+                        value={method.payoutEnabled}
+                        disabled={!canAct || pending}
+                        onChange={() => toggleMethod(method, 'payoutEnabled')}
+                        label={`Versement ${method.label}`}
+                      />
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <Observed value={method.providerCollectionEnabled} label="collecte" />
+                        <Observed value={method.providerPayoutEnabled} label="versement" />
+                      </div>
+                      <div className="text-micro text-text-3">
+                        {describeSync(method.providerSyncedAt)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <Badge tone={method.effectiveCollection ? 'success' : 'neutral'}>
+                          {method.effectiveCollection ? 'Collecte' : 'Pas de collecte'}
+                        </Badge>
+                        <Badge tone={method.effectivePayout ? 'success' : 'neutral'}>
+                          {method.effectivePayout ? 'Versement' : 'Pas de versement'}
+                        </Badge>
+                      </div>
+                    </td>
+                    {canAct ? (
+                      <td className="px-3 py-3 text-right">
+                        <Button
+                          type="button"
+                          variant="tertiary"
+                          size="compact"
+                          loading={pending}
+                          onClick={() => {
+                            if (window.confirm(`Retirer ${method.label} de ${country.name} ?`)) {
+                              void call(`countries/${country.code}/methods/${method.id}`, 'DELETE');
+                            }
+                          }}
+                        >
+                          Retirer
+                        </Button>
+                      </td>
+                    ) : null}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {canAct ? (
@@ -247,6 +324,65 @@ export function CountryCard({
         />
       ) : null}
     </Surface>
+  );
+}
+
+/** Ce que la dernière synchronisation a rapporté, en clair. */
+function describeSync(syncedAt: string | null): string {
+  return syncedAt
+    ? `synchronisé le ${new Date(syncedAt).toLocaleDateString('fr-FR')}`
+    : 'jamais synchronisé';
+}
+
+/**
+ * Un interrupteur et son libellé, en pleine largeur.
+ *
+ * La version en carte n'a pas d'en-tête de colonne pour dire ce que
+ * l'interrupteur commande : le libellé doit donc l'accompagner, et la ligne
+ * entière est cliquable — 44 px de haut, la cible minimale du produit.
+ */
+function SwitchRow({
+  label,
+  value,
+  disabled,
+  onChange,
+  ariaLabel,
+}: {
+  label: string;
+  value: boolean;
+  disabled: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={value}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={onChange}
+      className={cn(
+        'flex min-h-[var(--tap-min)] items-center justify-between gap-3 text-body-s font-semibold text-text-strong',
+        disabled && 'cursor-not-allowed opacity-60',
+      )}
+    >
+      {label}
+      <span
+        aria-hidden
+        className={cn(
+          'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition',
+          value ? 'bg-ink' : 'bg-border-field',
+        )}
+      >
+        <span
+          className={cn(
+            'inline-block size-5 rounded-full bg-white shadow transition',
+            value ? 'translate-x-5' : 'translate-x-0.5',
+          )}
+        />
+      </span>
+    </button>
   );
 }
 

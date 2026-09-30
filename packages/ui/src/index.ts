@@ -60,7 +60,14 @@ export {
   type DigitalTicketProps,
   type DigitalTicketTone,
 } from './components/digital-ticket';
-export { Stat, DateChip, type StatProps, type DateChipProps } from './components/stat';
+export {
+  Stat,
+  StatGrid,
+  DateChip,
+  type StatProps,
+  type StatGridProps,
+  type DateChipProps,
+} from './components/stat';
 export {
   EventCardLarge,
   EventCardStandard,
@@ -112,10 +119,7 @@ export {
   type CategoryIconProps,
   type CategoryMarkProps,
 } from './components/category-icon';
-export {
-  PaymentMethodLogo,
-  type PaymentMethodLogoProps,
-} from './components/payment-method-logo';
+export { PaymentMethodLogo, type PaymentMethodLogoProps } from './components/payment-method-logo';
 export {
   BottomTabBar,
   BOTTOM_TAB_BAR_HEIGHT,

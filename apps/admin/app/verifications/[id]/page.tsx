@@ -121,7 +121,7 @@ export default async function VerificationDetailPage({
             <Surface variant="panel" padding="comfortable" className="flex flex-col gap-4">
               <h2 className="text-h3 font-bold">À rapprocher</h2>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3.5">
                 <Fact label="Contact déclaré" value={request.contactName} />
                 <Fact label="Téléphone déclaré" value={formatPhoneSafe(request.contactPhone)} />
                 <Fact label="Propriétaire du compte" value={organization.owner.fullName} />
@@ -227,7 +227,7 @@ export default async function VerificationDetailPage({
             <Surface variant="panel" padding="comfortable" className="flex flex-col gap-3">
               <h2 className="text-h3 font-bold">Contexte</h2>
 
-              <div className="grid gap-4 sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3.5 sm:grid-cols-3">
                 <Fact label="Type" value={organization.type} />
                 <Fact label="Événements publiés" value={String(organization._count.events)} />
                 <Fact
@@ -260,14 +260,16 @@ function Fact({
   value: string;
   emphasis?: boolean;
 }) {
+  // `break-words` : un numéro de compte de retrait n'a pas d'espace où se
+  // couper. Dans une demi-colonne de téléphone, il élargirait la page entière.
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-micro text-text-3">{label}</span>
       <span
         className={
           emphasis
-            ? 'text-body font-bold text-text-strong'
-            : 'text-body-s font-semibold text-text-strong'
+            ? 'break-words text-body font-bold text-text-strong'
+            : 'break-words text-body-s font-semibold text-text-strong'
         }
       >
         {value}

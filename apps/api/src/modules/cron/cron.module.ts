@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { FinanceModule } from '../finance/finance.module';
+import { NewsletterModule } from '../newsletter/newsletter.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { CronController } from './cron.controller';
@@ -12,7 +13,7 @@ import { CronSecretGuard } from './cron-secret.guard';
  * domaines, aucun domaine ne dépend de lui. Voir `CronController`.
  */
 @Module({
-  imports: [PaymentsModule, FinanceModule, NotificationsModule],
+  imports: [PaymentsModule, FinanceModule, NotificationsModule, NewsletterModule],
   controllers: [CronController],
   providers: [CronSecretGuard],
 })

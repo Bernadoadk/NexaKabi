@@ -2,21 +2,23 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ADVISORY_LOCKS, AdvisoryLockService } from '../../infra/scheduling/advisory-lock.service';
 import { OutboundService } from './outbound.service';
+import { RecommendationsService } from './recommendations.service';
 import { RemindersService } from './reminders.service';
 
 /**
- * Déclenchement périodique des rappels.
+ * Déclenchement périodique des rappels et des sélections.
  *
  * ── Pourquoi toutes les heures, et pas plus souvent ───────────────────────
- * La fenêtre de balayage fait une heure (voir `RemindersService.sweep`). Passer
- * plus souvent ne trouverait rien de neuf entre deux passages, et repasserait
- * sur les mêmes événements pour rien — l'index unique les rejetterait, mais la
- * requête aurait quand même tourné.
+ * La fenêtre de balayage des rappels fait une heure (voir
+ * `RemindersService.sweep`). Passer plus souvent ne trouverait rien de neuf
+ * entre deux passages, et repasserait sur les mêmes événements pour rien —
+ * l'index unique les rejetterait, mais la requête aurait quand même tourné.
  *
- * ── Pourquoi à la 7e minute ─────────────────────────────────────────────────
+ * ── Pourquoi à la 7e et à la 37e minute ─────────────────────────────────────
  * Pas à l'heure pile. Les tâches calées sur `0 * * * *` s'exécutent toutes
  * ensemble — réconciliation, expiration, rappels — et se disputent le même pool
- * de connexions. Sept minutes de décalage suffisent à les séparer.
+ * de connexions. Les rappels passent à la 7e minute, les sélections à la 37e :
+ * les deux ne se croisent jamais.
  */
 @Injectable()
 export class NotificationsScheduler {
@@ -24,6 +26,7 @@ export class NotificationsScheduler {
 
   constructor(
     private readonly reminders: RemindersService,
+    private readonly recommendations: RecommendationsService,
     private readonly outbound: OutboundService,
     private readonly locks: AdvisoryLockService,
   ) {}
@@ -38,6 +41,20 @@ export class NotificationsScheduler {
           `Rappels : ${report.reminders} envoyé(s), ${report.retried} diffusion(s) reprise(s)`,
         );
       }
+    });
+  }
+
+  /**
+   * Sélections selon les goûts.
+   *
+   * Toutes les heures, mais chaque participant n'en reçoit qu'une par semaine
+   * au plus, et jamais la nuit : c'est `RecommendationsService` qui compte.
+   * Passer souvent sert à étaler les envois, pas à en faire plus.
+   */
+  @Cron('37 * * * *')
+  async recommend(): Promise<void> {
+    await this.locks.runExclusively(ADVISORY_LOCKS.sendRecommendations, async () => {
+      await this.recommendations.sweep();
     });
   }
 

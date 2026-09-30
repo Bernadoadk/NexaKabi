@@ -28,6 +28,16 @@ const SHELL_CACHE = `nexakabi-shell-${VERSION}`;
 const TICKETS_CACHE = `nexakabi-tickets-${VERSION}`;
 const PAGES_CACHE = `nexakabi-pages-${VERSION}`;
 
+/**
+ * Mode « notifications seulement » (`/sw.js?mode=push`).
+ *
+ * En développement, le cache est volontairement absent : il resservirait des
+ * pages périmées après chaque recompilation (voir `PwaProvider`). Le worker
+ * n'y est enregistré que pour recevoir les notifications, et n'intercepte
+ * alors aucune requête.
+ */
+const PUSH_ONLY = new URL(self.location.href).searchParams.get('mode') === 'push';
+
 const KNOWN_CACHES = [SHELL_CACHE, TICKETS_CACHE, PAGES_CACHE];
 
 /** Nombre d'écrans de découverte conservés. Au-delà, on gaspille du stockage. */
@@ -54,6 +64,8 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  if (PUSH_ONLY) return;
+
   const request = event.request;
 
   if (request.method !== 'GET') return;
@@ -86,6 +98,72 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(networkFirst(request));
   }
 });
+
+// ── Notifications sur l'appareil ────────────────────────────────────────────
+//
+// Le serveur envoie `{ title, body, url, tag }`, chiffré de bout en bout : seul
+// ce navigateur peut le lire. La notification s'affiche même application
+// fermée ; la toucher ouvre `url` — toujours un chemin de CE site, jamais une
+// adresse extérieure, même si le contenu le prétendait.
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { body: event.data ? event.data.text() : '' };
+  }
+
+  const title = typeof payload.title === 'string' && payload.title ? payload.title : 'Nexa-Kabi';
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: typeof payload.body === 'string' ? payload.body : '',
+      icon: '/icon/192',
+      badge: '/icon/192',
+      lang: 'fr',
+      tag: typeof payload.tag === 'string' ? payload.tag : undefined,
+      data: { url: typeof payload.url === 'string' ? payload.url : '/mon-compte/notifications' },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const target = internalUrl(event.notification.data && event.notification.data.url);
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      // Un onglet du site déjà ouvert : on s'y rend plutôt que d'en ouvrir un de plus.
+      for (const client of windows) {
+        if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
+          // `navigate` exige un onglet contrôlé par ce worker : sinon, on ouvre
+          // simplement la page dans un nouvel onglet.
+          return client
+            .focus()
+            .then((focused) => focused.navigate(target))
+            .catch(() => self.clients.openWindow(target));
+        }
+      }
+
+      return self.clients.openWindow(target);
+    }),
+  );
+});
+
+/** Chemin interne, ou la page des alertes si le contenu reçu propose autre chose. */
+function internalUrl(candidate) {
+  try {
+    const url = new URL(typeof candidate === 'string' ? candidate : '/', self.location.origin);
+    if (url.origin === self.location.origin) return url.href;
+  } catch {
+    // Contenu illisible : retomber sur les alertes.
+  }
+
+  return new URL('/mon-compte/notifications', self.location.origin).href;
+}
 
 /** Une route de billet : `/t/<jeton>` ou `/mon-compte/billets/<id>`. */
 function isTicketRoute(pathname) {

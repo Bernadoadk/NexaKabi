@@ -137,7 +137,6 @@ export class AuthRepository {
     data: {
       fullName?: string;
       email?: string | null;
-      marketingOptIn?: boolean;
       avatarUrl?: string | null;
       termsAcceptedAt?: Date;
     },

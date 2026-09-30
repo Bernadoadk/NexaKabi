@@ -574,9 +574,27 @@ déjà lu.
 
 | Livrable                  | État                                                                       |
 | ------------------------- | -------------------------------------------------------------------------- |
-| `ORGANIZER_PUBLISHED`     | Type et préférence câblés ; le suivi d'organisateur n'est pas au périmètre |
+| `ORGANIZER_PUBLISHED`     | ✅ 30 sept. 2026 — suivi d'organisateur et annonce à chaque publication    |
 | Agrégateur SMS / WhatsApp | Abstraction `SmsProvider` prête ; l'implémentation `console` tient le rôle |
-| Notifications web push    | Enum `PUSH` déclaré, non emprunté : demande une clé VAPID et un abonnement |
+| Notifications web push    | ✅ 30 sept. 2026 — clés VAPID, `PushSubscription`, service worker          |
+
+### Suite du 30 septembre 2026 — goûts, suivis, newsletter, canaux au choix
+
+**Décisions.** Un cinquième type, `RECOMMENDATION` (« Pour toi »), rejoint les quatre : il reste
+fidèle à « aucune notification promotionnelle non sollicitée » parce qu'il est INACTIF tant que le
+participant ne l'a pas demandé, et plafonné à une sélection par semaine. La newsletter n'est pas une
+notification : c'est un e-mail éditorial, à double consentement, piloté depuis la console (espace
+« Newsletter »). La case de l'inscription était précochée : ce qu'elle a recueilli
+(`user.marketingOptIn`) n'est pas repris, la colonne sera supprimée par une migration ultérieure.
+
+| Livrable              | Détail                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Goûts                 | Catégories et villes, à l'inscription (facultatif) et dans les alertes ; page « Pour toi »                   |
+| Sélection hebdomadaire| `RecommendationsService`, tâche `send-recommendations` : nouveautés depuis la dernière sélection, 9 h – 20 h |
+| Suivre un organisateur| Bouton sur la page organisateur et la page événement ; annonce à la publication (directe ou modérée)         |
+| Canaux au choix       | Appareil (Web Push), e-mail, WhatsApp pour tout type choisi ; SMS réservé au secours des messages critiques  |
+| Newsletter            | Formulaire du site, inscription, réglages ; confirmation par lien ; désabonnement en un clic (RFC 8058)      |
+| Console               | Abonnés (recherche, export, désabonnement), campagnes (aperçu, test, envoi, programmation, arrêt, relance), réglages des envois |
 
 ---
 

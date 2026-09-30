@@ -1,0 +1,31 @@
+{
+  "name": "nexakabi-video",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vidéo marketing Nexa Kabi, réalisée avec Remotion (16:9 et 9:16).",
+  "scripts": {
+    "studio": "remotion studio",
+    "render:16x9": "remotion render NexaKabi-16x9 out/nexakabi-16x9.mp4",
+    "render:9x16": "remotion render NexaKabi-9x16 out/nexakabi-9x16.mp4",
+    "render": "npm run render:16x9 && npm run render:9x16",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.530",
+    "@remotion/google-fonts": "4.0.530",
+    "@remotion/tailwind-v4": "4.0.530",
+    "@remotion/transitions": "4.0.530",
+    "date-fns": "4.4.0",
+    "lucide-react": "0.460.0",
+    "qrcode": "1.5.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remotion": "4.0.530",
+    "tailwindcss": "4.3.3"
+  },
+  "devDependencies": {
+    "@types/qrcode": "1.5.6",
+    "@types/react": "^19.0.0",
+    "typescript": "5.9.3"
+  }
+}

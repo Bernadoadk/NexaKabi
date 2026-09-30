@@ -7,6 +7,7 @@ import {
   type ApiError,
   type RequestOtpResponse,
   type SessionUser,
+  type UserInterests,
 } from '@nexakabi/contracts';
 import { formatShortCountdown } from '@nexakabi/utils';
 import {
@@ -17,8 +18,10 @@ import {
   OtpInput,
   PhoneInput,
   Surface,
+  cn,
   startRouteProgress,
 } from '@nexakabi/ui';
+import { InterestPicker, type InterestOption } from '@/components/interest-picker';
 
 /**
  * Connexion et inscription — le même parcours.
@@ -42,9 +45,14 @@ export interface LoginFlowContext {
 export function LoginFlow({
   redirectTo,
   context,
+  categories = [],
+  cities = [],
 }: {
   redirectTo: string;
   context?: LoginFlowContext | null;
+  /** Référentiels proposés à l'étape 3, pour les goûts. */
+  categories?: readonly InterestOption[];
+  cities?: readonly InterestOption[];
 }) {
   const router = useRouter();
 
@@ -189,6 +197,8 @@ export function LoginFlow({
         {step === 'profile' ? (
           <ProfileStep
             pending={pending}
+            categories={categories}
+            cities={cities}
             onSubmit={async (values) => {
               setPending(true);
               setError(null);
@@ -413,20 +423,51 @@ function CodeStep({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface ProfileStepValues {
+  fullName: string;
+  email?: string;
+  interests: UserInterests;
+  /** Sélection hebdomadaire selon les goûts. */
+  recommendations: boolean;
+  /** Newsletter par e-mail — part en attente de confirmation. */
+  newsletter: boolean;
+}
+
+/**
+ * Étape 3 — le nom, et ce que la personne veut bien nous dire de plus.
+ *
+ * ── Aucune case cochée d'avance ─────────────────────────────────────────────
+ * La sélection hebdomadaire et la newsletter ne partent que vers qui les a
+ * demandées. Une case précochée recueille l'inattention, pas un accord : elle
+ * ne vaut rien comme consentement, et elle remplit une liste de gens qui se
+ * désabonneront — ou nous signaleront comme indésirables — au premier envoi.
+ *
+ * Les goûts restent facultatifs : sans eux, la sélection propose de tout.
+ */
 function ProfileStep({
   pending,
+  categories,
+  cities,
   onSubmit,
 }: {
   pending: boolean;
-  onSubmit: (values: {
-    fullName: string;
-    email?: string;
-    marketingOptIn: boolean;
-  }) => Promise<void>;
+  categories: readonly InterestOption[];
+  cities: readonly InterestOption[];
+  onSubmit: (values: ProfileStepValues) => Promise<void>;
 }) {
   const [fullName, setFullName] = React.useState('');
   const [email, setEmail] = React.useState('');
-  const [marketingOptIn, setMarketingOptIn] = React.useState(true);
+  const [interests, setInterests] = React.useState<UserInterests>({
+    categoryIds: [],
+    cityIds: [],
+  });
+  const [recommendations, setRecommendations] = React.useState(false);
+  const [newsletter, setNewsletter] = React.useState(false);
+
+  // La newsletter part par e-mail : sans adresse valable, la case n'a pas
+  // d'objet. Elle reste visible, grisée, pour que la personne sache où la
+  // retrouver une fois l'adresse donnée.
+  const hasEmail = EMAIL_PATTERN.test(email.trim());
 
   return (
     <form
@@ -436,7 +477,9 @@ function ProfileStep({
         void onSubmit({
           fullName: fullName.trim(),
           email: email.trim() || undefined,
-          marketingOptIn,
+          interests,
+          recommendations,
+          newsletter: newsletter && hasEmail,
         });
       }}
     >
@@ -471,15 +514,41 @@ function ProfileStep({
         />
       </Field>
 
-      <label className="flex cursor-pointer items-start gap-2.5 text-body-s leading-relaxed text-text-strong">
-        <input
-          type="checkbox"
-          checked={marketingOptIn}
-          onChange={(event) => setMarketingOptIn(event.target.checked)}
-          className="mt-0.5 size-[19px] shrink-0 accent-[var(--color-coral)]"
+      {categories.length > 0 ? (
+        <div className="flex flex-col gap-2 rounded-[12px] bg-paper p-3.5">
+          <p className="text-body-s font-semibold text-text-strong">
+            Ce qui t’intéresse <span className="font-normal text-text-3">· facultatif</span>
+          </p>
+          <InterestPicker
+            compact
+            categories={categories}
+            cities={cities}
+            value={interests}
+            onChange={setInterests}
+            disabled={pending}
+          />
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-3">
+        <ConsentBox
+          checked={recommendations}
+          onChange={setRecommendations}
+          label="M’envoyer une sélection d’événements selon mes goûts"
+          hint="Une par semaine au maximum. Tu choisis ensuite par où : notification, e-mail ou WhatsApp."
         />
-        Me prévenir des événements qui correspondent à mes goûts (max. 1 message par semaine)
-      </label>
+        <ConsentBox
+          checked={newsletter && hasEmail}
+          onChange={setNewsletter}
+          disabled={!hasEmail}
+          label="Recevoir la newsletter Nexa‑Kabi par e-mail"
+          hint={
+            hasEmail
+              ? 'Un lien de confirmation t’est envoyé : rien ne part avant que tu l’aies ouvert.'
+              : 'Renseigne ton e-mail ci-dessus pour pouvoir t’y abonner.'
+          }
+        />
+      </div>
 
       <Button
         type="submit"
@@ -493,6 +562,45 @@ function ProfileStep({
         Terminer
       </Button>
     </form>
+  );
+}
+
+/** Assez pour savoir si une adresse est plausible ; le serveur tranche. */
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Une case de consentement, avec ce qu'elle engage écrit dessous. */
+function ConsentBox({
+  checked,
+  onChange,
+  label,
+  hint,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  hint: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      className={cn(
+        'flex items-start gap-2.5 text-body-s leading-relaxed',
+        disabled ? 'cursor-not-allowed text-text-3' : 'cursor-pointer text-text-strong',
+      )}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 size-[19px] shrink-0 accent-[var(--color-coral)]"
+      />
+      <span className="flex flex-col gap-0.5">
+        <span className="font-semibold">{label}</span>
+        <span className="text-micro leading-snug text-text-3">{hint}</span>
+      </span>
+    </label>
   );
 }
 

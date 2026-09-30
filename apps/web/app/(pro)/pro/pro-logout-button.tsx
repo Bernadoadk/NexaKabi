@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { cn, startRouteProgress } from '@nexakabi/ui';
+import { unsubscribeThisDevice } from '@/lib/push-client';
 
 /**
  * Déconnexion, dans le chrome de la console — même traitement compact que
@@ -23,7 +24,11 @@ export function ProLogoutButton({ className }: { className?: string }) {
         // d'abord l'API, et ce lien discret n'a pas d'état d'attente à lui.
         startRouteProgress();
 
-        void fetch('/api/auth/logout', { method: 'POST' })
+        // L'appareil cesse d'abord de recevoir les alertes du compte : un
+        // téléphone prêté ne doit pas continuer à les afficher.
+        void unsubscribeThisDevice()
+          .catch(() => undefined)
+          .then(() => fetch('/api/auth/logout', { method: 'POST' }))
           .catch(() => undefined)
           .finally(() => {
             router.replace('/');

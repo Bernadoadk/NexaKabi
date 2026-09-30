@@ -25,6 +25,7 @@ export const ADMIN_NAV_ENTRIES: readonly AdminNavEntry[] = [
   { href: '/signalements', label: 'Signalements', space: 'reports' },
   { href: '/organisations', label: 'Organisations', space: 'organizations' },
   { href: '/utilisateurs', label: 'Utilisateurs', space: 'users' },
+  { href: '/newsletter', label: 'Newsletter', space: 'newsletter' },
   { href: '/retraits', label: 'Retraits', space: 'payouts' },
   { href: '/finance', label: 'Finance', space: 'finance' },
   { href: '/parametres', label: 'Pays & paiements', space: 'settings' },

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { AdminDashboard } from '@nexakabi/contracts';
 import { formatMoney } from '@nexakabi/utils';
-import { Alert, Surface } from '@nexakabi/ui';
+import { Alert, StatGrid, Surface } from '@nexakabi/ui';
 import { adminFetch, getAdminUser, hasAdminAccess } from '@/lib/session';
 import { AdminShell } from './shell';
 
@@ -101,12 +101,12 @@ export default async function AdminHomePage() {
           </h2>
 
           {tiles.length > 0 ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{tiles}</div>
+            <StatGrid>{tiles}</StatGrid>
           ) : (
             <Surface variant="muted" padding="comfortable">
               <p className="text-body-s text-text-2">
-                Aucun espace ne t’est encore ouvert. Le propriétaire peut t’en donner depuis
-                l’écran Équipe.
+                Aucun espace ne t’est encore ouvert. Le propriétaire peut t’en donner depuis l’écran
+                Équipe.
               </p>
             </Surface>
           )}
@@ -122,7 +122,7 @@ export default async function AdminHomePage() {
             Vue d’ensemble
           </h2>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatGrid wide={3}>
             <InfoTile
               label="Organisations"
               value={`${data.verifiedOrganizations} / ${data.totalOrganizations}`}
@@ -132,7 +132,7 @@ export default async function AdminHomePage() {
               label="Événements publiés ce mois"
               value={String(data.eventsPublishedThisMonth)}
             />
-          </div>
+          </StatGrid>
         </section>
 
         <section className="flex flex-col gap-3">
@@ -140,7 +140,7 @@ export default async function AdminHomePage() {
             Dernières vingt-quatre heures
           </h2>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <StatGrid wide={3}>
             <InfoTile label="Commandes payées" value={String(data.ordersLast24h)} />
             <InfoTile label="Recettes encaissées" value={`${formatMoney(data.revenueLast24h)}`} />
             <InfoTile
@@ -150,7 +150,7 @@ export default async function AdminHomePage() {
               // chiffre de cet écran qu'on regarde en espérant qu'il soit bas.
               tone={data.failedPaymentsLast24h > data.ordersLast24h ? 'alert' : 'neutral'}
             />
-          </div>
+          </StatGrid>
         </section>
 
         {data.frozenAmount > 0 ? (
@@ -165,7 +165,13 @@ export default async function AdminHomePage() {
   );
 }
 
-/** Compteur cliquable : un nombre sans destination oblige à chercher où aller. */
+/**
+ * Compteur cliquable : un nombre sans destination oblige à chercher où aller.
+ *
+ * Marge et chiffre se resserrent sous `sm` : la tuile partage désormais la
+ * largeur avec sa voisine (voir `StatGrid`), et les valeurs du bureau l'y
+ * feraient déborder.
+ */
 function ActionTile({
   href,
   label,
@@ -178,17 +184,17 @@ function ActionTile({
   hint: string;
 }) {
   return (
-    <Surface variant="panel" padding="none">
+    <Surface variant="panel" padding="none" className="min-w-0">
       <Link
         href={href}
-        className="flex flex-col gap-1 p-5 text-text-strong transition hover:bg-surface-alt"
+        className="flex h-full flex-col gap-0.5 p-3.5 text-text-strong transition hover:bg-surface-alt sm:gap-1 sm:p-5"
       >
         <span className="text-body-s font-semibold text-text-2">{label}</span>
         <span
           className={
             value > 0
-              ? 'font-display text-[34px] font-bold leading-none tabular-nums text-coral'
-              : 'font-display text-[34px] font-bold leading-none tabular-nums text-text-3'
+              ? 'font-display text-[28px] font-bold leading-none tabular-nums text-coral sm:text-[34px]'
+              : 'font-display text-[28px] font-bold leading-none tabular-nums text-text-3 sm:text-[34px]'
           }
         >
           {value}
@@ -209,13 +215,19 @@ function InfoTile({
   tone?: 'neutral' | 'alert';
 }) {
   return (
-    <Surface variant="panel" padding="comfortable" className="flex flex-col gap-1">
+    <Surface
+      variant="panel"
+      padding="none"
+      className="flex min-w-0 flex-col gap-0.5 p-3.5 sm:gap-1 sm:p-6"
+    >
       <span className="text-body-s font-semibold text-text-2">{label}</span>
+      {/* `break-words` : « 12 450 000 FCFA » sur une demi-largeur de téléphone
+          élargirait sinon la colonne, puis la page. */}
       <span
         className={
           tone === 'alert'
-            ? 'font-display text-h2 font-bold tabular-nums text-coral'
-            : 'font-display text-h2 font-bold tabular-nums'
+            ? 'break-words font-display text-[21px] font-bold tabular-nums text-coral sm:text-h2'
+            : 'break-words font-display text-[21px] font-bold tabular-nums sm:text-h2'
         }
       >
         {value}

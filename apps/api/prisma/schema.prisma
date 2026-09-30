@@ -125,7 +125,14 @@ model User {
 
   locale String @default("fr-BJ")
 
-  /// Consentement explicite, recueilli à l'inscription.
+  /// OBSOLÈTE — ni lu ni écrit depuis le 30 septembre 2026.
+  ///
+  /// La case qui l'alimentait était COCHÉE par défaut : ce qu'elle a recueilli
+  /// n'est pas un consentement, et rien ne le reprend. Les consentements vivent
+  /// désormais là où ils servent — `NotificationPreference.recommendations`,
+  /// `NewsletterSubscriber`. La colonne reste le temps d'un déploiement : la
+  /// supprimer dans la même migration casserait la version encore en ligne
+  /// pendant le build (voir docs/DEPLOYMENT.md §1). À retirer ensuite.
   marketingOptIn  Boolean   @default(false)
   /// Preuve horodatée d'acceptation des conditions.
   termsAcceptedAt DateTime?
@@ -155,6 +162,14 @@ model User {
   notifications          Notification[]
   notificationPreference NotificationPreference?
   messageLogs            MessageLog[]
+  pushSubscriptions      PushSubscription[]
+
+  follows           OrganizationFollow[]
+  categoryInterests UserCategoryInterest[]
+  cityInterests     UserCityInterest[]
+
+  newsletterSubscription     NewsletterSubscriber?
+  newsletterCampaignsCreated NewsletterCampaign[]  @relation("NewsletterCampaignCreatedBy")
 
   adminSessions   AdminSession[] @relation("AdminSessionUser")
   reportsFiled    Report[]       @relation("ReportFiledBy")
@@ -438,6 +453,7 @@ model Organization {
   payouts             Payout[]
   reports             Report[]
   commissionPolicies  CommissionPolicy[]
+  followers           OrganizationFollow[]
 
   @@index([status, verificationStatus])
   @@index([ownerId])
@@ -904,6 +920,8 @@ model Category {
   events    Event[] @relation("EventCategory")
   subEvents Event[] @relation("EventSubcategory")
 
+  interestedUsers UserCategoryInterest[]
+
   @@index([isActive, position])
   @@map("category")
 }
@@ -929,6 +947,8 @@ model City {
 
   venues Venue[]
   events Event[]
+
+  interestedUsers UserCityInterest[]
 
   @@index([countryCode, isActive])
   @@map("city")
@@ -1846,12 +1866,13 @@ model Payout {
 // NOTIFICATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Les quatre types du produit, et pas un de plus.
+/// Les cinq types du produit, et pas un de plus.
 ///
 /// Chacun correspond à quelque chose que le participant a demandé — en
-/// achetant, en s'inscrivant — et chacun porte une action. Le cahier des
-/// charges interdit explicitement toute notification promotionnelle non
-/// sollicitée : ajouter un cinquième type serait la première marche.
+/// achetant, en suivant un organisateur, en choisissant ses goûts — et chacun
+/// porte une action. Le cahier des charges interdit toute notification
+/// promotionnelle NON SOLLICITÉE : `RECOMMENDATION` est inactif tant que le
+/// participant ne l'a pas demandé, et un sixième type serait la première marche.
 enum NotificationType {
   /// « Ton paiement est confirmé » → voir le billet.
   PAYMENT_CONFIRMED
@@ -1861,12 +1882,13 @@ enum NotificationType {
   EVENT_UPDATED
   /// « Yélé Productions publie un nouvel événement » → le découvrir.
   ORGANIZER_PUBLISHED
+  /// « 3 nouveaux événements pour toi » → la sélection. Une par semaine au plus.
+  RECOMMENDATION
 }
 
-/// Canaux de diffusion. `PUSH` est déclaré pour l'enum partagé avec les
-/// contrats, mais aucun envoi ne l'emprunte encore : les notifications web
-/// push demandent une clé VAPID et un service worker abonné, hors périmètre du
-/// MVP. Le centre in-app tient ce rôle en attendant.
+/// Canaux de diffusion. `PUSH` : notification Web Push sur un appareil dont le
+/// navigateur l'a autorisée (`PushSubscription`) — gratuite, immédiate, et qui
+/// réveille un téléphone même application fermée.
 enum NotificationChannel {
   EMAIL
   SMS
@@ -1943,11 +1965,24 @@ model NotificationPreference {
   /// Rappels J-7, J-1 et H-3. Actifs par défaut : ils rendent service.
   eventReminders Boolean @default(true)
 
-  /// Publications des organisateurs suivis. Inactif par défaut : c'est le seul
-  /// type qui n'est pas déclenché par une action du participant lui-même.
-  organizerPublications Boolean @default(false)
+  /// Publications des organisateurs suivis. Actif par défaut : suivre un
+  /// organisateur EST la demande — un suivi muet serait un bouton qui ne fait
+  /// rien. L'interrupteur coupe tous les suivis d'un coup, sans les défaire.
+  organizerPublications Boolean @default(true)
 
-  /// Canaux acceptés. L'in-app est toujours actif et n'a donc pas de champ.
+  /// Sélection hebdomadaire selon les goûts. Inactive par défaut : c'est le
+  /// seul type que rien, dans ce que le participant a fait, ne réclame.
+  recommendations         Boolean   @default(false)
+  /// Dernière sélection envoyée. Le plafond « une par semaine » se compte d'ici.
+  lastRecommendationAt    DateTime?
+  /// Dernier calcul, qu'il ait trouvé quelque chose ou non. Sans lui, un
+  /// participant sans nouveauté à lui proposer serait réexaminé à chaque
+  /// passage, et occuperait la place des autres.
+  recommendationCheckedAt DateTime?
+
+  /// Canaux acceptés. L'in-app est toujours actif et n'a donc pas de champ ;
+  /// le push dépend d'une autorisation donnée appareil par appareil
+  /// (`PushSubscription`). Le SMS n'est qu'un secours des messages critiques.
   whatsapp Boolean @default(true)
   sms      Boolean @default(true)
   email    Boolean @default(false)
@@ -1956,6 +1991,266 @@ model NotificationPreference {
   updatedAt DateTime @updatedAt
 
   @@map("notification_preference")
+}
+
+/// Appareil autorisé à recevoir des notifications Web Push.
+///
+/// Un abonnement par navigateur et par appareil : le téléphone et l'ordinateur
+/// d'une même personne en ont chacun un. L'adresse est fournie par le
+/// navigateur et pointe chez son service de notification (Google, Mozilla,
+/// Apple, Microsoft) — jamais ailleurs, voir `isKnownPushEndpoint`.
+///
+/// Supprimé dès que le service répond qu'il n'existe plus (404 ou 410) :
+/// l'application a été désinstallée, ou l'autorisation retirée.
+model PushSubscription {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  endpoint String @unique
+  /// Clés de chiffrement du navigateur : le contenu n'est lisible que par lui.
+  p256dh   String
+  auth     String
+
+  /// « Chrome sur Android » — pour répondre à « sur quel appareil ? ».
+  label String?
+
+  lastSuccessAt DateTime?
+  /// Échecs consécutifs non définitifs. Au-delà de cinq, l'abonnement est retiré.
+  failureCount  Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("push_subscription")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUIVIS ET GOÛTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Un participant suit une organisation : il est prévenu de ses publications.
+///
+/// Aucun statut, aucune date de fin : suivre, c'est une ligne ; ne plus
+/// suivre, c'est la supprimer. Un historique des « désabonnements » ne
+/// servirait qu'à profiler, ce que rien ne justifie.
+model OrganizationFollow {
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([userId, organizationId])
+  @@index([organizationId])
+  @@map("organization_follow")
+}
+
+/// Catégories qui intéressent un participant — la moitié de ses « goûts ».
+model UserCategoryInterest {
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([userId, categoryId])
+  @@index([categoryId])
+  @@map("user_category_interest")
+}
+
+/// Villes où un participant sort — l'autre moitié de ses « goûts ».
+model UserCityInterest {
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  cityId String
+  city   City   @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([userId, cityId])
+  @@index([cityId])
+  @@map("user_city_interest")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NEWSLETTER
+//
+// Un e-mail éditorial composé depuis la console, envoyé aux seules adresses
+// qui l'ont demandé ET confirmé. Voir `packages/contracts/src/newsletter.ts`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum NewsletterSubscriberStatus {
+  /// Adresse saisie, lien de confirmation envoyé, pas encore ouvert.
+  PENDING
+  ACTIVE
+  UNSUBSCRIBED
+}
+
+/// Où le consentement a été donné.
+enum NewsletterSource {
+  /// Étape 3 de l'inscription.
+  SIGNUP
+  /// Réglages du compte.
+  ACCOUNT
+  /// Formulaire du pied de page, sans compte.
+  WEBSITE
+}
+
+/// Un abonné, avec ou sans compte.
+///
+/// ── Pourquoi l'adresse et non le compte ─────────────────────────────────────
+/// Le consentement porte sur une ADRESSE : un visiteur sans compte peut
+/// s'abonner depuis le pied de page, et un participant qui change d'adresse ne
+/// transfère pas son accord à la nouvelle sans l'avoir confirmée.
+///
+/// Rien n'est jamais supprimé ici : un désabonnement est une date, et la ligne
+/// reste la preuve qu'on ne doit plus écrire à cette adresse.
+model NewsletterSubscriber {
+  id String @id @default(cuid())
+
+  /// En minuscules — une contrainte le garantit.
+  email String @unique
+
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  status NewsletterSubscriberStatus @default(PENDING)
+  source NewsletterSource
+
+  /// Jeton des liens de confirmation et de désabonnement, 256 bits aléatoires.
+  token String @unique
+
+  /// Preuve du consentement : la demande (quand, depuis où — `source`), puis
+  /// le clic sur le lien de confirmation reçu à cette adresse. Pas d'adresse
+  /// IP : le site relaie les requêtes depuis son serveur, et l'API ne verrait
+  /// que la sienne — une preuve fausse vaut moins que pas de preuve.
+  consentAt          DateTime  @default(now())
+  confirmationSentAt DateTime?
+  confirmedAt        DateTime?
+  unsubscribedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries NewsletterDelivery[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("newsletter_subscriber")
+}
+
+enum NewsletterCampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  /// Programmation annulée, ou envoi arrêté en cours de route.
+  CANCELLED
+}
+
+/// Une campagne : un e-mail composé dans la console, envoyé à tous les abonnés actifs.
+model NewsletterCampaign {
+  id String @id @default(cuid())
+
+  subject   String
+  /// Texte d'aperçu, affiché après l'objet dans la boîte de réception.
+  preheader String?
+  heading   String?
+  /// Texte brut : une ligne vide sépare deux paragraphes. Jamais de HTML saisi.
+  body      String  @default("")
+  ctaLabel  String?
+  ctaUrl    String?
+
+  /// Événements mis en avant, dans l'ordre d'affichage. Un événement retiré
+  /// depuis disparaît simplement de l'e-mail : la campagne n'en dépend pas.
+  eventIds String[] @default([])
+
+  status      NewsletterCampaignStatus @default(DRAFT)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+
+  /// Abonnés actifs au lancement — figé à cet instant.
+  recipientCount Int @default(0)
+
+  createdById String
+  createdBy   User   @relation("NewsletterCampaignCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries NewsletterDelivery[]
+
+  @@index([status, scheduledAt])
+  @@index([createdAt(sort: Desc)])
+  @@map("newsletter_campaign")
+}
+
+enum NewsletterDeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+  /// Rien n'a été tenté : désabonné entre-temps, ou campagne arrêtée.
+  SKIPPED
+}
+
+/// Envoi d'une campagne à un abonné — la file d'attente ET le journal.
+///
+/// ── Pourquoi une file en base ───────────────────────────────────────────────
+/// Une fonction serverless vit quelques secondes ; un envoi à quelques
+/// centaines d'adresses, via un SMTP qui en accepte une ou deux par seconde,
+/// en prend plusieurs minutes. Les lignes sont donc toutes créées au
+/// lancement, puis envoyées par lots à chaque passage de la tâche
+/// `send-newsletter` : un passage interrompu reprend exactement où il en était.
+model NewsletterDelivery {
+  id String @id @default(cuid())
+
+  campaignId String
+  campaign   NewsletterCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  subscriberId String
+  subscriber   NewsletterSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  /// Adresse telle qu'utilisée à l'envoi.
+  email String
+
+  status        NewsletterDeliveryStatus @default(QUEUED)
+  attemptCount  Int                      @default(0)
+  failureReason String?
+  sentAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Une campagne ne part qu'une fois vers une même adresse.
+  @@unique([campaignId, subscriberId])
+  @@index([status, createdAt])
+  @@index([campaignId, status])
+  @@map("newsletter_delivery")
+}
+
+/// Réglages de la plateforme modifiables depuis la console.
+///
+/// Clé-valeur plutôt qu'une table par réglage : ce sont des interrupteurs
+/// globaux, lus rarement, dont la forme est validée par les contrats
+/// (`platformNotificationSettingsSchema`). Chaque modification est tracée au
+/// journal d'audit.
+model PlatformSetting {
+  key   String @id
+  value Json
+
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("platform_setting")
 }
 
 /// Trace d'un envoi sortant, tous canaux confondus.

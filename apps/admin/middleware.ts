@@ -92,6 +92,15 @@ export const config = {
    * Logo (`icons/`) et icônes générées (`icon/…`, `apple-icon`) : sans cookie,
    * la redirection vers la connexion les remplacerait par une page HTML — et
    * l'écran de connexion, précisément, s'afficherait sans logo ni favicon.
+   *
+   * ── Et sauf le manifeste d'installation ──────────────────────────────────
+   * Le navigateur le demande SANS les cookies : `<link rel="manifest">` part
+   * en requête anonyme, sauf `crossorigin="use-credentials"` que Next n'émet
+   * pas. Sous ce filtre, le manifeste recevait donc une redirection vers la
+   * connexion, et l'installation échouait silencieusement — même connecté.
+   * Il ne révèle rien : un nom, des couleurs, deux icônes déjà publiques.
    */
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icons/|icon/|apple-icon).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|icons/|icon/|apple-icon|manifest.webmanifest).*)',
+  ],
 };

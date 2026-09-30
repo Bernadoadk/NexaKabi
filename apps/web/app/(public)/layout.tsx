@@ -4,6 +4,7 @@ import { Avatar, BrandMark, Button, ThemeToggle, cn } from '@nexakabi/ui';
 import { getCurrentUser } from '@/lib/session';
 import { fetchCities } from '@/lib/events';
 import { fetchNotifications } from '@/lib/notifications';
+import { NewsletterSignup } from '@/components/newsletter-signup';
 import { PublicBottomNav } from '@/components/public-bottom-nav';
 import { VilleSelect } from './ville-select';
 
@@ -149,6 +150,11 @@ export default async function PublicLayout({ children }: { children: React.React
         <div className="flex-1">{children}</div>
 
         <footer className="border-t border-border bg-surface">
+          {/* La newsletter, pour qui n'a pas (encore) de compte : une adresse,
+              un lien de confirmation, rien d'autre. */}
+          <div className="mx-auto max-w-[1440px] border-b border-border-subtle px-5 py-7">
+            <NewsletterSignup />
+          </div>
           <div className="mx-auto flex max-w-[1440px] flex-col gap-3 px-5 py-8 text-body-s text-text-2 sm:flex-row sm:items-center">
             <p>© {new Date().getFullYear()} Nexa-Kabi · Cotonou, Bénin</p>
             <div className="flex-1" />

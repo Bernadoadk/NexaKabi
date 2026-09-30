@@ -1,8 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationPreferences,
+  type NotificationType,
+} from '@nexakabi/contracts';
 import type { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { OutboundService } from './outbound.service';
-import type { NotificationType } from '@nexakabi/contracts';
 
 export interface CreateNotificationInput {
   readonly userId: string;
@@ -151,18 +155,24 @@ export class NotificationsService {
 
     const preference = await client.notificationPreference.findUnique({
       where: { userId },
-      select: { eventReminders: true, organizerPublications: true },
+      select: { eventReminders: true, organizerPublications: true, recommendations: true },
     });
 
     switch (type) {
       case 'EVENT_REMINDER':
         // Absent = actif. Les rappels rendent service, et quelqu'un qui n'a
         // jamais ouvert ses réglages n'a pas exprimé de refus.
-        return preference?.eventReminders ?? true;
+        return preference?.eventReminders ?? DEFAULT_NOTIFICATION_PREFERENCES.eventReminders;
       case 'ORGANIZER_PUBLISHED':
-        // Absent = inactif. C'est le seul type que le participant ne déclenche
-        // pas lui-même : il doit l'avoir demandé.
-        return preference?.organizerPublications ?? false;
+        // Absent = actif : suivre un organisateur EST la demande.
+        return (
+          preference?.organizerPublications ??
+          DEFAULT_NOTIFICATION_PREFERENCES.organizerPublications
+        );
+      case 'RECOMMENDATION':
+        // Absent = inactif. C'est le seul type que rien, dans ce que le
+        // participant a fait, ne réclame : il doit l'avoir demandé.
+        return preference?.recommendations ?? DEFAULT_NOTIFICATION_PREFERENCES.recommendations;
       default:
         return true;
     }
@@ -234,49 +244,33 @@ export class NotificationsService {
   }
 
   /** Préférences, avec les valeurs par défaut si la ligne n'existe pas encore. */
-  async getPreferences(userId: string): Promise<{
-    eventReminders: boolean;
-    organizerPublications: boolean;
-    whatsapp: boolean;
-    sms: boolean;
-    email: boolean;
-  }> {
+  async getPreferences(userId: string): Promise<NotificationPreferences> {
     const preference = await this.prisma.notificationPreference.findUnique({
       where: { userId },
       select: {
         eventReminders: true,
         organizerPublications: true,
+        recommendations: true,
         whatsapp: true,
         sms: true,
         email: true,
       },
     });
 
-    return (
-      preference ?? {
-        eventReminders: true,
-        organizerPublications: false,
-        whatsapp: true,
-        sms: true,
-        email: false,
-      }
-    );
+    return preference ?? { ...DEFAULT_NOTIFICATION_PREFERENCES };
   }
 
-  async updatePreferences(
-    userId: string,
-    patch: Partial<{
-      eventReminders: boolean;
-      organizerPublications: boolean;
-      whatsapp: boolean;
-      sms: boolean;
-      email: boolean;
-    }>,
-  ): Promise<void> {
+  async updatePreferences(userId: string, patch: Partial<NotificationPreferences>): Promise<void> {
+    // Un champ absent du correctif reste tel quel : `upsert` ne reçoit que ce
+    // qui a bougé, jamais une valeur par défaut qui écraserait un choix.
+    const data = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined),
+    ) as Partial<NotificationPreferences>;
+
     await this.prisma.notificationPreference.upsert({
       where: { userId },
-      create: { userId, ...patch },
-      update: patch,
+      create: { userId, ...data },
+      update: data,
     });
 
     this.logger.log(`Préférences de notification mises à jour pour ${userId}`);

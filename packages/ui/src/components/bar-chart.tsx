@@ -34,15 +34,18 @@ export function SimpleBarChart({ points, barClassName, className }: SimpleBarCha
 
   return (
     <ul className={cn('flex flex-col', className)}>
+      {/* Les quatre colonnes sont à largeur fixe sauf la barre : additionnées,
+          les valeurs du bureau ne laissaient plus rien à la barre sur un
+          téléphone, et la ligne finissait par déborder de l'écran. */}
       {points.map((point, index) => (
         <li
           key={`${point.label}-${index}`}
-          className="flex items-center gap-3 border-b border-border-subtle px-5 py-2.5 last:border-b-0"
+          className="flex items-center gap-2 border-b border-border-subtle px-3.5 py-2.5 last:border-b-0 sm:gap-3 sm:px-5"
         >
-          <span className="w-20 shrink-0 text-micro text-text-3">{point.label}</span>
+          <span className="w-14 shrink-0 text-micro text-text-3 sm:w-20">{point.label}</span>
 
           <div
-            className="h-2 flex-1 overflow-hidden rounded-full bg-fill-neutral"
+            className="h-2 min-w-8 flex-1 overflow-hidden rounded-full bg-fill-neutral"
             role="img"
             aria-label={point.valueLabel ?? String(point.value)}
           >
@@ -52,12 +55,12 @@ export function SimpleBarChart({ points, barClassName, className }: SimpleBarCha
             />
           </div>
 
-          <span className="tabular w-10 shrink-0 text-right text-body-s font-semibold">
+          <span className="tabular w-8 shrink-0 text-right text-body-s font-semibold sm:w-10">
             {point.value}
           </span>
 
           {point.secondaryValue !== undefined ? (
-            <span className="w-28 shrink-0 text-right">{point.secondaryValue}</span>
+            <span className="w-[84px] shrink-0 text-right sm:w-28">{point.secondaryValue}</span>
           ) : null}
         </li>
       ))}

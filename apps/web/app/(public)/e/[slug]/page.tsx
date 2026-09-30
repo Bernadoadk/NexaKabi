@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { formatEventRange, formatMoney } from '@nexakabi/utils';
 import { fetchEvent } from '@/lib/events';
+import { fetchFollowState } from '@/lib/notifications';
+import { getCurrentUser } from '@/lib/session';
 import { EventPageView } from '@/components/event-page-view';
 
 /**
@@ -50,9 +52,11 @@ export async function generateMetadata({
 
 export default async function EventPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const event = await fetchEvent(slug);
+  const [event, user] = await Promise.all([fetchEvent(slug), getCurrentUser()]);
 
   if (!event) notFound();
+
+  const followState = user ? await fetchFollowState(event.organizationSlug) : null;
 
   return (
     <main>
@@ -65,7 +69,11 @@ export default async function EventPage({ params }: { params: Promise<{ slug: st
       {/* La page elle-même vit dans `EventPageView`, partagée avec l'aperçu
           de l'organisateur : ce qu'il vérifie avant de publier est exactement
           ce qui s'affiche ici. */}
-      <EventPageView event={event} mode="public" />
+      <EventPageView
+        event={event}
+        mode="public"
+        follow={{ initial: followState, signedIn: Boolean(user) }}
+      />
     </main>
   );
 }

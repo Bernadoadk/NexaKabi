@@ -6,3 +6,32 @@
 @import '@nexakabi/ui/styles/base.css';
 
 @source '../../../packages/ui/src';
+
+/**
+ * La console ne glisse jamais de côté.
+ *
+ * Un tableau large, un identifiant sans espace, une rangée de compteurs qui
+ * refuse de se comprimer : il suffit d'un écart de quelques pixels pour que la
+ * page entière devienne panoramique sur un téléphone. On la fait alors glisser
+ * par erreur à chaque geste — en croyant choisir un onglet, en croyant faire
+ * défiler une liste — et l'écran donne l'impression d'être une page de bureau
+ * posée sur un mobile.
+ *
+ * Les zones qui doivent VRAIMENT défiler de côté le déclarent chacune pour
+ * elles-mêmes (barre d'onglets, tableau de configuration). Ce garde-fou
+ * n'existe donc que pour ce qui aurait échappé : il coupe le dépassement au
+ * lieu de le rendre navigable.
+ *
+ * `clip` et non `hidden` : `hidden` ferait de la racine un conteneur de
+ * défilement et décrocherait l'en-tête `sticky` de la console.
+ *
+ * Sur la racine SEULE, jamais sur `body` : la règle se propage de toute façon
+ * à la zone d'affichage, et `body` accueille les portails — tiroir de
+ * navigation, boîtes de dialogue. En faire une boîte rognante exposerait ces
+ * couches à disparaître pendant leur glissement d'entrée.
+ */
+@layer base {
+  html {
+    overflow-x: clip;
+  }
+}

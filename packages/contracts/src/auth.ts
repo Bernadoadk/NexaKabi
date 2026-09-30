@@ -82,7 +82,6 @@ export const sessionUserSchema = z.object({
   avatarUrl: z.string().nullable(),
   globalRole: globalRoleSchema,
   status: userStatusSchema,
-  marketingOptIn: z.boolean(),
   /** Vrai tant que le nom n'a pas été renseigné : l'étape 3 reste à faire. */
   needsProfileCompletion: z.boolean(),
 });
@@ -127,11 +126,16 @@ export type LogoutInput = z.infer<typeof logoutSchema>;
  * Étape 3 de l'inscription — « Comment t'appelles-tu ? Deux champs, c'est tout ».
  * Elle n'apparaît pas pendant un achat : les coordonnées saisies pour le billet
  * créent le compte automatiquement.
+ *
+ * Les goûts et les consentements saisis sur le même écran (sélection
+ * hebdomadaire, newsletter) ne passent PAS par ce schéma : ils ont chacun leur
+ * route, celle que les réglages rappellent ensuite. Les mêler au profil
+ * obligerait chaque correction de nom à renvoyer — et donc à re-décider — un
+ * consentement.
  */
 export const completeProfileSchema = z.object({
   fullName: z.string().trim().min(2, 'Indique ton nom complet').max(120),
   email: emailSchema.optional().or(z.literal('').transform(() => undefined)),
-  marketingOptIn: z.boolean().default(false),
 });
 
 export type CompleteProfileInput = z.infer<typeof completeProfileSchema>;

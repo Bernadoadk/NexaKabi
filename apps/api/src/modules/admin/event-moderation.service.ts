@@ -1,7 +1,9 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { canTransitionEvent, type PendingEvent, type ReviewEventInput } from '@nexakabi/contracts';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { runInBackground } from '../../infra/scheduling/background';
 import { AuditService } from '../audit/audit.service';
+import { EventNotifierService } from '../notifications/event-notifier.service';
 import { OutboundService } from '../notifications/outbound.service';
 
 /**
@@ -32,6 +34,7 @@ export class EventModerationService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly outbound: OutboundService,
+    private readonly eventNotifier: EventNotifierService,
   ) {}
 
   /**
@@ -194,6 +197,15 @@ export class EventModerationService {
       approved: target === 'PUBLISHED',
       note: input.note,
     });
+
+    // Validé par la modération, l'événement est en ligne : les participants
+    // qui suivent l'organisation l'apprennent, comme pour une mise en ligne
+    // directe.
+    if (target === 'PUBLISHED') {
+      runInBackground(`Annonce de la publication ${eventId}`, () =>
+        this.eventNotifier.announcePublication(eventId),
+      );
+    }
 
     this.logger.log(`Événement ${eventId} → ${target}`);
   }

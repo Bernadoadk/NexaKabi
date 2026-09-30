@@ -1,0 +1,14 @@
+MUSIQUE DE FOND
+===============
+
+Déposez ici votre musique sous le nom :
+
+    musique.mp3
+
+Elle sera jouée automatiquement dans les deux formats, avec un fondu
+d'entrée et de sortie. Sans fichier, la vidéo reste muette.
+
+Autre nom, volume, durée des fondus : voir `music` dans src/config.ts.
+
+Pensez aux droits : utilisez une musique libre de droits ou dont vous
+détenez la licence pour une diffusion commerciale (YouTube, Reels, TikTok).

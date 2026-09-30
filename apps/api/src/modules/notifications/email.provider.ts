@@ -16,6 +16,12 @@ export interface SendEmailInput {
   /** Repli texte brut — certains clients de messagerie n'affichent que lui. */
   readonly text: string;
   readonly attachments?: readonly EmailAttachment[];
+  /**
+   * En-têtes supplémentaires. Sert au désabonnement en un clic d'une
+   * newsletter (`List-Unsubscribe`, `List-Unsubscribe-Post`), exigé par Gmail
+   * et Yahoo pour tout envoi en nombre.
+   */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -97,6 +103,7 @@ export class SmtpEmailProvider extends EmailProvider {
       subject: input.subject,
       html: input.html,
       text: input.text,
+      headers: input.headers ? { ...input.headers } : undefined,
       attachments: input.attachments?.map((attachment) => ({
         filename: attachment.filename,
         content: attachment.content,

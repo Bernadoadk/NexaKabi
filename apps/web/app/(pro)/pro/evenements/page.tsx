@@ -77,7 +77,10 @@ export default async function OrganizerEventsPage({
   const now = Date.now();
 
   const counts = Object.fromEntries(
-    FILTERS.map((entry) => [entry.key, events.filter((event) => matches(event, entry.key, now)).length]),
+    FILTERS.map((entry) => [
+      entry.key,
+      events.filter((event) => matches(event, entry.key, now)).length,
+    ]),
   ) as Record<Filter, number>;
 
   // Les brouillons d'abord — c'est là qu'il y a du travail —, puis par date.
@@ -104,9 +107,12 @@ export default async function OrganizerEventsPage({
         {events.length > 0 ? <CreateEventButton organizationId={active.id} /> : null}
       </div>
 
+      {/* Le format compact sous `sm` est désormais celui de `Stat` : il était
+          recopié ici parce que trois tuiles côte à côte ne tiennent pas avec
+          les marges du bureau. */}
       {stats && stats.eventsCount > 0 ? (
         <div className="grid grid-cols-3 gap-2 sm:gap-3.5">
-          <Stat label="Publiés" value={String(stats.publishedEventsCount)} className="p-3.5 sm:p-[18px]" />
+          <Stat label="Publiés" value={String(stats.publishedEventsCount)} />
           <Stat
             label={
               <>
@@ -115,9 +121,8 @@ export default async function OrganizerEventsPage({
               </>
             }
             value={String(stats.ticketsSoldTotal)}
-            className="p-3.5 sm:p-[18px]"
           />
-          <Stat label="Entrées" value={String(stats.checkedInTotal)} className="p-3.5 sm:p-[18px]" />
+          <Stat label="Entrées" value={String(stats.checkedInTotal)} />
         </div>
       ) : null}
 
@@ -131,7 +136,9 @@ export default async function OrganizerEventsPage({
             return (
               <Link
                 key={entry.key}
-                href={entry.key === 'tous' ? '/pro/evenements' : `/pro/evenements?etat=${entry.key}`}
+                href={
+                  entry.key === 'tous' ? '/pro/evenements' : `/pro/evenements?etat=${entry.key}`
+                }
                 aria-current={active ? 'page' : undefined}
                 className={cn(
                   'inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full px-3.5 text-body-s font-semibold transition-colors',
@@ -141,7 +148,9 @@ export default async function OrganizerEventsPage({
                 )}
               >
                 {entry.label}
-                <span className={cn('tabular text-micro', active ? 'text-white/70' : 'text-text-3')}>
+                <span
+                  className={cn('tabular text-micro', active ? 'text-white/70' : 'text-text-3')}
+                >
                   {counts[entry.key]}
                 </span>
               </Link>

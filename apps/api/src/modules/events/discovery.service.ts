@@ -232,6 +232,8 @@ export class DiscoveryService {
       cityName: string | null;
       verified: boolean;
       whatsapp: string | null;
+      /** Combien le suivent — jamais qui : voir `FollowsService`. */
+      followersCount: number;
     };
     upcoming: EventSummary[];
     past: EventSummary[];
@@ -246,7 +248,7 @@ export class DiscoveryService {
       throw new NotFoundException("Cet organisateur n'existe pas.");
     }
 
-    const [upcoming, past] = await Promise.all([
+    const [upcoming, past, followersCount] = await Promise.all([
       this.prisma.event.findMany({
         ...eventWithRelations,
         where: { ...this.publicWhere(now), organizationId: organization.id },
@@ -265,6 +267,7 @@ export class DiscoveryService {
         orderBy: { startsAt: 'desc' },
         take: 6,
       }),
+      this.prisma.organizationFollow.count({ where: { organizationId: organization.id } }),
     ]);
 
     return {
@@ -276,6 +279,7 @@ export class DiscoveryService {
         cityName: organization.cityName,
         verified: organization.verificationStatus === 'VERIFIED',
         whatsapp: organization.whatsapp,
+        followersCount,
       },
       upcoming: upcoming.map((row) => toEventSummary(row, now)),
       past: past.map((row) => toEventSummary(row, now)),

@@ -59,12 +59,15 @@ export function FinanceNav({ user }: { user: AdminUser }) {
     { href: '/finance/commissions', label: 'Commissions' },
   ];
 
+  // Neuf entrées, donc une barre qui défile sur un téléphone : `inline` la
+  // fait aller d'un bord à l'autre et garde le geste à l'intérieur d'elle-même
+  // — sinon le glissement se poursuivait sur la page entière.
   return (
     <SectionNav
       entries={entries}
       ariaLabel="Finance"
-      maxWidthClassName="max-w-none"
-      className="border-b border-border-subtle px-0"
+      variant="inline"
+      className="border-b border-border-subtle"
     />
   );
 }

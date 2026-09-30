@@ -163,6 +163,21 @@ export const AUDIT_ACTIONS = {
   settingsPaymentMethodUpdated: 'settings.payment_method.updated',
   settingsPaymentMethodRemoved: 'settings.payment_method.removed',
   settingsProviderSynced: 'settings.provider.synced',
+  /** Interrupteurs globaux des envois aux participants (sélections, WhatsApp). */
+  settingsNotificationsUpdated: 'settings.notifications.updated',
+
+  /**
+   * Newsletter.
+   *
+   * Une campagne part vers des centaines d'adresses en un clic : qui l'a
+   * lancée, quand, et vers combien de personnes, doit pouvoir se retrouver.
+   */
+  newsletterCampaignSent: 'admin.newsletter.campaign_sent',
+  newsletterCampaignScheduled: 'admin.newsletter.campaign_scheduled',
+  newsletterCampaignCancelled: 'admin.newsletter.campaign_cancelled',
+  newsletterCampaignRetried: 'admin.newsletter.campaign_retried',
+  /** Désabonnement fait depuis la console, à la demande de la personne. */
+  newsletterSubscriberUnsubscribed: 'admin.newsletter.subscriber_unsubscribed',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

@@ -16,6 +16,7 @@ import {
 } from '@nexakabi/contracts';
 import { generateEventShortCode, slugify, uniqueSlug } from '@nexakabi/utils';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { runInBackground } from '../../infra/scheduling/background';
 import { AuditService } from '../audit/audit.service';
 import { RefundsService } from '../finance/refunds.service';
 import type { OrgContext } from '../organizations/guards/org-member.guard';
@@ -377,6 +378,15 @@ export class EventsService {
       actorUserId: userId,
       changes: { from: existing.status, to: target },
     });
+
+    // Les participants qui suivent l'organisation l'apprennent — après la
+    // réponse : l'organisateur n'attend pas que cent alertes soient parties
+    // pour voir son événement en ligne.
+    if (target === 'PUBLISHED') {
+      runInBackground(`Annonce de la publication ${eventId}`, () =>
+        this.eventNotifier.announcePublication(eventId),
+      );
+    }
 
     return { event: toOrganizerEventDetail(updated), missing: [] };
   }

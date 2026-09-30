@@ -339,14 +339,17 @@ export type InvitationKind = z.infer<typeof invitationKindSchema>;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Quatre types de notification seulement, chacun actionnable.
- * Contrainte produit du prototype : aucune notification promotionnelle non sollicitée.
+ * Cinq types de notification, chacun actionnable.
+ * Contrainte produit du prototype : aucune notification promotionnelle NON
+ * SOLLICITÉE. `RECOMMENDATION` n'existe que pour qui l'a demandée — voir
+ * `notifications.ts`.
  */
 export const NOTIFICATION_TYPES = [
   'PAYMENT_CONFIRMED',
   'EVENT_REMINDER',
   'EVENT_UPDATED',
   'ORGANIZER_PUBLISHED',
+  'RECOMMENDATION',
 ] as const;
 export const notificationTypeSchema = makeEnum(NOTIFICATION_TYPES).schema;
 export type NotificationType = z.infer<typeof notificationTypeSchema>;
@@ -354,6 +357,46 @@ export type NotificationType = z.infer<typeof notificationTypeSchema>;
 export const NOTIFICATION_CHANNELS = ['EMAIL', 'SMS', 'WHATSAPP', 'PUSH'] as const;
 export const notificationChannelSchema = makeEnum(NOTIFICATION_CHANNELS).schema;
 export type NotificationChannel = z.infer<typeof notificationChannelSchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Newsletter
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Abonné à la newsletter.
+ *
+ * `PENDING` tant que le lien de confirmation n'a pas été ouvert : une adresse
+ * saisie n'est pas une adresse consentie — une faute de frappe, ou la
+ * malveillance, inscrirait quelqu'un d'autre.
+ */
+export const NEWSLETTER_SUBSCRIBER_STATUSES = ['PENDING', 'ACTIVE', 'UNSUBSCRIBED'] as const;
+export const newsletterSubscriberStatusSchema = makeEnum(NEWSLETTER_SUBSCRIBER_STATUSES).schema;
+export type NewsletterSubscriberStatus = z.infer<typeof newsletterSubscriberStatusSchema>;
+
+/** Où le consentement a été donné — la preuve dit aussi « comment ». */
+export const NEWSLETTER_SOURCES = ['SIGNUP', 'ACCOUNT', 'WEBSITE'] as const;
+export const newsletterSourceSchema = makeEnum(NEWSLETTER_SOURCES).schema;
+export type NewsletterSource = z.infer<typeof newsletterSourceSchema>;
+
+export const NEWSLETTER_CAMPAIGN_STATUSES = [
+  'DRAFT',
+  'SCHEDULED',
+  'SENDING',
+  'SENT',
+  'CANCELLED',
+] as const;
+export const newsletterCampaignStatusSchema = makeEnum(NEWSLETTER_CAMPAIGN_STATUSES).schema;
+export type NewsletterCampaignStatus = z.infer<typeof newsletterCampaignStatusSchema>;
+
+/**
+ * Sort d'un envoi de campagne à UN abonné.
+ *
+ * `SKIPPED` : l'abonné s'est désabonné entre le lancement et son tour, ou la
+ * campagne a été arrêtée. Ce n'est pas un échec — rien n'a été tenté.
+ */
+export const NEWSLETTER_DELIVERY_STATUSES = ['QUEUED', 'SENT', 'FAILED', 'SKIPPED'] as const;
+export const newsletterDeliveryStatusSchema = makeEnum(NEWSLETTER_DELIVERY_STATUSES).schema;
+export type NewsletterDeliveryStatus = z.infer<typeof newsletterDeliveryStatusSchema>;
 
 export const REPORT_TARGET_TYPES = ['EVENT', 'ORGANIZATION', 'USER'] as const;
 export const reportTargetTypeSchema = makeEnum(REPORT_TARGET_TYPES).schema;

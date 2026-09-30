@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { Check, Clock, MapPin } from 'lucide-react';
-import type { EventDetail } from '@nexakabi/contracts';
+import type { EventDetail, FollowState } from '@nexakabi/contracts';
 import { Badge, Button, CategoryMark, CoverImage, Money, Surface, cn } from '@nexakabi/ui';
 import { formatEventRange, formatTimeSpaced } from '@nexakabi/utils';
 import { BuyPanel } from '@/app/(public)/e/[slug]/buy-panel';
+import { FollowButton } from './follow-button';
 
 /**
  * La page d'un événement — le composant que voient participants ET organisateur.
@@ -22,10 +23,16 @@ export interface EventPageViewProps {
   event: EventDetail;
   /** `public` : billetterie armée. `preview` : tout est visible, rien n'est achetable. */
   mode?: 'public' | 'preview';
+  /**
+   * Suivi de l'organisateur, calculé par la page publique (qui connaît la
+   * session). Absent : pas de bouton — c'est le cas de l'aperçu, où suivre
+   * sa propre organisation n'aurait aucun sens.
+   */
+  follow?: { initial: FollowState | null; signedIn: boolean };
   className?: string;
 }
 
-export function EventPageView({ event, mode = 'public', className }: EventPageViewProps) {
+export function EventPageView({ event, mode = 'public', follow, className }: EventPageViewProps) {
   const startsAt = new Date(event.startsAt);
   const isCancelled = event.status === 'CANCELLED';
   const preview = mode === 'preview';
@@ -243,6 +250,14 @@ export function EventPageView({ event, mode = 'public', className }: EventPageVi
                   </div>
                 ) : null}
               </div>
+              {follow && !preview ? (
+                <FollowButton
+                  slug={event.organizationSlug}
+                  organizationName={event.organizationName}
+                  initial={follow.initial}
+                  signedIn={follow.signedIn}
+                />
+              ) : null}
             </Surface>
           </section>
         </div>

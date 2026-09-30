@@ -1,19 +1,26 @@
 'use client';
 
 import * as React from 'react';
-import { Surface, cn } from '@nexakabi/ui';
+import Link from 'next/link';
+import type { PushStatus } from '@nexakabi/contracts';
+import { Surface } from '@nexakabi/ui';
 import type { NotificationPreferencesState } from '@/lib/notifications';
+import {
+  currentPushSubscription,
+  detectPushSupport,
+  subscribeThisDevice,
+  unsubscribeThisDevice,
+  type PushSupport,
+} from '@/lib/push-client';
+import { SettingsGroup, SettingsRow } from './settings-row';
 
 /**
- * Réglages des alertes.
+ * Réglages des alertes : ce que je reçois, et par où.
  *
  * ── Ce qui n'a pas d'interrupteur, et pourquoi on le dit quand même ────────
  * Les confirmations de paiement et les annulations ne se désactivent pas : la
  * première porte un billet, la seconde évite un déplacement pour rien. Plutôt
  * que de les taire, l'écran les affiche comme toujours actives.
- *
- * Un réglage absent laisse croire à un oubli ; un réglage grisé avec sa raison
- * répond à la question avant qu'elle soit posée, et évite un message au support.
  *
  * ── Enregistrement immédiat ────────────────────────────────────────────────
  * Pas de bouton « Enregistrer ». Un interrupteur qui bascule PUIS attend une
@@ -21,11 +28,20 @@ import type { NotificationPreferencesState } from '@/lib/notifications';
  * gens quittent la page avant. Chaque bascule part seule ; en cas d'échec,
  * l'interrupteur revient à sa position d'origine avec un message.
  */
-export function PreferencesForm({ initial }: { initial: NotificationPreferencesState }) {
+export function PreferencesForm({
+  initial,
+  push,
+  hasEmail,
+}: {
+  initial: NotificationPreferencesState;
+  push: PushStatus;
+  hasEmail: boolean;
+}) {
   const [state, setState] = React.useState(initial);
   const [error, setError] = React.useState<string | null>(null);
 
   async function toggle(key: keyof NotificationPreferencesState) {
+    const previous = state;
     const next = { ...state, [key]: !state[key] };
 
     setState(next);
@@ -35,6 +51,7 @@ export function PreferencesForm({ initial }: { initial: NotificationPreferencesS
       const response = await fetch('/api/notifications/preferences', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        // Un seul champ : le serveur ne touche qu'à ce qui a bougé.
         body: JSON.stringify({ [key]: next[key] }),
       });
 
@@ -42,7 +59,7 @@ export function PreferencesForm({ initial }: { initial: NotificationPreferencesS
     } catch {
       // Remettre l'interrupteur là où il était : afficher un état qu'on n'a pas
       // réussi à enregistrer serait le pire des deux mondes.
-      setState(state);
+      setState(previous);
       setError('Le réglage n’a pas pu être enregistré. Réessaie dans un instant.');
     }
   }
@@ -52,49 +69,73 @@ export function PreferencesForm({ initial }: { initial: NotificationPreferencesS
       <div className="flex flex-col gap-1">
         <h2 className="text-h3 font-bold">Réglages</h2>
         <p className="text-body-s text-text-2">
-          Nexa-Kabi n’envoie jamais de publicité. Seulement ce qui concerne tes billets.
+          Nexa‑Kabi ne t’envoie que ce que tu as demandé. Tout arrive aussi ici, dans tes alertes.
         </p>
       </div>
 
-      <fieldset className="flex flex-col gap-1">
-        <legend className="mb-2 text-micro font-bold uppercase tracking-wide text-text-3">
-          Ce que je reçois
-        </legend>
-
-        <Row
+      <SettingsGroup legend="Ce que je reçois">
+        <SettingsRow
           label="Rappels avant mes événements"
           hint="Une semaine avant, la veille, et quelques heures avant."
           checked={state.eventReminders}
           onToggle={() => void toggle('eventReminders')}
         />
-        <Row
-          label="Nouveaux événements des organisateurs suivis"
-          hint="Uniquement ceux dont tu as déjà acheté un billet."
+        <SettingsRow
+          label="Nouveaux événements des organisateurs que je suis"
+          hint="Dès qu’ils publient. On suit un organisateur depuis sa page."
           checked={state.organizerPublications}
           onToggle={() => void toggle('organizerPublications')}
         />
-        <Row
+        <SettingsRow
+          label="Sélection selon mes goûts"
+          hint="Les nouveautés qui te correspondent, une fois par semaine au maximum."
+          checked={state.recommendations}
+          onToggle={() => void toggle('recommendations')}
+        >
+          <Link
+            href="/mon-compte/pour-toi"
+            className="mt-1 self-start text-micro font-semibold text-coral hover:text-coral-hover"
+          >
+            Voir ma sélection →
+          </Link>
+        </SettingsRow>
+        <SettingsRow
           label="Confirmations de paiement et annulations"
           hint="Toujours actif : ces messages portent ton billet ou t’évitent un déplacement."
           checked
           locked
         />
-      </fieldset>
+      </SettingsGroup>
 
-      <fieldset className="flex flex-col gap-1">
-        <legend className="mb-2 text-micro font-bold uppercase tracking-wide text-text-3">
-          Par quel moyen
-        </legend>
-
-        <Row label="WhatsApp" checked={state.whatsapp} onToggle={() => void toggle('whatsapp')} />
-        <Row label="SMS" checked={state.sms} onToggle={() => void toggle('sms')} />
-        <Row
+      <SettingsGroup
+        legend="Par quel moyen"
+        description="En plus de tes alertes ici, choisis où tu veux être prévenu."
+      >
+        <PushRow push={push} onError={setError} />
+        <SettingsRow
           label="E-mail"
-          hint="Nécessite une adresse renseignée sur ton compte."
-          checked={state.email}
+          hint={
+            hasEmail
+              ? 'À l’adresse de ton compte.'
+              : 'Ajoute une adresse e-mail dans « Mon compte » pour l’activer.'
+          }
+          checked={state.email && hasEmail}
+          disabled={!hasEmail}
           onToggle={() => void toggle('email')}
         />
-      </fieldset>
+        <SettingsRow
+          label="WhatsApp"
+          hint="Au numéro de ton compte."
+          checked={state.whatsapp}
+          onToggle={() => void toggle('whatsapp')}
+        />
+        <SettingsRow
+          label="SMS de secours"
+          hint="Seulement pour ton billet et une annulation, si WhatsApp est coupé."
+          checked={state.sms}
+          onToggle={() => void toggle('sms')}
+        />
+      </SettingsGroup>
 
       {error ? (
         <p role="alert" className="text-body-s font-semibold text-red-700">
@@ -106,56 +147,78 @@ export function PreferencesForm({ initial }: { initial: NotificationPreferencesS
 }
 
 /**
- * Une ligne de réglage.
+ * Notifications sur CET appareil.
  *
- * `role="switch"` plutôt qu'une case à cocher : un lecteur d'écran annonce
- * « activé / désactivé », ce qui décrit l'effet, là où « coché » décrit
- * seulement l'apparence.
+ * Contrairement aux autres lignes, l'état ne vit pas sur le serveur seul : il
+ * dépend d'une autorisation donnée au navigateur, appareil par appareil. Le
+ * téléphone et l'ordinateur d'une même personne ont chacun leur interrupteur.
  */
-function Row({
-  label,
-  hint,
-  checked,
-  locked = false,
-  onToggle,
-}: {
-  label: string;
-  hint?: string;
-  checked: boolean;
-  locked?: boolean;
-  onToggle?: () => void;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-b border-border-subtle py-3 last:border-0">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className={cn('text-body-s font-semibold', locked && 'text-text-2')}>{label}</span>
-        {hint ? <span className="text-micro leading-snug text-text-3">{hint}</span> : null}
-      </div>
+function PushRow({ push, onError }: { push: PushStatus; onError: (message: string) => void }) {
+  const [support, setSupport] = React.useState<PushSupport | null>(null);
+  const [enabled, setEnabled] = React.useState(false);
+  const [denied, setDenied] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
 
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-label={label}
-        disabled={locked}
-        onClick={onToggle}
-        className={cn(
-          'relative h-6 w-11 shrink-0 rounded-full transition',
-          // La zone tactile réelle dépasse le dessin : 24 px de haut serait sous
-          // le minimum, et un réglage qu'on rate trois fois passe pour cassé.
-          'before:absolute before:-inset-y-2.5 before:-inset-x-1 before:content-[""]',
-          checked ? 'bg-coral' : 'bg-border',
-          locked && 'cursor-not-allowed opacity-45',
-        )}
-      >
-        <span
-          aria-hidden
-          className={cn(
-            'absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left]',
-            checked ? 'left-[22px]' : 'left-0.5',
-          )}
-        />
-      </button>
-    </div>
+  React.useEffect(() => {
+    const detected = detectPushSupport();
+    setSupport(detected);
+
+    if (detected !== 'supported') return;
+
+    setDenied(Notification.permission === 'denied');
+    void currentPushSubscription()
+      .then((subscription) => setEnabled(subscription !== null))
+      .catch(() => setEnabled(false));
+  }, []);
+
+  async function toggle() {
+    if (!push.publicKey) return;
+    setBusy(true);
+
+    try {
+      if (enabled) {
+        await unsubscribeThisDevice();
+        setEnabled(false);
+        return;
+      }
+
+      const outcome = await subscribeThisDevice(push.publicKey);
+
+      if (outcome === 'subscribed') setEnabled(true);
+      if (outcome === 'denied') setDenied(true);
+      if (outcome === 'failed') {
+        onError('Les notifications n’ont pas pu être activées. Réessaie dans un instant.');
+      }
+    } catch {
+      onError('Les notifications n’ont pas pu être activées sur cet appareil.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const unavailable = !push.publicKey;
+  const otherDevices = Math.max(0, push.devices - (enabled ? 1 : 0));
+
+  const hint = unavailable
+    ? 'Bientôt disponible.'
+    : support === 'install-first'
+      ? 'Sur iPhone : ajoute d’abord Nexa‑Kabi à l’écran d’accueil (Partager → Sur l’écran d’accueil).'
+      : support === 'unsupported'
+        ? 'Ce navigateur ne sait pas recevoir de notifications.'
+        : denied
+          ? 'Autorisation refusée : réactive-la dans les réglages du site de ton navigateur.'
+          : otherDevices > 0
+            ? `Une notification, même application fermée. Déjà active sur ${otherDevices} autre${otherDevices > 1 ? 's' : ''} appareil${otherDevices > 1 ? 's' : ''}.`
+            : 'Une notification sur ce téléphone ou cet ordinateur, même application fermée.';
+
+  return (
+    <SettingsRow
+      label="Notifications sur cet appareil"
+      hint={hint}
+      checked={enabled}
+      disabled={unavailable || support !== 'supported' || (denied && !enabled)}
+      busy={busy || support === null}
+      onToggle={() => void toggle()}
+    />
   );
 }

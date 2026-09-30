@@ -1,0 +1,6 @@
+node_modules/
+out/
+# La musique est ajoutée à la main, hors du dépôt.
+public/audio/*.mp3
+public/audio/*.wav
+public/audio/*.m4a

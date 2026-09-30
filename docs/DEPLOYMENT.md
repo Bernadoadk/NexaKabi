@@ -136,7 +136,11 @@ Les deux front-ends ont besoin de l'URL de l'API ; elle vient donc en premier.
 | `PUBLIC_API_URL`               | `https://nexakabi-api.vercel.app/api` (à ajuster si Vercel a suffixé le nom)         |
 | `CORS_ORIGINS`                 | laisser vide pour l'instant, complété au §7                                          |
 | `GOOGLE_MAPS_SERVER_KEY`       | facultatif — clé serveur (Places + Geocoding)                                        |
-| `EMAIL_PROVIDER`, `SMTP_*`     | facultatif — `smtp` + réglages Gmail pour envoyer les billets par e-mail             |
+| `EMAIL_PROVIDER`, `SMTP_*`     | facultatif — `smtp` + réglages Gmail pour envoyer les billets, les alertes et la newsletter par e-mail |
+| `PUBLIC_WEB_URL`               | `https://nexakabi-web.vercel.app` — base des liens écrits dans les e-mails (confirmation et désabonnement de la newsletter, boutons des alertes). À défaut, la première origine de `CORS_ORIGINS` |
+| `WEB_PUSH_PUBLIC_KEY`          | notifications sur l'appareil — paire VAPID de PRODUCTION, générée une fois (voir ci-dessous) |
+| `WEB_PUSH_PRIVATE_KEY`         | idem, clé privée — serveur seulement                                                 |
+| `WEB_PUSH_SUBJECT`             | `https://nexakabi-web.vercel.app` (ou `mailto:` d'une adresse de contact)            |
 | `KKIAPAY_PUBLIC_KEY`           | clé publique Kkiapay (Développeurs → Clés API) — clés de **TEST** tant que `NODE_ENV=development` |
 | `KKIAPAY_PRIVATE_KEY`          | clé privée Kkiapay — serveur seulement                                               |
 | `KKIAPAY_SECRET_KEY`           | clé secrète Kkiapay — serveur seulement                                              |
@@ -148,6 +152,18 @@ paiement n'est jamais simulé) ; avec une partie seulement, l'API refuse de dém
 (Développeurs → Clés API → Webhook) : URL `https://nexakabi-api.vercel.app/api/webhooks/payments/kkiapay`,
 événements `transaction.success` et `transaction.failed`, secret = `KKIAPAY_WEBHOOK_SECRET`.
 Détail et procédure de test : `docs/PAYMENT_PROVIDER_KKIAPAY.md`.
+
+**Notifications sur l'appareil (Web Push).** Les trois valeurs `WEB_PUSH_*` vont ensemble ; vides,
+le push est simplement absent (l'écran des alertes l'annonce) et le reste fonctionne. La paire se
+génère **une seule fois**, depuis un poste :
+
+```bash
+pnpm --filter @nexakabi/api exec web-push generate-vapid-keys
+```
+
+Utiliser une paire DIFFÉRENTE de celle du `.env` de développement, et ne **jamais** la changer
+ensuite : chaque appareil abonné l'a été avec la clé publique, une nouvelle paire les rendrait tous
+muets (il faudrait que chacun réactive les notifications).
 
 Ne **pas** définir `PORT` ni `API_PREFIX`.
 
@@ -201,12 +217,13 @@ qu'il faut (cookies `secure`, HSTS, CSP stricte).
 
 ## 6. Planificateur des tâches — cron-job.org
 
-L'API a neuf tâches de fond (`@Cron()` dans le code, plus la purge du transit) : libération des
+L'API a onze tâches de fond (`@Cron()` dans le code, plus la purge du transit) : libération des
 réservations expirées, rattrapage des paiements en attente, réconciliation des versements et des
-remboursements, reprise des envois en échec, rappels, balayage nocturne, purge des dépôts non
-conclus, relevé de l'état des opérateurs, synchronisation du compte marchand. Sans elles, les
-places restent bloquées par des commandes abandonnées, un paiement confirmé en différé ne l'est
-jamais, et un opérateur en panne reste proposé aux acheteurs. Sur Vercel, personne ne les lance :
+remboursements, reprise des envois en échec, rappels, sélections hebdomadaires selon les goûts,
+envoi de la newsletter, balayage nocturne, purge des dépôts non conclus, relevé de l'état des
+opérateurs, synchronisation du compte marchand. Sans elles, les places restent bloquées par des
+commandes abandonnées, un paiement confirmé en différé ne l'est jamais, un opérateur en panne reste
+proposé aux acheteurs, et une campagne lancée depuis la console ne part jamais. Sur Vercel, personne ne les lance :
 c'est cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-tête secret.
 
 1. Créer un compte sur [cron-job.org](https://cron-job.org). Fuseau horaire du compte :
@@ -227,6 +244,8 @@ c'est cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-
 | `retry-outbound`         | toutes les 10 minutes        | réessaie les e-mails et SMS en échec                 |
 | `purge-staged-uploads`   | tous les jours à 4 h 30      | supprime les dépôts directs jamais conclus (transit) |
 | `send-reminders`         | chaque heure, à la 7ᵉ minute | rappels avant événement                              |
+| `send-recommendations`   | chaque heure, à la 37ᵉ minute | sélections « Pour toi » — une par participant et par semaine au plus, jamais la nuit (9 h – 20 h, heure de Porto-Novo) |
+| `send-newsletter`        | chaque minute                | lance les campagnes programmées, envoie un lot de 40 adresses de la campagne en cours |
 | `nightly-sweep`          | tous les jours à 3 h         | reprise des webhooks orphelins                       |
 
 Deux tâches existent aussi mais **ne sont pas à créer en V1** : `sync-payment-availability` (relève
@@ -246,7 +265,8 @@ et notifié par e-mail ; l'appel suivant repart normalement.
 > **Le jour du plan Pro**, Vercel Cron peut reprendre l'horloge : remettre dans
 > `apps/api/vercel.json` un bloc `"crons"` avec une entrée par tâche
 > (`{ "path": "/api/internal/cron/<tâche>", "schedule": "* * * * *" }`, schedules `* * * * *`,
-> `*/5 * * * *`, `*/10 * * * *`, `7 * * * *`, `17 * * * *`, `0 3 * * *`, `30 4 * * *`) et supprimer
+> `*/5 * * * *`, `*/10 * * * *`, `7 * * * *`, `17 * * * *`, `37 * * * *`, `0 3 * * *`,
+> `30 4 * * *`) et supprimer
 > les jobs cron-job.org. Vercel envoie
 > alors `CRON_SECRET` de lui-même. Rien d'autre ne change.
 
@@ -332,6 +352,17 @@ le build.
 - **Journaux** : Vercel conserve peu d'historique sans intégration (Logs → _Log Drains_ pour
   exporter). Les codes OTP en mode développement y sont visibles : une raison de plus pour ne pas
   y mettre de données réelles.
+- **Newsletter et Gmail** : un compte Gmail gratuit plafonne à environ **500 destinataires par
+  jour** (2 000 pour Google Workspace). Au-delà, le SMTP refuse les envois jusqu'au lendemain :
+  la tâche `send-newsletter` suspend son passage après trois refus d'affilée, chaque adresse est
+  retentée trois fois à 10, 20 puis 30 minutes d'intervalle, puis marquée en échec avec le motif
+  du fournisseur. La console (Newsletter → la campagne) affiche ces motifs et permet de
+  **relancer les échecs** le lendemain. Au-delà de quelques centaines d'abonnés, passer à un
+  service d'envoi en nombre (Brevo, Mailjet, Amazon SES… — un `EmailProvider` de plus) : c'est
+  aussi ce qui garde l'adresse d'expédition hors des filtres anti-spam.
+- **WhatsApp et SMS** : le seul fournisseur est `console` — les messages choisis par les
+  participants (« WhatsApp » dans leurs alertes) sont journalisés, pas envoyés, tant qu'aucun
+  agrégateur n'est branché (voir §8).
 - **Tâches périodiques** : elles dépendent d'un service tiers (cron-job.org). S'il tombe, rien ne
   casse dans l'application — les réservations expirent en retard et les paiements différés se
   confirment plus tard, dès la reprise des appels. Ses notifications d'échec par e-mail sont le

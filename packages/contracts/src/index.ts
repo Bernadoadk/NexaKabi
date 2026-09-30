@@ -12,6 +12,7 @@ export * from './tickets.js';
 export * from './checkin.js';
 export * from './finance.js';
 export * from './notifications.js';
+export * from './newsletter.js';
 export * from './admin.js';
 export * from './admin-finance.js';
 export * from './places.js';

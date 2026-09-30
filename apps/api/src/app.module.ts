@@ -23,6 +23,8 @@ import { CronModule } from './modules/cron/cron.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { PlacesModule } from './modules/places/places.module';
 import { CountriesModule } from './modules/countries/countries.module';
+import { FollowsModule } from './modules/follows/follows.module';
+import { NewsletterModule } from './modules/newsletter/newsletter.module';
 
 /**
  * Journaux lisibles (pino-pretty) ou JSON.
@@ -92,6 +94,8 @@ function prettyLogs(): boolean {
     CheckInModule,
     FinanceModule,
     PlacesModule,
+    FollowsModule,
+    NewsletterModule,
     AdminModule,
     CronModule,
     HealthModule,

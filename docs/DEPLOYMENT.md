@@ -165,6 +165,28 @@ Utiliser une paire DIFFÉRENTE de celle du `.env` de développement, et ne **jam
 ensuite : chaque appareil abonné l'a été avec la clé publique, une nouvelle paire les rendrait tous
 muets (il faudrait que chacun réactive les notifications).
 
+*Ce que le push porte.* Onze types de notification, en deux publics : le participant (paiement,
+rappels, changement ou annulation, publication d'un organisateur suivi, sélection, remboursement
+effectué) et l'organisation (ventes, événement ou catégorie complet, décision de modération,
+décision de vérification, issue d'un retrait). La politique de chaque type — canaux, urgence, durée
+de vie, silence la nuit — vit dans `NOTIFICATION_POLICY` (`packages/contracts/src/notifications.ts`).
+Les ventes ne passent ni par WhatsApp ni par e-mail : une vente par message ruinerait la
+plateforme, l'appareil et le centre suffisent.
+
+*Aucune tâche cron de plus.* Les ventes, les épuisements, les remboursements, les retraits et les
+décisions partent à l'instant de l'événement (`order.paid`, conclusion d'un remboursement ou d'un
+retrait, décision de l'administration) : rien à ajouter sur cron-job.org. La migration
+`20261001100000_notifications_organisation` est rétro-compatible (six valeurs d'énumération et une
+colonne à valeur par défaut) et tourne pendant le build avec les autres.
+
+*Vérifier en ligne.* Les trois variables `WEB_PUSH_*` doivent exister sur le projet Vercel de
+l'**API** (pas seulement en local), sinon l'interrupteur « Notifications sur cet appareil » affiche
+« Bientôt disponible ». Ensuite, depuis un vrai appareil : se connecter, activer l'interrupteur
+(Alertes → Réglages) ou la carte proposée sur « Mes billets », puis provoquer une notification réelle.
+Sur iPhone, Safari n'offre le push qu'à une application ajoutée à l'écran d'accueil (iOS 16.4 ou
+plus récent). Le navigateur intégré à l'application de bureau refuse toujours les notifications : il
+ne s'y teste pas.
+
 Ne **pas** définir `PORT` ni `API_PREFIX`.
 
 6. **Deploy.** Dans le journal de build, vérifier dans l'ordre : `pnpm install` avec pnpm 11,

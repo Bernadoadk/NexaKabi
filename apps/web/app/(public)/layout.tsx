@@ -6,6 +6,7 @@ import { fetchCities } from '@/lib/events';
 import { fetchNotifications } from '@/lib/notifications';
 import { NewsletterSignup } from '@/components/newsletter-signup';
 import { PublicBottomNav } from '@/components/public-bottom-nav';
+import { PushSync } from '@/components/push-sync';
 import { VilleSelect } from './ville-select';
 
 /**
@@ -178,6 +179,9 @@ export default async function PublicLayout({ children }: { children: React.React
         </footer>
 
         <PublicBottomNav signedIn={Boolean(user)} unreadCount={feed?.unreadCount ?? 0} />
+
+        {/* Une session ouverte garde ses notifications, même sur l'espace public. */}
+        {user ? <PushSync userId={user.id} unreadCount={feed?.unreadCount ?? 0} /> : null}
       </div>
     </div>
   );

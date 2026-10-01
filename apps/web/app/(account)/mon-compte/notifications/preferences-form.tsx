@@ -8,6 +8,7 @@ import type { NotificationPreferencesState } from '@/lib/notifications';
 import {
   currentPushSubscription,
   detectPushSupport,
+  setPushOptOut,
   subscribeThisDevice,
   unsubscribeThisDevice,
   type PushSupport,
@@ -18,9 +19,15 @@ import { SettingsGroup, SettingsRow } from './settings-row';
  * Réglages des alertes : ce que je reçois, et par où.
  *
  * ── Ce qui n'a pas d'interrupteur, et pourquoi on le dit quand même ────────
- * Les confirmations de paiement et les annulations ne se désactivent pas : la
- * première porte un billet, la seconde évite un déplacement pour rien. Plutôt
- * que de les taire, l'écran les affiche comme toujours actives.
+ * Les confirmations de paiement, les remboursements et les annulations ne se
+ * désactivent pas : ils portent un billet, de l'argent, ou évitent un
+ * déplacement pour rien. Pour une organisation, il en va de même des décisions
+ * sur ses événements, de sa vérification et de ses retraits. Plutôt que de les
+ * taire, l'écran les affiche comme toujours actifs.
+ *
+ * ── Les ventes ne s'affichent qu'à qui en a ──────────────────────────────────
+ * « Ventes de mes événements » n'a de sens que pour une organisation. Le montrer
+ * à un simple participant ajouterait une ligne qui ne fait rien.
  *
  * ── Enregistrement immédiat ────────────────────────────────────────────────
  * Pas de bouton « Enregistrer ». Un interrupteur qui bascule PUIS attend une
@@ -32,10 +39,13 @@ export function PreferencesForm({
   initial,
   push,
   hasEmail,
+  isOrganizer,
 }: {
   initial: NotificationPreferencesState;
   push: PushStatus;
   hasEmail: boolean;
+  /** Membre d'au moins une organisation : les réglages de vente s'affichent. */
+  isOrganizer: boolean;
 }) {
   const [state, setState] = React.useState(initial);
   const [error, setError] = React.useState<string | null>(null);
@@ -99,12 +109,28 @@ export function PreferencesForm({
             Voir ma sélection →
           </Link>
         </SettingsRow>
+        {isOrganizer ? (
+          <SettingsRow
+            label="Ventes de mes événements"
+            hint="Une notification à chaque vente (regroupées sur dix minutes), et quand un événement ou une catégorie est complet."
+            checked={state.salesAlerts}
+            onToggle={() => void toggle('salesAlerts')}
+          />
+        ) : null}
         <SettingsRow
-          label="Confirmations de paiement et annulations"
-          hint="Toujours actif : ces messages portent ton billet ou t’évitent un déplacement."
+          label="Paiements, remboursements et annulations"
+          hint="Toujours actif : ces messages portent ton billet, ton argent, ou t’évitent un déplacement."
           checked
           locked
         />
+        {isOrganizer ? (
+          <SettingsRow
+            label="Décisions sur mes événements, vérification et retraits"
+            hint="Toujours actif : ils conditionnent ton travail et ton argent."
+            checked
+            locked
+          />
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup
@@ -177,6 +203,10 @@ function PushRow({ push, onError }: { push: PushStatus; onError: (message: strin
 
     try {
       if (enabled) {
+        // Couper l'interrupteur est un REFUS : on le mémorise, sinon la
+        // resynchronisation (`PushSync`) réabonnerait l'appareil au chargement
+        // suivant, l'autorisation du navigateur étant toujours donnée.
+        setPushOptOut(true);
         await unsubscribeThisDevice();
         setEnabled(false);
         return;

@@ -6,9 +6,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  buildPayoutMessage,
   canTransitionPayout,
   computePayoutFee,
   getPaymentMethodDefinition,
+  organizationLink,
   validatePayoutRequest,
   type AdminPayoutSummary,
   type Payout,
@@ -18,10 +20,12 @@ import {
   type RecordPayoutInput,
   type RequestPayoutInput,
 } from '@nexakabi/contracts';
-import { maskPhone, resolveCurrency } from '@nexakabi/utils';
+import { formatMoney, maskPhone, resolveCurrency } from '@nexakabi/utils';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { OrganizationAudienceService } from '../notifications/organization-audience.service';
 import { PaymentRoutingService, type ResolvedRoute } from '../payments/payment-routing.service';
 import { PaymentProviderRegistry } from '../payments/provider.registry';
 import type { NormalizedPayoutWebhook } from '../payments/providers/payment-provider';
@@ -54,6 +58,8 @@ export class PayoutsService {
     private readonly registry: PaymentProviderRegistry,
     private readonly routing: PaymentRoutingService,
     private readonly commission: CommissionService,
+    private readonly notifications: NotificationsService,
+    private readonly audience: OrganizationAudienceService,
   ) {}
 
   /**
@@ -600,7 +606,68 @@ export class PayoutsService {
       changes: { from: payout.status, to, reason: context.failureReason },
     });
 
-    return this.toPayout(payoutId);
+    const view = await this.toPayout(payoutId);
+
+    await this.announceOutcome(payout.organizationId, payout.requestedByUserId, view);
+
+    return view;
+  }
+
+  /**
+   * Dit à l'organisation ce qu'il est advenu de son retrait.
+   *
+   * ── Ce qui est annoncé, et ce qui ne l'est pas ────────────────────────────
+   * Versé, échoué, annulé : les trois issues après lesquelles l'organisateur doit
+   * agir ou cesser d'attendre. « En cours » n'est pas annoncé — c'est l'état
+   * normal entre la demande et l'issue, et le dire ajouterait un message à une
+   * attente déjà connue.
+   *
+   * Qui reçoit : ceux qui PEUVENT demander un retrait, plus la personne qui l'a
+   * demandé — même si son rôle a changé depuis, c'est à elle que la demande
+   * répond.
+   *
+   * Ne lève jamais : l'issue est déjà inscrite, et une notification qui échoue ne
+   * doit pas faire passer un retrait versé pour un retrait en erreur.
+   */
+  private async announceOutcome(
+    organizationId: string,
+    requesterId: string,
+    payout: Payout,
+  ): Promise<void> {
+    const outcome = payout.status;
+    if (outcome !== 'PAID' && outcome !== 'FAILED' && outcome !== 'CANCELLED') return;
+
+    try {
+      const message = buildPayoutMessage({
+        outcome,
+        // Versé : ce que l'organisateur reçoit, frais déduits. Échoué ou annulé :
+        // ce qui lui est rendu, c'est-à-dire tout ce qui avait été débité.
+        amountLabel: formatMoney(
+          outcome === 'PAID' ? payout.netAmount : payout.grossAmount,
+          payout.currency,
+        ),
+        accountLabel: `${payout.accountLabel} · ${payout.accountMaskedNumber}`,
+        reference: payout.reference,
+        failureReason: payout.failureReason,
+      });
+
+      const recipients = new Set(await this.audience.recipients(organizationId, 'payout:request'));
+      recipients.add(requesterId);
+
+      for (const userId of recipients) {
+        await this.notifications.notify({
+          userId,
+          type: 'PAYOUT_UPDATED',
+          title: message.title,
+          body: message.body,
+          actionUrl: organizationLink(organizationId, `/pro/finances/retraits/${payout.id}`),
+          actionLabel: 'Voir le retrait',
+          dedupeKey: `payout:${payout.id}:${outcome}`,
+        });
+      }
+    } catch (error) {
+      this.logger.error({ err: error }, `Annonce de l'issue du retrait ${payout.id} impossible`);
+    }
   }
 
   /**

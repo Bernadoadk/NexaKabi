@@ -10,11 +10,13 @@ import {
 } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { NotificationsScheduler } from './notifications.scheduler';
+import { OrganizationAudienceService } from './organization-audience.service';
 import { OutboundService } from './outbound.service';
 import { PlatformSettingsService } from './platform-settings.service';
 import { PushService } from './push.service';
 import { RecommendationsService } from './recommendations.service';
 import { RemindersService } from './reminders.service';
+import { SalesNotifierService } from './sales-notifier.service';
 import { ConsoleSmsProvider, SmsProvider } from './sms.provider';
 import type { Env } from '../../config/env';
 
@@ -31,6 +33,8 @@ import type { Env } from '../../config/env';
   providers: [
     NotificationsService,
     EventNotifierService,
+    OrganizationAudienceService,
+    SalesNotifierService,
     OutboundService,
     RemindersService,
     RecommendationsService,
@@ -74,6 +78,8 @@ import type { Env } from '../../config/env';
     EmailProvider,
     NotificationsService,
     EventNotifierService,
+    OrganizationAudienceService,
+    SalesNotifierService,
     RemindersService,
     RecommendationsService,
     OutboundService,

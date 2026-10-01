@@ -1,29 +1,26 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { PushStatus, PushSubscriptionInput } from '@nexakabi/contracts';
+import {
+  pushPayloadSchema,
+  type PushPayload,
+  type PushStatus,
+  type PushSubscriptionInput,
+} from '@nexakabi/contracts';
 import { sendNotification, WebPushError } from 'web-push';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { describeDevice } from '../auth/device-label';
 
-/** Ce que le service worker affiche. Voir `apps/web/public/sw.js`. */
-export interface PushPayload {
-  readonly title: string;
-  readonly body: string;
-  /** Chemin interne ouvert au toucher de la notification. */
-  readonly url: string;
-  /** Deux notifications de même étiquette se remplacent au lieu de s'empiler. */
-  readonly tag?: string;
-}
-
 /** Échecs consécutifs tolérés avant de considérer l'appareil comme perdu. */
 const MAX_CONSECUTIVE_FAILURES = 5;
 
 /**
- * Durée de conservation par le service de notification d'un message qui n'a
- * pas pu être remis — téléphone éteint, hors réseau. Au-delà d'une journée,
- * un rappel ou une publication a perdu son intérêt : mieux vaut le perdre que
- * le remettre à contretemps.
+ * Durée de conservation par défaut, par le service de notification, d'un
+ * message qui n'a pas pu être remis — téléphone éteint, hors réseau. Au-delà
+ * d'une journée, un rappel ou une publication a perdu son intérêt : mieux vaut
+ * le perdre que le remettre à contretemps. Chaque type peut demander plus court
+ * (`NOTIFICATION_POLICY.ttlSeconds`) : une vente vieille de deux heures n'apprend
+ * plus rien à personne.
  */
 const TIME_TO_LIVE_SECONDS = 24 * 60 * 60;
 
@@ -134,9 +131,25 @@ export class PushService {
   async sendToUser(
     userId: string,
     payload: PushPayload,
-    context: { notificationId?: string; urgent?: boolean } = {},
+    context: { notificationId?: string; urgent?: boolean; ttlSeconds?: number } = {},
   ): Promise<{ sent: number }> {
     if (!this.vapid) return { sent: 0 };
+
+    // Le worker n'applique que ce que ce contrat décrit : un message qui s'en
+    // écarte — chemin externe, étiquette vide — serait affiché de travers, ou
+    // refusé par le navigateur. Mieux vaut le dire ici, dans nos journaux, que
+    // l'apprendre par un téléphone muet.
+    const checked = pushPayloadSchema.safeParse(payload);
+
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      this.logger.error(
+        `Message d'appareil invalide (${payload.type}) : ${issue?.path.join('.') ?? '?'} — ${issue?.message ?? 'inconnu'}`,
+      );
+      return { sent: 0 };
+    }
+
+    const body = JSON.stringify(checked.data);
 
     const subscriptions = await this.prisma.pushSubscription.findMany({
       where: { userId },
@@ -170,12 +183,13 @@ export class PushService {
             endpoint: subscription.endpoint,
             keys: { p256dh: subscription.p256dh, auth: subscription.auth },
           },
-          JSON.stringify(payload),
+          body,
           {
             vapidDetails: this.vapid,
-            TTL: TIME_TO_LIVE_SECONDS,
+            TTL: context.ttlSeconds ?? TIME_TO_LIVE_SECONDS,
             // `high` réveille un téléphone en économie d'énergie ; on le
-            // réserve à ce qui porte un billet ou une annulation.
+            // réserve à ce que la politique du type déclare urgent — un billet,
+            // une annulation, la décision qu'un organisateur attend.
             urgency: context.urgent ? 'high' : 'normal',
             timeout: 10_000,
           },

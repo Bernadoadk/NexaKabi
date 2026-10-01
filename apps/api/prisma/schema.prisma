@@ -1866,13 +1866,17 @@ model Payout {
 // NOTIFICATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Les cinq types du produit, et pas un de plus.
+/// Les types du produit — une liste fermée, que chaque ajout dilue.
 ///
-/// Chacun correspond à quelque chose que le participant a demandé — en
-/// achetant, en suivant un organisateur, en choisissant ses goûts — et chacun
-/// porte une action. Le cahier des charges interdit toute notification
-/// promotionnelle NON SOLLICITÉE : `RECOMMENDATION` est inactif tant que le
-/// participant ne l'a pas demandé, et un sixième type serait la première marche.
+/// Chacun correspond à quelque chose que son destinataire a demandé — en
+/// achetant, en suivant un organisateur, en choisissant ses goûts, en vendant des
+/// billets — et chacun porte une action. Le cahier des charges interdit toute
+/// notification promotionnelle NON SOLLICITÉE : `RECOMMENDATION` est inactif tant
+/// que le participant ne l'a pas demandé.
+///
+/// Les cinq premiers et `REFUND_COMPLETED` s'adressent au participant ; les cinq
+/// derniers à une organisation. Leur politique — canaux, urgence, durée de vie —
+/// se lit dans `NOTIFICATION_POLICY` (packages/contracts/src/notifications.ts).
 enum NotificationType {
   /// « Ton paiement est confirmé » → voir le billet.
   PAYMENT_CONFIRMED
@@ -1884,6 +1888,19 @@ enum NotificationType {
   ORGANIZER_PUBLISHED
   /// « 3 nouveaux événements pour toi » → la sélection. Une par semaine au plus.
   RECOMMENDATION
+  /// « 5 000 F CFA ont été renvoyés sur ton numéro » → voir la commande.
+  REFUND_COMPLETED
+  /// Organisation — « 3 nouvelles ventes · Festival Yélé » → les ventes. Regroupées
+  /// par fenêtre de dix minutes : une seule ligne, mise à jour.
+  SALE_RECEIVED
+  /// Organisation — « Festival Yélé est complet », « Pass VIP est épuisé ».
+  SOLD_OUT
+  /// Organisation — l'événement soumis est en ligne, ou refusé avec son motif.
+  EVENT_REVIEWED
+  /// Organisation — la vérification est acceptée, ou demande une action.
+  VERIFICATION_REVIEWED
+  /// Organisation — retrait versé, échoué ou annulé.
+  PAYOUT_UPDATED
 }
 
 /// Canaux de diffusion. `PUSH` : notification Web Push sur un appareil dont le
@@ -1973,6 +1990,10 @@ model NotificationPreference {
   /// Sélection hebdomadaire selon les goûts. Inactive par défaut : c'est le
   /// seul type que rien, dans ce que le participant a fait, ne réclame.
   recommendations         Boolean   @default(false)
+  /// Ventes et épuisements des événements de MES organisations. Actif par
+  /// défaut : vendre des billets, c'est vouloir savoir qu'ils partent. Sans
+  /// effet pour qui n'appartient à aucune organisation.
+  salesAlerts             Boolean   @default(true)
   /// Dernière sélection envoyée. Le plafond « une par semaine » se compte d'ici.
   lastRecommendationAt    DateTime?
   /// Dernier calcul, qu'il ait trouvé quelque chose ou non. Sans lui, un

@@ -23,6 +23,7 @@ import {
 import { getCurrentUser } from '@/lib/session';
 import { resolveActiveOrganization } from '@/lib/organizations';
 import { fetchNotifications } from '@/lib/notifications';
+import { PushSync } from '@/components/push-sync';
 import { CreateOrganizationForm } from './create-organization-form';
 import { OrganizationSwitcher } from './organization-switcher';
 import { ProLogoutButton } from './pro-logout-button';
@@ -220,6 +221,10 @@ export default async function ProLayout({ children }: { children: React.ReactNod
       >
         {children}
       </ConsoleShell>
+
+      {/* Garde l'appareil abonné, la pastille de l'icône à jour, et l'écran vivant :
+          une vente qui arrive pendant que la console est ouverte se voit sans recharger. */}
+      <PushSync userId={user.id} unreadCount={feed.unreadCount} />
     </ToastProvider>
   );
 }

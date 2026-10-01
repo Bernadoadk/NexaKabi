@@ -3,9 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { waitUntil } from '@vercel/functions';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
-  isMandatory,
+  buildPushPayload,
+  notificationPolicy,
   type NotificationChannel,
   type NotificationType,
+  type PhoneMode,
   type PlatformNotificationSettings,
 } from '@nexakabi/contracts';
 import type { Env } from '../../config/env';
@@ -14,6 +16,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { EmailProvider, type EmailAttachment } from './email.provider';
 import { renderNotificationEmail } from './email-layout';
 import { PlatformSettingsService } from './platform-settings.service';
+import { pushImageUrl } from './push-image';
 import { PushService } from './push.service';
 import { SmsProvider } from './sms.provider';
 
@@ -42,6 +45,13 @@ import { SmsProvider } from './sms.provider';
  * ── Un seul canal téléphonique par notification ─────────────────────────────
  * Envoyer le même message par SMS ET WhatsApp double le coût pour ne rien
  * apporter : le participant l'a déjà lu.
+ *
+ * ── Qui décide quoi : la politique du type ──────────────────────────────────
+ * Chaque type déclare dans `NOTIFICATION_POLICY` (contrats) s'il réveille un
+ * téléphone, s'il passe par WhatsApp, par e-mail, combien de temps le service de
+ * notification le garde. Ce service applique cette table ; il ne connaît aucun
+ * type par son nom. Une vente, qui arrive par dizaines, n'y est ni WhatsApp ni
+ * e-mail : l'appareil et le centre lui suffisent.
  */
 @Injectable()
 export class OutboundService implements OnApplicationShutdown {
@@ -148,6 +158,11 @@ export class OutboundService implements OnApplicationShutdown {
         body: true,
         actionUrl: true,
         actionLabel: true,
+        eventId: true,
+        orderId: true,
+        createdAt: true,
+        // La couverture de l'événement : l'image sous le texte de l'appareil.
+        event: { select: { coverImageUrl: true } },
         user: {
           select: {
             id: true,
@@ -164,6 +179,7 @@ export class OutboundService implements OnApplicationShutdown {
     if (!notification) return;
 
     const { user } = notification;
+    const policy = notificationPolicy(notification.type);
     const preference = {
       whatsapp: user.notificationPreference?.whatsapp ?? DEFAULT_NOTIFICATION_PREFERENCES.whatsapp,
       sms: user.notificationPreference?.sms ?? DEFAULT_NOTIFICATION_PREFERENCES.sms,
@@ -174,20 +190,11 @@ export class OutboundService implements OnApplicationShutdown {
 
     // ── 1. L'appareil ─────────────────────────────────────────────────────
     if (wants('PUSH')) {
-      await this.push.sendToUser(
-        user.id,
-        {
-          title: notification.title,
-          body: notification.body,
-          url: notification.actionUrl,
-          tag: `${notification.type}:${notification.id}`,
-        },
-        { notificationId: notification.id, urgent: isMandatory(notification.type) },
-      );
+      await this.pushToDevices(user.id, notification);
     }
 
     // ── 2. L'e-mail ───────────────────────────────────────────────────────
-    if (wants('EMAIL') && user.email && preference.email) {
+    if (wants('EMAIL') && policy.email && user.email && preference.email) {
       await this.sendEmail({
         userId: user.id,
         notificationId: notification.id,
@@ -207,15 +214,17 @@ export class OutboundService implements OnApplicationShutdown {
     // ── 3. Le téléphone : WhatsApp, SMS en secours ────────────────────────
     if (!(wants('WHATSAPP') || wants('SMS'))) return;
 
-    const channel = pickPhoneChannel(
-      notification.type,
-      preference,
-      await this.settings.getNotificationSettings(),
-    );
+    // Inutile de consulter les réglages de la plateforme pour un type qui ne
+    // passe jamais par le téléphone : une vente n'en a pas besoin.
+    const channel =
+      policy.phone === 'none'
+        ? null
+        : pickPhoneChannel(policy.phone, preference, await this.settings.getNotificationSettings());
 
     if (!channel) {
-      // Le participant n'a pas choisi de canal téléphonique pour ce type, ou
-      // la plateforme l'a coupé. La notification reste dans l'application.
+      // Le destinataire n'a pas choisi de canal téléphonique pour ce type, ou
+      // la plateforme l'a coupé, ou le type n'en veut pas. La notification
+      // reste dans l'application, et sur l'appareil s'il est abonné.
       return;
     }
 
@@ -258,67 +267,61 @@ export class OutboundService implements OnApplicationShutdown {
   }
 
   /**
-   * Envoi direct, sans passer par le centre de notifications.
+   * Pousse la notification sur les appareils de son destinataire.
    *
-   * ── Pourquoi cette porte existe ──────────────────────────────────────────
-   * Le centre de notifications appartient au PARTICIPANT, et ses types sont
-   * fermés à dessein. Certains messages ne lui sont pas destinés : la décision
-   * sur un dossier de vérification s'adresse à un organisateur, qui suit son
-   * dossier dans son espace professionnel.
+   * ── Pourquoi le compteur se lit ici ───────────────────────────────────────
+   * La pastille de l'icône de l'application affiche le nombre de notifications
+   * non lues. Le téléphone ne peut pas le deviner : c'est le serveur, qui vient
+   * d'écrire la ligne, qui le sait.
    *
-   * Les faire passer par le centre obligerait à détourner un type existant —
-   * annoncer une vérification sous l'étiquette « paiement confirmé » — ou à en
-   * ajouter un, ce que le produit refuse. Ils partent donc directement, et
-   * `MessageLog` en garde la trace comme pour les autres.
-   *
-   * Ne lève jamais, pour la même raison que `schedule` : l'appelant est en
-   * train de statuer sur un dossier, et un opérateur injoignable ne doit pas
-   * annuler sa décision.
+   * ── Une rafale se met à jour en silence ───────────────────────────────────
+   * Quand un type demande de regrouper (`coalesceSeconds`) et que la même
+   * notification vient d'être poussée, le message part quand même — il REMPLACE
+   * celui affiché, dont le texte serait sinon périmé jusqu'à la vente suivante
+   * — mais sans son ni vibration. Le téléphone sonne à la première vente, pas à
+   * la cinquantième.
    */
-  async sendDirect(input: { userId: string; phone: string; text: string }): Promise<void> {
-    const preference = await this.prisma.notificationPreference.findUnique({
-      where: { userId: input.userId },
-      select: { whatsapp: true, sms: true },
+  private async pushToDevices(
+    userId: string,
+    notification: {
+      id: string;
+      type: NotificationType;
+      title: string;
+      body: string;
+      actionUrl: string;
+      actionLabel: string;
+      eventId: string | null;
+      orderId: string | null;
+      createdAt: Date;
+      event: { coverImageUrl: string | null } | null;
+    },
+  ): Promise<void> {
+    const policy = notificationPolicy(notification.type);
+
+    const recent =
+      policy.coalesceSeconds > 0
+        ? await this.prisma.messageLog.findFirst({
+            where: {
+              notificationId: notification.id,
+              channel: 'PUSH',
+              createdAt: { gt: new Date(Date.now() - policy.coalesceSeconds * 1000) },
+            },
+            select: { id: true },
+          })
+        : null;
+
+    const unread = await this.prisma.notification.count({ where: { userId, readAt: null } });
+
+    const payload = buildPushPayload(notification, {
+      unread,
+      image: pushImageUrl(notification.event?.coverImageUrl),
     });
 
-    const channel = pickCriticalChannel({
-      whatsapp: preference?.whatsapp ?? true,
-      sms: preference?.sms ?? true,
+    await this.push.sendToUser(userId, recent ? { ...payload, silent: true } : payload, {
+      notificationId: notification.id,
+      urgent: policy.urgent,
+      ttlSeconds: policy.ttlSeconds,
     });
-
-    if (!channel) return;
-
-    const log = await this.prisma.messageLog.create({
-      data: {
-        userId: input.userId,
-        channel,
-        destination: input.phone,
-        status: 'QUEUED',
-      },
-      select: { id: true },
-    });
-
-    try {
-      await this.sms.sendMessage({
-        phone: input.phone,
-        channel: channel === 'WHATSAPP' ? 'WHATSAPP' : 'SMS',
-        text: input.text,
-      });
-
-      await this.prisma.messageLog.update({
-        where: { id: log.id },
-        data: { status: 'SENT', sentAt: new Date(), attemptCount: { increment: 1 } },
-      });
-    } catch (error) {
-      await this.prisma.messageLog.update({
-        where: { id: log.id },
-        data: {
-          status: 'FAILED',
-          failureReason: describe(error),
-          attemptCount: { increment: 1 },
-        },
-      });
-    }
   }
 
   /**
@@ -423,18 +426,18 @@ export class OutboundService implements OnApplicationShutdown {
 }
 
 /**
- * Le canal téléphonique d'une notification.
+ * Le canal téléphonique d'une notification, selon le mode que son type déclare.
  *
- * Critique (billet, annulation) : WhatsApp d'abord, SMS en secours — le
- * participant doit l'apprendre même sans ouvrir l'application. Le reste :
- * WhatsApp seulement, s'il l'a choisi ET si la plateforme l'autorise.
+ * Critique (billet, annulation, décision attendue) : WhatsApp d'abord, SMS en
+ * secours — le destinataire doit l'apprendre même sans ouvrir l'application. Le
+ * reste : WhatsApp seulement, s'il l'a choisi ET si la plateforme l'autorise.
  */
 function pickPhoneChannel(
-  type: NotificationType,
+  mode: Exclude<PhoneMode, 'none'>,
   accepted: { whatsapp: boolean; sms: boolean },
   settings: PlatformNotificationSettings,
 ): NotificationChannel | null {
-  if (isMandatory(type)) return pickCriticalChannel(accepted);
+  if (mode === 'critical') return pickCriticalChannel(accepted);
 
   return accepted.whatsapp && settings.whatsappForNonUrgent ? 'WHATSAPP' : null;
 }

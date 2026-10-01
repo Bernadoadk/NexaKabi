@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
+  isMandatory,
   type NotificationPreferences,
   type NotificationType,
 } from '@nexakabi/contracts';
@@ -22,11 +23,8 @@ export interface CreateNotificationInput {
   readonly dedupeKey?: string;
 }
 
-/** Types qu'aucune préférence ne peut désactiver. */
-const MANDATORY: readonly NotificationType[] = ['PAYMENT_CONFIRMED', 'EVENT_UPDATED'];
-
 /**
- * Notifications aux participants.
+ * Notifications aux participants — et aux organisations.
  *
  * ── Deux garanties, et leur coût ────────────────────────────────────────────
  *  · **Rien n'est envoyé deux fois.** `dedupeKey` porte un index unique par
@@ -140,22 +138,87 @@ export class NotificationsService {
   }
 
   /**
+   * Crée une notification, ou met à jour celle que la même empreinte a déjà produite.
+   *
+   * ── Pour les séries, pas pour les événements ponctuels ────────────────────
+   * `notify` ignore un doublon : une annonce d'annulation ne se renvoie pas. Une
+   * SÉRIE est autre chose — les ventes d'un événement pendant dix minutes font
+   * une seule ligne au centre, dont le texte grossit à chaque vente. L'appelant
+   * recalcule le message depuis ses données, et cette méthode le pose sur la
+   * ligne existante : elle la remet en non lue, la remonte en tête, et relance
+   * la diffusion — qui décide elle-même, selon la politique du type, de sonner
+   * ou de se contenter de mettre l'affichage à jour.
+   *
+   * Hors transaction, donc : une mise à jour qui échouerait ne doit pas emporter
+   * avec elle l'encaissement qui l'a déclenchée.
+   */
+  async upsertSummary(
+    input: CreateNotificationInput & { dedupeKey: string },
+  ): Promise<{ id: string; created: boolean }> {
+    if (!(await this.isAllowed(this.prisma, input.userId, input.type))) {
+      return { id: '', created: false };
+    }
+
+    const refresh = async (): Promise<string | null> => {
+      const existing = await this.prisma.notification.findUnique({
+        where: { userId_dedupeKey: { userId: input.userId, dedupeKey: input.dedupeKey } },
+        select: { id: true },
+      });
+
+      if (!existing) return null;
+
+      await this.prisma.notification.update({
+        where: { id: existing.id },
+        data: {
+          title: input.title,
+          body: input.body,
+          actionUrl: input.actionUrl,
+          actionLabel: input.actionLabel,
+          readAt: null,
+          createdAt: new Date(),
+        },
+      });
+
+      this.outbound.schedule(existing.id);
+      return existing.id;
+    };
+
+    const updated = await refresh();
+    if (updated) return { id: updated, created: false };
+
+    const created = await this.notify(input);
+    if (created.created) return created;
+
+    // Course : un appel simultané a écrit la ligne entre notre lecture et notre
+    // écriture. Son texte peut déjà être dépassé : on le remet à jour.
+    const raced = await refresh();
+    return { id: raced ?? '', created: false };
+  }
+
+  /**
    * Le participant accepte-t-il ce type ?
    *
-   * Les types transactionnels passent sans consultation : ils portent un billet
-   * ou une annulation. Le reste dépend d'une ligne de préférences qui peut ne
-   * pas exister — l'absence vaut alors les valeurs par défaut du schéma.
+   * Les types transactionnels passent sans consultation : ils portent un billet,
+   * une annulation, un remboursement, une décision ou un retrait — la liste se
+   * lit dans `NOTIFICATION_POLICY`. Le reste dépend d'une ligne de préférences
+   * qui peut ne pas exister — l'absence vaut alors les valeurs par défaut du
+   * schéma.
    */
   private async isAllowed(
     client: Prisma.TransactionClient | PrismaService,
     userId: string,
     type: NotificationType,
   ): Promise<boolean> {
-    if (MANDATORY.includes(type)) return true;
+    if (isMandatory(type)) return true;
 
     const preference = await client.notificationPreference.findUnique({
       where: { userId },
-      select: { eventReminders: true, organizerPublications: true, recommendations: true },
+      select: {
+        eventReminders: true,
+        organizerPublications: true,
+        recommendations: true,
+        salesAlerts: true,
+      },
     });
 
     switch (type) {
@@ -173,6 +236,10 @@ export class NotificationsService {
         // Absent = inactif. C'est le seul type que rien, dans ce que le
         // participant a fait, ne réclame : il doit l'avoir demandé.
         return preference?.recommendations ?? DEFAULT_NOTIFICATION_PREFERENCES.recommendations;
+      case 'SALE_RECEIVED':
+      case 'SOLD_OUT':
+        // Absent = actif : vendre des billets, c'est vouloir savoir qu'ils partent.
+        return preference?.salesAlerts ?? DEFAULT_NOTIFICATION_PREFERENCES.salesAlerts;
       default:
         return true;
     }
@@ -229,8 +296,15 @@ export class NotificationsService {
    *
    * `updateMany` avec `readAt: null` en filtre : repasser sur une notification
    * déjà lue ne doit pas décaler sa date de lecture.
+   *
+   * Renvoie aussi ce qui reste non lu : le toucher d'une notification sur
+   * l'appareil passe par ici, et le worker s'en sert pour remettre à jour la
+   * pastille de l'icône sans une seconde requête.
    */
-  async markRead(userId: string, notificationIds?: string[]): Promise<{ count: number }> {
+  async markRead(
+    userId: string,
+    notificationIds?: string[],
+  ): Promise<{ count: number; unreadCount: number }> {
     const result = await this.prisma.notification.updateMany({
       where: {
         userId,
@@ -240,7 +314,9 @@ export class NotificationsService {
       data: { readAt: new Date() },
     });
 
-    return { count: result.count };
+    const unreadCount = await this.prisma.notification.count({ where: { userId, readAt: null } });
+
+    return { count: result.count, unreadCount };
   }
 
   /** Préférences, avec les valeurs par défaut si la ligne n'existe pas encore. */
@@ -251,6 +327,7 @@ export class NotificationsService {
         eventReminders: true,
         organizerPublications: true,
         recommendations: true,
+        salesAlerts: true,
         whatsapp: true,
         sms: true,
         email: true,

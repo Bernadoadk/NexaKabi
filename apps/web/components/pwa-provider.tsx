@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { usePathname } from 'next/navigation';
 import { cn } from '@nexakabi/ui';
 
 /**
@@ -89,30 +90,34 @@ const DISMISSED_KEY = 'nk_install_dismissed';
  * idée plutôt qu'une interruption.
  */
 function InstallPrompt() {
+  const pathname = usePathname();
   const [event, setEvent] = React.useState<InstallPromptEvent | null>(null);
-  const [visible, setVisible] = React.useState(false);
+  const [dismissed, setDismissed] = React.useState(false);
 
   React.useEffect(() => {
-    if (readDismissed()) return;
+    if (readDismissed()) {
+      setDismissed(true);
+      return;
+    }
 
     function onPrompt(nativeEvent: Event) {
       // Empêcher l'invite du navigateur pour la déclencher NOUS-MÊMES, au bon
       // moment et avec nos propres mots.
       nativeEvent.preventDefault();
       setEvent(nativeEvent as InstallPromptEvent);
-
-      const path = window.location.pathname;
-      setVisible(path.startsWith('/t/') || path.startsWith('/mon-compte'));
     }
 
     window.addEventListener('beforeinstallprompt', onPrompt);
     return () => window.removeEventListener('beforeinstallprompt', onPrompt);
   }, []);
 
-  if (!visible || !event) return null;
+  // La visibilité suit la ROUTE, pas l'instant où le navigateur a déclenché
+  // l'événement : il part une fois, souvent sur l'accueil, et une navigation
+  // interne ensuite vers « Mes billets » ne montrait jamais l'invite.
+  if (dismissed || !event || !isInstallRoute(pathname)) return null;
 
   function dismiss() {
-    setVisible(false);
+    setDismissed(true);
     writeDismissed();
   }
 
@@ -146,6 +151,18 @@ function InstallPrompt() {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Les écrans où « garder ça sous la main » est une bonne idée : celui où l'on tient
+ * déjà un billet, le compte, et l'espace organisateur — où l'on revient chaque jour
+ * de vente. Jamais le tunnel d'achat ni le scanner : une invite y ferait obstacle.
+ */
+function isInstallRoute(pathname: string | null): boolean {
+  if (!pathname) return false;
+  return (
+    pathname.startsWith('/t/') || pathname.startsWith('/mon-compte') || pathname.startsWith('/pro')
   );
 }
 

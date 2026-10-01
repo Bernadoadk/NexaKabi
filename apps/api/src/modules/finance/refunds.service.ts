@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   REFUND_REASON_LABELS,
+  buildRefundMessage,
   getPaymentMethodDefinition,
   getPaymentProviderDefinition,
   type AdminRefund,
@@ -23,6 +24,7 @@ import type { Prisma } from '../../generated/prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { PaymentProviderRegistry } from '../payments/provider.registry';
 import type { NormalizedRefundWebhook, RefundResult } from '../payments/providers/payment-provider';
+import { NotificationsService } from '../notifications/notifications.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { LedgerService } from './ledger.service';
 
@@ -66,12 +68,22 @@ const RECONCILE_BATCH_SIZE = 50;
 /** Nombre de lignes rendues à la console par liste. */
 const LIST_LIMIT = 200;
 
+/**
+ * Ce qu'il faut savoir de la commande pour exécuter un remboursement — et pour
+ * le dire à l'acheteur une fois conclu (`userId`, titre de l'événement).
+ */
+const REFUND_ORDER_SELECT = {
+  id: true,
+  userId: true,
+  reference: true,
+  currency: true,
+  event: { select: { title: true, organizationId: true } },
+} as const satisfies Prisma.OrderSelect;
+
 type RefundForExecution = Prisma.RefundGetPayload<{
   include: {
     payment: true;
-    order: {
-      select: { reference: true; currency: true; event: { select: { organizationId: true } } };
-    };
+    order: { select: typeof REFUND_ORDER_SELECT };
   };
 }>;
 
@@ -113,6 +125,7 @@ export class RefundsService {
     private readonly tickets: TicketsService,
     private readonly registry: PaymentProviderRegistry,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -641,7 +654,57 @@ export class RefundsService {
       `Remboursement ${refund.id} conclu (${formatMoney(refund.amount, refund.order.currency)} · ${refund.order.reference})`,
     );
 
+    await this.announceCompleted(refund);
+
     return toOutcome(updated);
+  }
+
+  /**
+   * Dit à l'acheteur que l'argent est parti.
+   *
+   * ── Pourquoi à la conclusion, pas à la décision ───────────────────────────
+   * L'annulation d'un événement promet déjà « tu seras remboursé » ; le dire une
+   * seconde fois à la décision n'apprendrait rien. Ce qu'on ne lui dit nulle
+   * part, c'est QUAND — et avec Kkiapay, qui ne rembourse pas par API, ce
+   * moment est un geste manuel de l'administration, parfois des jours plus tard.
+   * `complete` est le seul endroit où un remboursement devient conclu : par le
+   * prestataire comme à la main.
+   *
+   * Un échec n'est PAS annoncé : le remboursement reste dû et passe aux mains de
+   * l'administration. Dire « échoué » à quelqu'un qui n'y peut rien ne ferait
+   * qu'inquiéter.
+   *
+   * Ne lève jamais : le remboursement est conclu, et une notification qui
+   * échoue ne doit pas le faire passer pour non conclu.
+   */
+  private async announceCompleted(refund: RefundForExecution): Promise<void> {
+    const { userId } = refund.order;
+
+    // Un acheteur sans compte ne peut être joint que par ce qu'il a déjà reçu
+    // (WhatsApp, e-mail du billet) : rien à écrire dans un centre qu'il n'a pas.
+    if (!userId) return;
+
+    try {
+      const message = buildRefundMessage({
+        eventTitle: refund.order.event.title,
+        amountLabel: formatMoney(refund.amount, refund.order.currency),
+        phoneLabel: refund.payment.payerPhone ? safeMask(refund.payment.payerPhone) : null,
+      });
+
+      await this.notifications.notify({
+        userId,
+        type: 'REFUND_COMPLETED',
+        title: message.title,
+        body: message.body,
+        actionUrl: '/mon-compte/commandes',
+        actionLabel: 'Voir mes commandes',
+        orderId: refund.order.id,
+        // Une commande peut être remboursée en plusieurs fois : une annonce par remboursement.
+        dedupeKey: `refund:${refund.id}`,
+      });
+    } catch (error) {
+      this.logger.error({ err: error }, `Annonce du remboursement ${refund.id} impossible`);
+    }
   }
 
   /**
@@ -744,7 +807,7 @@ export class RefundsService {
       include: {
         payment: true,
         order: {
-          select: { reference: true, currency: true, event: { select: { organizationId: true } } },
+          select: REFUND_ORDER_SELECT,
         },
       },
     });
@@ -845,7 +908,7 @@ export class RefundsService {
       include: {
         payment: true,
         order: {
-          select: { reference: true, currency: true, event: { select: { organizationId: true } } },
+          select: REFUND_ORDER_SELECT,
         },
       },
     });
@@ -956,7 +1019,7 @@ export class RefundsService {
     const include = {
       payment: true,
       order: {
-        select: { reference: true, currency: true, event: { select: { organizationId: true } } },
+        select: REFUND_ORDER_SELECT,
       },
     } as const;
 

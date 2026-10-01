@@ -6,6 +6,7 @@ import { getCurrentUser } from '@/lib/session';
 import { listOrganizations } from '@/lib/organizations';
 import { fetchNotifications } from '@/lib/notifications';
 import { PublicBottomNav } from '@/components/public-bottom-nav';
+import { PushSync } from '@/components/push-sync';
 import { AccountNav } from './account-nav';
 
 /**
@@ -98,6 +99,9 @@ export default async function AccountLayout({ children }: { children: React.Reac
       {/* La même barre basse que l'espace public : un participant passe de
           « Découvrir » à « Billets » sans changer d'application. */}
       <PublicBottomNav signedIn unreadCount={unreadCount} />
+
+      {/* Garde l'appareil abonné, la pastille de l'icône à jour, et l'écran vivant. */}
+      <PushSync userId={user.id} unreadCount={unreadCount} />
     </div>
   );
 }

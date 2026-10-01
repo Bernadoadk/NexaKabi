@@ -10,6 +10,8 @@ import {
 } from '@nexakabi/contracts';
 import { formatEventCaptionWithTime } from '@nexakabi/utils';
 import { Alert, Badge, Button, EmptyState, Surface, cn } from '@nexakabi/ui';
+import { EnablePushCard } from '@/components/enable-push-card';
+import { fetchPushStatus } from '@/lib/notifications';
 import { fetchMyTickets } from '@/lib/tickets';
 
 export const metadata: Metadata = { title: 'Mes billets' };
@@ -33,7 +35,7 @@ export default async function MyTicketsPage({
   const parsed = ticketTabSchema.safeParse(onglet);
   const tab: TicketTab = parsed.success ? parsed.data : 'upcoming';
 
-  const groups = await fetchMyTickets(tab);
+  const [groups, push] = await Promise.all([fetchMyTickets(tab), fetchPushStatus()]);
   const ticketCount = groups.reduce((total, group) => total + group.tickets.length, 0);
 
   return (
@@ -56,6 +58,13 @@ export default async function MyTicketsPage({
           Ouvre chaque billet une fois avant de partir : son QR restera affichable même sans
           connexion à l’entrée.
         </Alert>
+      ) : null}
+
+      {/* Là où l'on vient pour son billet : le meilleur endroit pour proposer d'être
+          prévenu d'un changement de salle ou d'une annulation. La carte se tait
+          d'elle-même si c'est déjà fait, refusé, ou écarté récemment. */}
+      {tab === 'upcoming' && ticketCount > 0 ? (
+        <EnablePushCard variant="tickets" publicKey={push.publicKey} />
       ) : null}
 
       {groups.length === 0 ? <TabEmptyState tab={tab} /> : <GroupList groups={groups} />}

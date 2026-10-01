@@ -1,10 +1,16 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { canTransitionEvent, type PendingEvent, type ReviewEventInput } from '@nexakabi/contracts';
+import {
+  buildEventReviewMessage,
+  canTransitionEvent,
+  organizationLink,
+  type PendingEvent,
+  type ReviewEventInput,
+} from '@nexakabi/contracts';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { runInBackground } from '../../infra/scheduling/background';
 import { AuditService } from '../audit/audit.service';
 import { EventNotifierService } from '../notifications/event-notifier.service';
-import { OutboundService } from '../notifications/outbound.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /**
  * Revue des événements avant publication — écran M2.
@@ -33,7 +39,7 @@ export class EventModerationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly outbound: OutboundService,
+    private readonly notifications: NotificationsService,
     private readonly eventNotifier: EventNotifierService,
   ) {}
 
@@ -147,6 +153,7 @@ export class EventModerationService {
         title: true,
         status: true,
         organizationId: true,
+        createdById: true,
         organization: { select: { ownerId: true } },
       },
     });
@@ -192,11 +199,15 @@ export class EventModerationService {
       changes: { decision: input.decision, note: input.note },
     });
 
-    await this.notifyOrganizer(event.organization.ownerId, {
-      eventTitle: event.title,
-      approved: target === 'PUBLISHED',
-      note: input.note,
-    });
+    await this.notifyOrganizer(
+      {
+        id: event.id,
+        title: event.title,
+        organizationId: event.organizationId,
+        recipients: [event.organization.ownerId, event.createdById],
+      },
+      { approved: target === 'PUBLISHED', note: input.note },
+    );
 
     // Validé par la modération, l'événement est en ligne : les participants
     // qui suivent l'organisation l'apprennent, comme pour une mise en ligne
@@ -211,26 +222,51 @@ export class EventModerationService {
   }
 
   /**
-   * Prévient l'organisateur.
+   * Prévient l'organisation de la décision.
    *
-   * Hors du centre de notifications, comme les décisions de vérification : ce
-   * centre appartient au participant, et ses quatre types sont fermés.
+   * ── Qui : le propriétaire, et celui qui a soumis ──────────────────────────
+   * Le propriétaire répond de l'organisation ; la personne qui a créé
+   * l'événement est celle qui attend la réponse, et qui peut avoir un autre rôle.
+   * Souvent, c'est la même : l'ensemble les réduit alors à un seul destinataire.
+   *
+   * ── Le même message, par plus de canaux ───────────────────────────────────
+   * Cette décision ne partait que par WhatsApp ou SMS, hors du centre, faute de
+   * type pour la porter. `EVENT_REVIEWED` la porte : elle garde son canal
+   * critique (WhatsApp, SMS en secours) — l'organisateur l'attend — et gagne
+   * l'appareil et le centre. Une seule diffusion : le type décide des canaux.
+   *
+   * Ne lève jamais : la décision est prise, et un destinataire injoignable ne doit
+   * pas la faire échouer.
    */
   private async notifyOrganizer(
-    ownerId: string,
-    input: { eventTitle: string; approved: boolean; note?: string },
+    event: { id: string; title: string; organizationId: string; recipients: readonly string[] },
+    input: { approved: boolean; note?: string },
   ): Promise<void> {
-    const owner = await this.prisma.user.findUnique({
-      where: { id: ownerId },
-      select: { phone: true },
+    const message = buildEventReviewMessage({
+      eventTitle: event.title,
+      approved: input.approved,
+      note: input.note,
     });
 
-    if (!owner) return;
+    // Un événement peut être refusé, corrigé, puis approuvé : chaque décision est
+    // une annonce à part, d'où l'instant dans l'empreinte.
+    const decidedAt = Date.now();
 
-    const text = input.approved
-      ? `« ${input.eventTitle} » est en ligne. Partage ton lien : les ventes sont ouvertes.`
-      : `« ${input.eventTitle} » n'a pas été publié. ${input.note ?? ''} Corrige et resoumets depuis ton espace.`;
-
-    await this.outbound.sendDirect({ userId: ownerId, phone: owner.phone, text });
+    for (const userId of new Set(event.recipients)) {
+      try {
+        await this.notifications.notify({
+          userId,
+          type: 'EVENT_REVIEWED',
+          title: message.title,
+          body: message.body,
+          actionUrl: organizationLink(event.organizationId, `/pro/evenements/${event.id}`),
+          actionLabel: input.approved ? "Voir l'événement" : "Corriger l'événement",
+          eventId: event.id,
+          dedupeKey: `reviewed:${event.id}:${input.approved ? 'approved' : 'rejected'}:${decidedAt}`,
+        });
+      } catch (error) {
+        this.logger.error({ err: error }, `Annonce de la décision sur ${event.id} impossible`);
+      }
+    }
   }
 }

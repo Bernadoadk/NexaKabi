@@ -1,11 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Check } from 'lucide-react';
+import { BellRing, Check } from 'lucide-react';
 import type { Order } from '@nexakabi/contracts';
 import { Alert, Badge, Button, Money, Surface } from '@nexakabi/ui';
 import { formatEventCaptionWithTime } from '@nexakabi/utils';
+import { EnablePushCard } from '@/components/enable-push-card';
 import { fetchOrder, fetchOrderTickets } from '@/lib/checkout';
+import { fetchPushStatus } from '@/lib/notifications';
+import { getCurrentUser } from '@/lib/session';
 
 export const metadata: Metadata = {
   title: 'Commande confirmée',
@@ -44,7 +47,14 @@ export default async function OrderConfirmationPage({
 
   const order = result.data;
   const paid = order.status === 'PAID' || order.status === 'COMPLETED';
-  const tickets = paid ? await fetchOrderTickets(order.reference) : [];
+  const [tickets, user] = await Promise.all([
+    paid ? fetchOrderTickets(order.reference) : Promise.resolve([]),
+    paid ? getCurrentUser() : Promise.resolve(null),
+  ]);
+
+  // La clé du serveur n'est lue que pour une personne connectée : s'abonner à des
+  // notifications suppose un compte pour les recevoir.
+  const push = user ? await fetchPushStatus() : null;
   const ticketCount = order.items.reduce((total, item) => total + item.quantity, 0);
 
   if (!paid) {
@@ -180,6 +190,38 @@ export default async function OrderConfirmationPage({
                 instant.
               </p>
             </div>
+          </section>
+        )}
+
+        {/* Le moment où une notification a le plus de sens : la personne vient de payer
+            et attend la suite. Connectée, elle peut les activer tout de suite. Sinon,
+            elle n'a pas de session pour s'abonner : on l'invite à se connecter, son
+            billet restant accessible par ses liens et par WhatsApp. */}
+        {user ? (
+          <EnablePushCard variant="tickets" publicKey={push?.publicKey ?? null} tone="dark" />
+        ) : (
+          <section
+            aria-label="Notifications"
+            className="rounded-panel border border-white/10 bg-white/5 p-4"
+          >
+            <div className="flex items-start gap-3">
+              <span
+                aria-hidden
+                className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-[10px] bg-white/10 text-mint"
+              >
+                <BellRing className="size-[18px]" />
+              </span>
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <p className="text-body font-bold">Reçois tes rappels sur ton téléphone</p>
+                <p className="text-body-s text-white/70">
+                  Connecte-toi avec le numéro utilisé pour payer : tu retrouveras tous tes billets
+                  et pourras activer les notifications, même application fermée.
+                </p>
+              </div>
+            </div>
+            <Button asChild variant="on-ink" size="compact" className="mt-3">
+              <Link href="/connexion?suite=/mon-compte/billets">Me connecter</Link>
+            </Button>
           </section>
         )}
 

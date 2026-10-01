@@ -101,68 +101,282 @@ self.addEventListener('fetch', (event) => {
 
 // ── Notifications sur l'appareil ────────────────────────────────────────────
 //
-// Le serveur envoie `{ title, body, url, tag }`, chiffré de bout en bout : seul
-// ce navigateur peut le lire. La notification s'affiche même application
-// fermée ; la toucher ouvre `url` — toujours un chemin de CE site, jamais une
-// adresse extérieure, même si le contenu le prétendait.
+// Le serveur envoie un message versionné, chiffré de bout en bout : seul ce
+// navigateur peut le lire. Sa définition unique est `pushPayloadSchema`, dans
+// `packages/contracts/src/notifications.ts` — ce fichier n'en est que le
+// lecteur.
+//
+// ── Un lecteur, pas un décideur ─────────────────────────────────────────────
+// Ce worker ne connaît AUCUN type de notification. Il applique ce que le message
+// décrit — étiquette, urgence, silence, bouton, image — et rien d'autre. Changer
+// l'allure d'une notification se fait donc côté serveur, sans attendre que chaque
+// téléphone ait mis à jour son worker.
+//
+// ── Ce qui fait l'allure d'une application, et pas d'un site ────────────────
+//  · une ÉTIQUETTE par histoire : la notification suivante REMPLACE la
+//    précédente et resonne, au lieu de s'empiler dix fois ;
+//  · une PASTILLE sur l'icône de l'application, qui compte les non lues ;
+//  · des BOUTONS : l'action principale, et « Marquer comme lue » ;
+//  · le TOUCHER marque la notification comme lue ;
+//  · l'application ouverte se met à jour toute seule ;
+//  · la nuit, ce qui ne presse pas s'affiche sans son ni vibration.
+//
+// Toucher ouvre `url` — toujours un chemin de CE site, jamais une adresse
+// extérieure, même si le contenu le prétendait.
+
+const APP_ICON = '/icon/192';
+const BADGE_ICON = '/icons/badge.png';
+const ALERTS_PATH = '/mon-compte/notifications';
 
 self.addEventListener('push', (event) => {
-  let payload = {};
+  event.waitUntil(showPush(event));
+});
 
-  try {
-    payload = event.data ? event.data.json() : {};
-  } catch {
-    payload = { body: event.data ? event.data.text() : '' };
+async function showPush(event) {
+  const payload = readPayload(event);
+
+  const options = {
+    body: payload.body,
+    icon: APP_ICON,
+    badge: BADGE_ICON,
+    lang: 'fr',
+    dir: 'ltr',
+    timestamp: payload.ts,
+    silent: payload.silent,
+    requireInteraction: payload.sticky,
+    actions: payload.actions,
+    data: { url: payload.url, id: payload.id, type: payload.type },
+  };
+
+  // `renotify` exige une étiquette non vide : le navigateur lève une erreur sinon.
+  if (payload.tag) {
+    options.tag = payload.tag;
+    options.renotify = true;
   }
 
-  const title = typeof payload.title === 'string' && payload.title ? payload.title : 'Nexa-Kabi';
+  if (payload.image) options.image = payload.image;
 
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body: typeof payload.body === 'string' ? payload.body : '',
-      icon: '/icon/192',
-      badge: '/icon/192',
-      lang: 'fr',
-      tag: typeof payload.tag === 'string' ? payload.tag : undefined,
-      data: { url: typeof payload.url === 'string' ? payload.url : '/mon-compte/notifications' },
-    }),
-  );
-});
+  // Le navigateur refuse une vibration sur une notification silencieuse.
+  if (!payload.silent) {
+    options.vibrate = payload.urgent ? [220, 110, 220, 110, 220] : [140, 90, 140];
+  }
+
+  await Promise.all([
+    self.registration.showNotification(payload.title, options),
+    setAppBadge(payload.unread),
+    // Une fenêtre ouverte actualise son compteur et sa liste sans qu'on le demande.
+    notifyWindows({ type: 'nk:push', unread: payload.unread }),
+  ]);
+}
+
+/**
+ * Lit le message, sans jamais lever : un message illisible s'affiche quand même,
+ * avec ce qu'on en sauve — mieux qu'un téléphone qui ne dit rien, et qu'un
+ * navigateur qui finit par retirer l'autorisation à un site dont les messages
+ * n'affichent rien.
+ */
+function readPayload(event) {
+  let raw = {};
+
+  try {
+    raw = event.data ? event.data.json() : {};
+  } catch {
+    raw = { body: event.data ? event.data.text() : '' };
+  }
+
+  if (!raw || typeof raw !== 'object') raw = {};
+
+  const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : '');
+  const actions = [];
+
+  const actionLabel = text(raw.actionLabel, 32);
+  if (actionLabel) actions.push({ action: 'open', title: actionLabel });
+  if (raw.canMarkRead === true) actions.push({ action: 'read', title: 'Marquer comme lue' });
+
+  const unread = Number(raw.unread);
+  const ts = Number(raw.ts);
+
+  return {
+    title: text(raw.title, 120) || 'Nexa-Kabi',
+    body: text(raw.body, 300),
+    url: internalPath(raw.url),
+    tag: text(raw.tag, 160),
+    id: typeof raw.id === 'string' && raw.id ? raw.id : null,
+    type: text(raw.type, 40),
+    unread: Number.isFinite(unread) && unread >= 0 ? Math.trunc(unread) : null,
+    ts: Number.isFinite(ts) && ts > 0 ? ts : Date.now(),
+    // Une image ne se charge qu'en `https` : sur toute autre origine, le navigateur
+    // refuserait d'afficher la notification entière.
+    image: typeof raw.image === 'string' && raw.image.startsWith('https://') ? raw.image : null,
+    urgent: raw.urgent === true,
+    sticky: raw.sticky === true,
+    silent: raw.silent === true,
+    actions: actions.slice(0, 2),
+  };
+}
 
 self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
+  const notification = event.notification;
+  const data = notification.data || {};
 
-  const target = internalUrl(event.notification.data && event.notification.data.url);
+  notification.close();
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
-      // Un onglet du site déjà ouvert : on s'y rend plutôt que d'en ouvrir un de plus.
-      for (const client of windows) {
-        if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
-          // `navigate` exige un onglet contrôlé par ce worker : sinon, on ouvre
-          // simplement la page dans un nouvel onglet.
-          return client
-            .focus()
-            .then((focused) => focused.navigate(target))
-            .catch(() => self.clients.openWindow(target));
-        }
-      }
+    (async () => {
+      // Le toucher EST la lecture. La requête part tout de suite, sans être
+      // attendue avant d'ouvrir : `openWindow` et `focus` ne sont admis que
+      // pendant le geste, et une attente réseau le ferait expirer.
+      const reading = data.id ? markRead(data.id) : Promise.resolve(null);
 
-      return self.clients.openWindow(target);
-    }),
+      // « Marquer comme lue » ne quitte pas l'écran où l'on se trouve.
+      if (event.action !== 'read') await openTarget(internalUrl(data.url));
+
+      const unread = await reading;
+
+      if (unread !== null) {
+        await setAppBadge(unread);
+        await notifyWindows({ type: 'nk:push', unread });
+      }
+    })(),
   );
 });
 
-/** Chemin interne, ou la page des alertes si le contenu reçu propose autre chose. */
-function internalUrl(candidate) {
+/**
+ * Marque la notification comme lue et rend ce qui reste non lu.
+ *
+ * Passe par le relais du site, avec le cookie de session : le navigateur ne
+ * connaît qu'une origine. Sans session (déconnecté entre-temps), la requête
+ * échoue sans bruit — la notification restera simplement non lue.
+ */
+async function markRead(id) {
   try {
-    const url = new URL(typeof candidate === 'string' ? candidate : '/', self.location.origin);
-    if (url.origin === self.location.origin) return url.href;
+    const response = await fetch('/api/notifications/lues', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id] }),
+    });
+
+    if (!response.ok) return null;
+
+    const body = await response.json();
+    return typeof body.unreadCount === 'number' ? body.unreadCount : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ouvre la page visée : dans l'onglet du site déjà ouvert s'il y en a un, sinon dans un nouveau. */
+async function openTarget(target) {
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+
+  for (const client of windows) {
+    if (new URL(client.url).origin === self.location.origin && 'focus' in client) {
+      try {
+        const focused = await client.focus();
+        // `navigate` exige un onglet contrôlé par ce worker : sinon on retombe
+        // sur l'ouverture d'un nouvel onglet.
+        return await focused.navigate(target);
+      } catch {
+        return self.clients.openWindow(target);
+      }
+    }
+  }
+
+  return self.clients.openWindow(target);
+}
+
+/** Dit aux fenêtres ouvertes qu'une notification vient d'arriver. */
+async function notifyWindows(message) {
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+
+  for (const client of windows) client.postMessage(message);
+}
+
+/**
+ * Pastille de l'icône de l'application : le nombre de non lues.
+ *
+ * Réservée aux applications installées (Android, Windows, macOS, iPhone 16.4+) ;
+ * ailleurs l'API n'existe pas, et ne rien faire est la bonne réponse.
+ */
+async function setAppBadge(count) {
+  if (count === null) return;
+
+  try {
+    const nav = self.navigator;
+    if (!nav) return;
+
+    if (count > 0 && typeof nav.setAppBadge === 'function') {
+      await nav.setAppBadge(count);
+    } else if (count === 0 && typeof nav.clearAppBadge === 'function') {
+      await nav.clearAppBadge();
+    }
+  } catch {
+    // La pastille est un confort : son absence ne doit jamais empêcher d'afficher
+    // la notification.
+  }
+}
+
+/**
+ * Le navigateur renouvelle parfois l'abonnement de lui-même — expiration, mise à
+ * jour, nettoyage. L'ancienne adresse ne reçoit alors plus rien, et sans cette
+ * reprise l'appareil devient muet sans que personne le sache. Si la reprise
+ * échoue (session expirée), la page rétablit l'abonnement à sa prochaine ouverture.
+ */
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(renewSubscription(event));
+});
+
+async function renewSubscription(event) {
+  try {
+    const previous = event.oldSubscription;
+    const key = previous && previous.options && previous.options.applicationServerKey;
+
+    const subscription =
+      event.newSubscription ||
+      (key
+        ? await self.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: key,
+          })
+        : null);
+
+    if (!subscription) return;
+
+    await fetch('/api/me/push/subscriptions', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(subscription.toJSON()),
+    });
+  } catch {
+    // Rien à faire ici : la page reprendra la main.
+  }
+}
+
+/**
+ * Chemin interne d'un message, ou la page des alertes s'il n'en propose pas — ou
+ * s'il propose autre chose : une adresse externe, un schéma inattendu.
+ */
+function internalPath(candidate) {
+  // Sans adresse, `new URL('', origine)` donnerait la racine du site : une
+  // notification qui n'a rien à dire de précis renvoie vers les alertes, où
+  // l'on retrouve ce qu'elle annonçait.
+  if (typeof candidate !== 'string' || candidate === '') return ALERTS_PATH;
+
+  try {
+    const url = new URL(candidate, self.location.origin);
+    if (url.origin === self.location.origin) return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     // Contenu illisible : retomber sur les alertes.
   }
 
-  return new URL('/mon-compte/notifications', self.location.origin).href;
+  return ALERTS_PATH;
+}
+
+/** Adresse complète d'un chemin interne. */
+function internalUrl(candidate) {
+  return new URL(internalPath(candidate), self.location.origin).href;
 }
 
 /** Une route de billet : `/t/<jeton>` ou `/mon-compte/billets/<id>`. */

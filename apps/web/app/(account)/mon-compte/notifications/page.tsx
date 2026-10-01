@@ -1,11 +1,25 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { Bell, CalendarClock, CheckCircle2, Info, Mic2, Sparkles } from 'lucide-react';
+import {
+  Bell,
+  CalendarClock,
+  CheckCircle2,
+  ClipboardCheck,
+  Flame,
+  Info,
+  Mic2,
+  ShieldCheck,
+  Sparkles,
+  Ticket,
+  Undo2,
+  Wallet,
+} from 'lucide-react';
 import type { NotificationType } from '@nexakabi/contracts';
 import { formatRelative } from '@nexakabi/utils';
 import { EmptyState, Surface, cn } from '@nexakabi/ui';
 import { fetchCategories, fetchCities } from '@/lib/events';
+import { listOrganizations } from '@/lib/organizations';
 import {
   fetchAccountNewsletter,
   fetchFollows,
@@ -39,18 +53,29 @@ export const metadata: Metadata = { title: 'Alertes' };
  * suivent, dans l'ordre où l'on s'en sert.
  */
 export default async function NotificationsPage() {
-  const [feed, preferences, push, user, interests, categories, cities, follows, newsletter] =
-    await Promise.all([
-      fetchNotifications(),
-      fetchNotificationPreferences(),
-      fetchPushStatus(),
-      getCurrentUser(),
-      fetchInterests(),
-      fetchCategories(),
-      fetchCities(),
-      fetchFollows(),
-      fetchAccountNewsletter(),
-    ]);
+  const [
+    feed,
+    preferences,
+    push,
+    user,
+    interests,
+    categories,
+    cities,
+    follows,
+    newsletter,
+    organizations,
+  ] = await Promise.all([
+    fetchNotifications(),
+    fetchNotificationPreferences(),
+    fetchPushStatus(),
+    getCurrentUser(),
+    fetchInterests(),
+    fetchCategories(),
+    fetchCities(),
+    fetchFollows(),
+    fetchAccountNewsletter(),
+    listOrganizations(),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -83,7 +108,12 @@ export default async function NotificationsPage() {
         </ul>
       )}
 
-      <PreferencesForm initial={preferences} push={push} hasEmail={Boolean(user?.email)} />
+      <PreferencesForm
+        initial={preferences}
+        push={push}
+        hasEmail={Boolean(user?.email)}
+        isOrganizer={organizations.length > 0}
+      />
 
       <InterestsForm categories={categories} cities={cities} initial={interests} />
 
@@ -107,6 +137,11 @@ function NotificationRow({ item }: { item: NotificationItem }) {
     <Surface variant="panel" padding="none">
       <Link
         href={item.actionUrl}
+        // `/pro/ouvrir` CHANGE l'organisation active (un cookie) avant de rediriger.
+        // Next précharge les liens visibles en production : sans cette précaution,
+        // le simple affichage de cette liste basculerait l'organisation, sans
+        // aucun geste de la personne — et la dernière du lot l'emporterait.
+        prefetch={item.actionUrl.startsWith('/pro/ouvrir') ? false : undefined}
         className={cn(
           'flex min-h-[var(--tap-min)] items-start gap-3 px-4 py-3.5 transition hover:bg-surface-alt',
           // `text-text-strong` explicite : la feuille globale colore les liens
@@ -157,6 +192,12 @@ const ICONS: Readonly<Record<NotificationType, ReactNode>> = {
   EVENT_UPDATED: <Info className="size-4" />,
   ORGANIZER_PUBLISHED: <Mic2 className="size-4" />,
   RECOMMENDATION: <Sparkles className="size-4" />,
+  REFUND_COMPLETED: <Undo2 className="size-4" />,
+  SALE_RECEIVED: <Ticket className="size-4" />,
+  SOLD_OUT: <Flame className="size-4" />,
+  EVENT_REVIEWED: <ClipboardCheck className="size-4" />,
+  VERIFICATION_REVIEWED: <ShieldCheck className="size-4" />,
+  PAYOUT_UPDATED: <Wallet className="size-4" />,
 };
 
 const ICON_STYLES: Readonly<Record<NotificationType, string>> = {
@@ -165,4 +206,10 @@ const ICON_STYLES: Readonly<Record<NotificationType, string>> = {
   EVENT_UPDATED: 'bg-blue-50 text-blue-700',
   ORGANIZER_PUBLISHED: 'bg-coral-50 text-coral-700',
   RECOMMENDATION: 'bg-ink text-mint-300',
+  REFUND_COMPLETED: 'bg-mint-50 text-mint-700',
+  SALE_RECEIVED: 'bg-coral-50 text-coral-700',
+  SOLD_OUT: 'bg-amber-50 text-amber-700',
+  EVENT_REVIEWED: 'bg-blue-50 text-blue-700',
+  VERIFICATION_REVIEWED: 'bg-mint-50 text-mint-700',
+  PAYOUT_UPDATED: 'bg-ink text-mint-300',
 };

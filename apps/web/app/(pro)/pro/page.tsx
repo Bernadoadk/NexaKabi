@@ -15,6 +15,8 @@ import {
   SurfaceHeader,
   SurfaceTitle,
 } from '@nexakabi/ui';
+import { EnablePushCard } from '@/components/enable-push-card';
+import { fetchPushStatus } from '@/lib/notifications';
 import { getCurrentUser } from '@/lib/session';
 import { getOrganization, orgFetch, resolveActiveOrganization } from '@/lib/organizations';
 
@@ -59,10 +61,11 @@ export default async function ProHomePage() {
   // second contrôle est une défense en profondeur, pas le chemin normal.
   if (!active) redirect('/pro');
 
-  const [organization, eventsResult, balanceResult] = await Promise.all([
+  const [organization, eventsResult, balanceResult, push] = await Promise.all([
     getOrganization(active.id),
     orgFetch<EventSummary[]>(active.id, '/organizer/events'),
     orgFetch<Balance>(active.id, '/organizer/finance/balance'),
+    fetchPushStatus(),
   ]);
 
   const events = eventsResult.ok ? eventsResult.data : [];
@@ -119,6 +122,10 @@ export default async function ProHomePage() {
           Tes retraits sont actuellement suspendus. Contacte le support pour en savoir plus.
         </Alert>
       ) : null}
+
+      {/* Ses ventes, en direct : ce qu'un organisateur veut savoir à l'instant où ça arrive.
+          La carte se tait si c'est déjà activé, refusé, ou écarté récemment. */}
+      <EnablePushCard variant="organizer" publicKey={push.publicKey} />
 
       <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         {balanceResult.ok ? (

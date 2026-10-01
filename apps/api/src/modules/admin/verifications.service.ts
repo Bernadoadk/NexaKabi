@@ -3,6 +3,7 @@ import {
   describeFailedChecks,
   documentSpec,
   isPersonalDocument,
+  organizationLink,
   type AdminDashboard,
   type DocumentType,
   type ReviewVerificationInput,
@@ -12,7 +13,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { LedgerService } from '../finance/ledger.service';
 import { StorageProvider } from '../media/storage.provider';
-import { OutboundService } from '../notifications/outbound.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /**
  * Vérification des organisations, côté administration.
@@ -35,7 +36,7 @@ export class VerificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly outbound: OutboundService,
+    private readonly notifications: NotificationsService,
     private readonly ledger: LedgerService,
     private readonly storage: StorageProvider,
   ) {}
@@ -280,6 +281,8 @@ export class VerificationsService {
     }
 
     await this.notifyOwner(request.organization.ownerId, {
+      requestId,
+      organizationId: request.organizationId,
       organizationName: request.organization.name,
       decision: input.decision,
       checks: input.checks,
@@ -358,21 +361,26 @@ export class VerificationsService {
   /**
    * Prévient l'organisateur.
    *
-   * ── Pourquoi hors du centre de notifications ────────────────────────────
-   * Le centre appartient au participant, et ses quatre types sont fermés. Une
-   * décision de vérification s'adresse à un organisateur, qui suit son dossier
-   * dans son espace professionnel : la faire passer sous l'étiquette
-   * « paiement confirmé » serait un mensonge d'affichage. Elle part donc
-   * directement, et `MessageLog` en garde la trace.
+   * ── Un type à elle, et plus un détour ─────────────────────────────────────
+   * Cette décision partait directement par WhatsApp ou SMS, hors du centre de
+   * notifications, faute de type pour la porter : l'habiller en « paiement
+   * confirmé » aurait été un mensonge d'affichage. `VERIFICATION_REVIEWED` la
+   * porte désormais. Elle garde son canal critique (WhatsApp, SMS en secours) et
+   * gagne l'appareil et le centre : un organisateur qui attend de pouvoir retirer
+   * son argent n'a plus à deviner que la réponse est arrivée.
    *
    * ── Ce que le message contient ──────────────────────────────────────────
    * En cas de refus, ce qui a échoué PARMI LES TROIS CONTRÔLES, plus le mot du
    * modérateur. « Dossier incomplet » oblige à tout renvoyer ; « le nom sur la
    * pièce ne correspond pas au compte de retrait » se corrige en une fois.
+   *
+   * Ne lève jamais : la décision est déjà prise et inscrite.
    */
   private async notifyOwner(
     ownerId: string,
     input: {
+      requestId: string;
+      organizationId: string;
       organizationName: string;
       decision: string;
       checks: ReviewVerificationInput['checks'];
@@ -380,13 +388,6 @@ export class VerificationsService {
       requestedDocuments?: DocumentType[];
     },
   ): Promise<void> {
-    const owner = await this.prisma.user.findUnique({
-      where: { id: ownerId },
-      select: { phone: true },
-    });
-
-    if (!owner) return;
-
     const approved = input.decision === 'APPROVE';
 
     const title = approved
@@ -405,12 +406,28 @@ export class VerificationsService {
           .filter((line): line is string => Boolean(line))
           .join(' ');
 
-    await this.outbound.sendDirect({
-      userId: ownerId,
-      phone: owner.phone,
-      text: `${title}
-${body}`,
-    });
+    try {
+      await this.notifications.notify({
+        userId: ownerId,
+        type: 'VERIFICATION_REVIEWED',
+        title,
+        body,
+        // Vérifiée : la suite, c'est le retrait. Sinon : le dossier à reprendre.
+        actionUrl: organizationLink(
+          input.organizationId,
+          approved ? '/pro/finances' : '/pro/verification',
+        ),
+        actionLabel: approved ? 'Demander un retrait' : 'Compléter mon dossier',
+        // Un dossier refusé revient corrigé, puis reçoit une nouvelle décision :
+        // chacune est une annonce à part.
+        dedupeKey: `verification:${input.requestId}:${input.decision}:${Date.now()}`,
+      });
+    } catch (error) {
+      this.logger.error(
+        { err: error },
+        `Annonce de la décision sur le dossier ${input.requestId} impossible`,
+      );
+    }
   }
 
   /**

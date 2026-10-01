@@ -339,10 +339,16 @@ export type InvitationKind = z.infer<typeof invitationKindSchema>;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Cinq types de notification, chacun actionnable.
+ * Types de notification, chacun actionnable.
  * Contrainte produit du prototype : aucune notification promotionnelle NON
  * SOLLICITÉE. `RECOMMENDATION` n'existe que pour qui l'a demandée — voir
  * `notifications.ts`.
+ *
+ * Les cinq premiers s'adressent au participant. `REFUND_COMPLETED` est le
+ * sixième : un remboursement annoncé par l'annulation doit aussi être CONFIRMÉ
+ * quand l'argent part. Les cinq derniers s'adressent à une ORGANISATION — ses
+ * ventes, ses décisions de modération et de vérification, ses retraits : tout
+ * ce qui, jusque-là, n'arrivait que par WhatsApp ou ne l'était nulle part.
  */
 export const NOTIFICATION_TYPES = [
   'PAYMENT_CONFIRMED',
@@ -350,6 +356,12 @@ export const NOTIFICATION_TYPES = [
   'EVENT_UPDATED',
   'ORGANIZER_PUBLISHED',
   'RECOMMENDATION',
+  'REFUND_COMPLETED',
+  'SALE_RECEIVED',
+  'SOLD_OUT',
+  'EVENT_REVIEWED',
+  'VERIFICATION_REVIEWED',
+  'PAYOUT_UPDATED',
 ] as const;
 export const notificationTypeSchema = makeEnum(NOTIFICATION_TYPES).schema;
 export type NotificationType = z.infer<typeof notificationTypeSchema>;

@@ -87,3 +87,81 @@ export class ConsoleSmsProvider extends SmsProvider {
     return Promise.resolve();
   }
 }
+
+const BREVO_SMS_URL = 'https://api.brevo.com/v3/transactionalSMS/send';
+const BREVO_TIMEOUT_MS = 10_000;
+
+/**
+ * SMS réels via l'API transactionnelle de Brevo.
+ *
+ * Brevo n'envoie que des SMS : une demande « WhatsApp » (code ou notification)
+ * part donc par SMS, seul canal que ce fournisseur sait atteindre. Les crédits
+ * s'achètent à l'avance, le plan gratuit n'en comprend aucun.
+ */
+@Injectable()
+export class BrevoSmsProvider extends SmsProvider {
+  readonly code = 'brevo';
+  readonly exposesCode = false;
+
+  private readonly logger = new Logger(BrevoSmsProvider.name);
+  private readonly apiKey: string;
+  private readonly sender: string;
+
+  constructor(config: ConfigService<Env, true>) {
+    super();
+
+    this.apiKey = config.get('BREVO_API_KEY', { infer: true });
+    this.sender = config.get('BREVO_SMS_SENDER', { infer: true });
+
+    if (!this.apiKey) {
+      throw new Error('SMS_PROVIDER=brevo exige BREVO_API_KEY (clé API v3 du compte Brevo).');
+    }
+  }
+
+  async send({ phone, code, channel, expiresInSeconds }: SendCodeInput): Promise<void> {
+    const minutes = Math.max(1, Math.round(expiresInSeconds / 60));
+
+    await this.deliver(
+      phone,
+      `Nexa Kabi : votre code est ${code}. Il expire dans ${minutes} min. Ne le partagez avec personne.`,
+    );
+    this.logger.log(`[${channel}→SMS] code envoyé à ${phone}`);
+  }
+
+  async sendMessage({ phone, channel, text }: SendMessageInput): Promise<void> {
+    await this.deliver(phone, text.split('\n').join(' : '));
+    this.logger.log(`[${channel}→SMS] message envoyé à ${phone}`);
+  }
+
+  private async deliver(phone: string, content: string): Promise<void> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), BREVO_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(BREVO_SMS_URL, {
+        method: 'POST',
+        headers: {
+          'api-key': this.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          sender: this.sender,
+          recipient: phone.replace(/^\+/, ''),
+          content,
+          type: 'transactional',
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        // Le motif de Brevo (« not enough credits », expéditeur refusé…) est ce
+        // que le support doit lire : il finit dans le journal d'envoi.
+        const detail = await response.text().catch(() => '');
+        throw new Error(`Brevo SMS refusé (${response.status}) : ${detail.slice(0, 300)}`);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}

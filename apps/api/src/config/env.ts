@@ -175,7 +175,15 @@ const envSchema = z.object({
    * `console` écrit le code dans les journaux : c'est le mode de développement,
    * il évite de dépendre d'un opérateur SMS pour construire tout le reste.
    */
-  SMS_PROVIDER: z.enum(['console']).default('console'),
+  SMS_PROVIDER: z.enum(['console', 'brevo']).default('console'),
+  /** Clé API v3 de Brevo (SMTP & API → Clés API). Requise si SMS_PROVIDER=brevo. */
+  BREVO_API_KEY: z.string().trim().default(''),
+  /** Nom d'expéditeur affiché : 11 caractères alphanumériques au plus (norme GSM). */
+  BREVO_SMS_SENDER: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9]{1,11}$/, 'BREVO_SMS_SENDER : 1 à 11 lettres ou chiffres, sans espace')
+    .default('NexaKabi'),
 
   /**
    * Fournisseur d'envoi des e-mails — billets, reçus, alertes.
@@ -411,6 +419,10 @@ function assertConsistency(env: Env, addIssue: (path: string, message: string) =
 
   if (env.EMAIL_PROVIDER === 'smtp' && (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASSWORD)) {
     addIssue('SMTP_HOST', 'EMAIL_PROVIDER=smtp exige SMTP_HOST, SMTP_USER et SMTP_PASSWORD.');
+  }
+
+  if (env.SMS_PROVIDER === 'brevo' && !env.BREVO_API_KEY) {
+    addIssue('BREVO_API_KEY', 'SMS_PROVIDER=brevo exige BREVO_API_KEY.');
   }
 
   // Les trois valeurs Web Push vont ensemble. Une clé sans l'autre, et chaque

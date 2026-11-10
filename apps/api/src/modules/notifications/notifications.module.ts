@@ -17,7 +17,7 @@ import { PushService } from './push.service';
 import { RecommendationsService } from './recommendations.service';
 import { RemindersService } from './reminders.service';
 import { SalesNotifierService } from './sales-notifier.service';
-import { ConsoleSmsProvider, SmsProvider } from './sms.provider';
+import { BrevoSmsProvider, ConsoleSmsProvider, SmsProvider } from './sms.provider';
 import type { Env } from '../../config/env';
 
 /**
@@ -51,6 +51,8 @@ import type { Env } from '../../config/env';
         switch (provider) {
           case 'console':
             return new ConsoleSmsProvider(config);
+          case 'brevo':
+            return new BrevoSmsProvider(config);
           default:
             throw new Error(`Fournisseur SMS inconnu : ${String(provider)}`);
         }

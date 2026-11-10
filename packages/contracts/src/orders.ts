@@ -32,6 +32,18 @@ export const orderLineSchema = z.object({
 export const createOrderSchema = z.object({
   eventId: idSchema,
   lines: z.array(orderLineSchema).min(1, 'Choisis au moins un billet'),
+  /**
+   * Provenance, lue dans le `?ref=` de la page événement : `une-<id>` pour un
+   * visiteur venu de la une. Une valeur mal formée — ou d'un autre type — est
+   * simplement ignorée : une attribution ratée ne doit jamais faire échouer un
+   * achat, et le corps entier est validé avant d'atteindre la route.
+   */
+  ref: z
+    .unknown()
+    .optional()
+    .transform((value) =>
+      typeof value === 'string' && /^[\w-]{1,64}$/.test(value) ? value : undefined,
+    ),
 });
 
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;

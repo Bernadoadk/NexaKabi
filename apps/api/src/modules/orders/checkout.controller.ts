@@ -58,6 +58,9 @@ export class CheckoutController {
     const order = await this.orders.create(body, {
       ipAddress: context.ipAddress,
       userAgent: context.userAgent,
+      // Déjà passée à son schéma par le pipe global : une provenance mal
+      // formée y devient `undefined`, jamais un refus de la commande.
+      referrer: body.ref,
     });
 
     return {

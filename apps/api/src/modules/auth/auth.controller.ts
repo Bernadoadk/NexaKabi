@@ -1,16 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import {
-  logoutSchema,
-  refreshSessionSchema,
-  requestOtpSchema,
-  updateProfileSchema,
-  verifyOtpSchema,
-  type RequestOtpResponse,
-  type Session,
-  type SessionUser,
-} from '@nexakabi/contracts';
+import { type RequestOtpResponse, type Session, type SessionUser } from '@nexakabi/contracts';
 import { AuthService, type RequestContext } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
@@ -51,7 +42,7 @@ export class AuthController {
     @Body() body: RequestOtpDto,
     @ReqContext() context: RequestContext,
   ): Promise<RequestOtpResponse> {
-    return this.auth.requestCode(requestOtpSchema.parse(body), context);
+    return this.auth.requestCode(body, context);
   }
 
   @Public()
@@ -65,7 +56,7 @@ export class AuthController {
       'inscription avant le paiement coûterait une part importante des conversions.',
   })
   verifyCode(@Body() body: VerifyOtpDto, @ReqContext() context: RequestContext): Promise<Session> {
-    return this.auth.verifyCode(verifyOtpSchema.parse(body), context);
+    return this.auth.verifyCode(body, context);
   }
 
   @Public()
@@ -78,7 +69,7 @@ export class AuthController {
       'consommé révoque toute la lignée : c’est la signature d’un vol.',
   })
   refresh(@Body() body: RefreshSessionDto): Promise<Session> {
-    const { refreshToken } = refreshSessionSchema.parse(body);
+    const { refreshToken } = body;
     return this.auth.refresh(refreshToken);
   }
 
@@ -87,7 +78,7 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Fermer la session' })
   async logout(@Body() body: LogoutDto): Promise<void> {
-    const { refreshToken, allDevices } = logoutSchema.parse(body);
+    const { refreshToken, allDevices } = body;
     await this.auth.logout(refreshToken, allDevices);
   }
 
@@ -110,6 +101,6 @@ export class AuthController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() body: UpdateProfileDto,
   ): Promise<SessionUser> {
-    return this.auth.completeProfile(user.id, updateProfileSchema.parse(body));
+    return this.auth.completeProfile(user.id, body);
   }
 }

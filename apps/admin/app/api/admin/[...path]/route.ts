@@ -63,6 +63,12 @@ const ALLOWED: readonly RegExp[] = [
   /^newsletter\/campaigns$/,
   /^newsletter\/campaigns\/[\w-]+$/,
   /^newsletter\/campaigns\/[\w-]+\/(preview|test|send|cancel|retry|duplicate)$/,
+  /^spotlights$/,
+  /^spotlights\/(events|settings|reorder|upload-ticket|video-ticket|video)$/,
+  /^spotlights\/[\w-]+$/,
+  /^spotlights\/[\w-]+\/withdraw$/,
+  /^spotlights\/bookings\/[\w-]+$/,
+  /^spotlights\/bookings\/[\w-]+\/(approve|reject|credit)$/,
 ];
 
 /** Noms de fichier en français, là où la route d'API ne l'est pas. */

@@ -269,6 +269,7 @@ c'est cron-job.org qui appelle leurs URL, gratuitement, à la minute, avec l'en-
 | `send-recommendations`   | chaque heure, à la 37ᵉ minute | sélections « Pour toi » — une par participant et par semaine au plus, jamais la nuit (9 h – 20 h, heure de Porto-Novo) |
 | `send-newsletter`        | chaque minute                | lance les campagnes programmées, envoie un lot de 40 adresses de la campagne en cours |
 | `nightly-sweep`          | tous les jours à 3 h         | reprise des webhooks orphelins                       |
+| `settle-spotlights`      | chaque heure, à la 17ᵉ minute | places à la une : délais de paiement écoulés (avoir rendu), bilans des places terminées, demandes jamais examinées (remboursées) |
 
 Deux tâches existent aussi mais **ne sont pas à créer en V1** : `sync-payment-availability` (relève
 l'état des opérateurs) et `sync-payment-providers` (constate les moyens ouverts sur le compte
@@ -334,7 +335,8 @@ tourne donc en mode développement. Ce que cela implique, concrètement :
 
 **Passer en production**, le jour venu :
 
-1. Brancher un fournisseur SMS réel (à implémenter : `SMS_PROVIDER` n'accepte que `console`).
+1. Brancher un fournisseur SMS réel : `SMS_PROVIDER=brevo` + `BREVO_API_KEY` (+ `BREVO_SMS_SENDER`).
+   Il faut avoir acheté des crédits SMS dans Brevo au préalable (le plan gratuit n'en contient pas).
 2. Faire activer le compte Kkiapay (Activer mon compte : RCCM, IFU, pièce du gérant), puis
    remplacer les quatre valeurs Kkiapay par celles du compte LIVE — clés LIVE, et un webhook
    déclaré sur le compte LIVE avec son propre secret — et passer `KKIAPAY_SANDBOX=false`.

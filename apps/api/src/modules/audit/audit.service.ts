@@ -178,6 +178,36 @@ export const AUDIT_ACTIONS = {
   newsletterCampaignRetried: 'admin.newsletter.campaign_retried',
   /** Désabonnement fait depuis la console, à la demande de la personne. */
   newsletterSubscriberUnsubscribed: 'admin.newsletter.subscriber_unsubscribed',
+
+  /**
+   * À la une.
+   *
+   * Ce qui s'affiche en vitrine, et bientôt ce qui s'y vend : qui a mis quoi
+   * en avant, pour quelles dates, et qui l'a retiré.
+   */
+  spotlightCreated: 'admin.spotlight.created',
+  spotlightUpdated: 'admin.spotlight.updated',
+  spotlightWithdrawn: 'admin.spotlight.withdrawn',
+  spotlightsReordered: 'admin.spotlight.reordered',
+  settingsSpotlightsUpdated: 'settings.spotlights.updated',
+
+  /**
+   * Places à la une achetées par les organisateurs.
+   *
+   * De l'argent change de main à chaque ligne : la demande, son règlement, la
+   * décision de l'équipe, chaque jour rendu en avoir et chaque franc rendu au
+   * solde doivent pouvoir se raconter sans reconstituer quoi que ce soit.
+   */
+  spotlightBookingRequested: 'spotlight.booking.requested',
+  spotlightBookingPaid: 'spotlight.booking.paid',
+  spotlightBookingUnfulfillable: 'spotlight.booking.unfulfillable',
+  spotlightBookingExpired: 'spotlight.booking.expired',
+  spotlightBookingCancelled: 'spotlight.booking.cancelled',
+  spotlightBookingApproved: 'admin.spotlight.booking.approved',
+  spotlightBookingRejected: 'admin.spotlight.booking.rejected',
+  spotlightBookingInterrupted: 'spotlight.booking.interrupted',
+  spotlightBookingCompleted: 'spotlight.booking.completed',
+  spotlightCreditGranted: 'admin.spotlight.credit.granted',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

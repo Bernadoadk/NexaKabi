@@ -2,7 +2,17 @@ import { timingSafeEqual } from 'node:crypto';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
-import { UPLOAD_MAX_BYTES, type DirectUploadTicket, type StagedUpload } from '@nexakabi/contracts';
+import {
+  SPOTLIGHT_VIDEO_MAX_BYTES,
+  SPOTLIGHT_VIDEO_MAX_LABEL,
+  SPOTLIGHT_VIDEO_MAX_SECONDS,
+  SPOTLIGHT_VIDEO_SOURCE_MAX_SECONDS,
+  UPLOAD_MAX_BYTES,
+  type DirectUploadTicket,
+  type SpotlightVideo,
+  type SpotlightVideoTicket,
+  type StagedUpload,
+} from '@nexakabi/contracts';
 import type { Env } from '../../config/env';
 import {
   PutObjectInput,
@@ -26,6 +36,30 @@ const STAGING_DELIVERY_TYPE = 'authenticated';
 
 /** Un ticket Cloudinary vaut une heure après son horodatage. */
 const TICKET_LIFETIME_SECONDS = 60 * 60;
+
+/**
+ * Vidéos de la une.
+ *
+ * ── Ce que le stockage fait de la vidéo, et pourquoi c'est lui ──────────────
+ * Une vidéo ne passe pas par nos fonctions (4,5 Mo au plus sur Vercel, et
+ * aucun outil de montage à bord). Le navigateur la dépose directement, avec un
+ * ticket qui IMPOSE l'emplacement (sous l'identifiant du déposant), les
+ * formats acceptés, et le traitement que Cloudinary en tire dès le dépôt :
+ *
+ *  · 1280×720 au plus, sans recadrage forcé ;
+ *  · sans piste son (`ac_none`) — la une la lit muette, autant ne pas la
+ *    télécharger ;
+ *  · coupée à quinze secondes (`du_15`) ;
+ *  · H.264 en MP4, lisible partout, qualité réglée par Cloudinary.
+ *
+ * L'affiche (première image) est tirée de la même façon. Les deux adresses
+ * renvoyées par `confirmVideo` désignent exactement ces dérivés, préparés à
+ * l'avance (`eager`) : le premier visiteur ne déclenche aucun calcul.
+ */
+const VIDEO_PREFIX = 'spotlight-videos';
+const VIDEO_FORMATS = ['mp4', 'mov', 'webm'] as const;
+const VIDEO_TRANSFORMATION = `c_limit,h_720,w_1280/ac_none,du_${SPOTLIGHT_VIDEO_MAX_SECONDS},q_auto:good,vc_h264`;
+const POSTER_TRANSFORMATION = 'c_limit,h_720,q_auto,so_0,w_1280';
 
 /**
  * Stockage Cloudinary — implémentation de production.
@@ -203,6 +237,117 @@ export class CloudinaryStorageProvider extends StorageProvider {
     return stale.length;
   }
 
+  /**
+   * Ticket de dépôt direct d'une vidéo.
+   *
+   * La signature couvre l'emplacement, les formats acceptés et le traitement :
+   * le navigateur ne peut ni déposer ailleurs que sous son identifiant, ni
+   * envoyer autre chose qu'une vidéo, ni se dispenser du traitement.
+   */
+  async createVideoUploadTicket(ownerId: string): Promise<SpotlightVideoTicket> {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const params = {
+      allowed_formats: VIDEO_FORMATS.join(','),
+      eager: `${VIDEO_TRANSFORMATION}/mp4|${POSTER_TRANSFORMATION}/jpg`,
+      eager_async: 'true',
+      public_id: `${VIDEO_PREFIX}/${ownerId}/${cryptoRandomId()}`,
+      timestamp,
+    };
+
+    return Promise.resolve({
+      uploadUrl: `https://api.cloudinary.com/v1_1/${this.cloudName}/video/upload`,
+      fields: {
+        api_key: this.apiKey,
+        allowed_formats: params.allowed_formats,
+        eager: params.eager,
+        eager_async: params.eager_async,
+        public_id: params.public_id,
+        timestamp: String(timestamp),
+        signature: cloudinary.utils.api_sign_request(params, this.apiSecret),
+      },
+      fileField: 'file',
+      maxBytes: SPOTLIGHT_VIDEO_MAX_BYTES,
+      expiresAt: new Date((timestamp + TICKET_LIFETIME_SECONDS) * 1000).toISOString(),
+    });
+  }
+
+  /**
+   * Vérifie une vidéo déposée.
+   *
+   * La signature de la réponse prouve qu'elle vient d'un de NOS tickets ; la
+   * lecture chez Cloudinary — pas ce que le navigateur prétend — dit sa durée,
+   * son poids et son format. Hors limites, elle est supprimée : rien ne reste
+   * public qui n'ait été accepté.
+   */
+  async confirmVideo(reference: StagedUpload, ownerId: string): Promise<SpotlightVideo> {
+    const { publicId, version, signature } = reference;
+
+    if (!publicId.startsWith(`${VIDEO_PREFIX}/${ownerId}/`)) {
+      throw new BadRequestException('Cette vidéo ne correspond à aucun dépôt en cours.');
+    }
+
+    const expected = cloudinary.utils.api_sign_request(
+      { public_id: publicId, version: String(version) },
+      this.apiSecret,
+    );
+
+    if (!constantTimeEqual(signature, expected)) {
+      throw new BadRequestException('Cette vidéo ne correspond à aucun dépôt en cours.');
+    }
+
+    let resource: { bytes?: number; duration?: number; format?: string; version?: number };
+
+    try {
+      // `media_metadata` : sans lui, l'API d'administration ne rend PAS la
+      // durée d'une vidéo (constaté le 10 nov. 2026) — et la vérification
+      // refuserait toutes les vidéos pour « durée illisible ».
+      resource = (await cloudinary.api.resource(publicId, {
+        resource_type: 'video',
+        type: 'upload',
+        media_metadata: true,
+      })) as typeof resource;
+    } catch {
+      throw new BadRequestException(
+        'La vidéo déposée est introuvable. Réessaie le dépôt depuis le début.',
+      );
+    }
+
+    const refusal = describeVideoRefusal(resource);
+
+    if (refusal) {
+      await this.discardVideo(publicId);
+      throw new BadRequestException(refusal);
+    }
+
+    const base = `https://res.cloudinary.com/${this.cloudName}/video/upload`;
+    const versioned = `v${resource.version ?? version}/${publicId}`;
+
+    this.logger.log(
+      `Vidéo de la une acceptée : ${publicId} (${resource.bytes} octets, ${resource.duration} s)`,
+    );
+
+    return {
+      url: `${base}/${VIDEO_TRANSFORMATION}/${versioned}.mp4`,
+      posterUrl: `${base}/${POSTER_TRANSFORMATION}/${versioned}.jpg`,
+      durationSeconds: Math.max(
+        1,
+        Math.min(SPOTLIGHT_VIDEO_MAX_SECONDS, Math.round(resource.duration ?? 0)),
+      ),
+    };
+  }
+
+  isOwnPublicUrl(url: string): boolean {
+    return url.startsWith(`https://res.cloudinary.com/${this.cloudName}/`);
+  }
+
+  private async discardVideo(publicId: string): Promise<void> {
+    try {
+      await cloudinary.uploader.destroy(publicId, { resource_type: 'video', invalidate: true });
+    } catch (error) {
+      this.logger.warn({ err: error }, `Vidéo refusée non supprimée : ${publicId}`);
+    }
+  }
+
   private async discardStaged(publicId: string): Promise<void> {
     try {
       // `invalidate` : sans lui, le CDN continue de servir l'objet supprimé
@@ -294,14 +439,37 @@ export class CloudinaryStorageProvider extends StorageProvider {
   }
 }
 
+/** Pourquoi une vidéo déposée est refusée — `null` si elle est acceptée. */
+function describeVideoRefusal(resource: {
+  bytes?: number;
+  duration?: number;
+  format?: string;
+}): string | null {
+  if (!resource.format || !(VIDEO_FORMATS as readonly string[]).includes(resource.format)) {
+    return 'Ce fichier n’est pas une vidéo MP4, MOV ou WebM.';
+  }
+
+  if (resource.bytes === undefined || resource.bytes > SPOTLIGHT_VIDEO_MAX_BYTES) {
+    return `Cette vidéo dépasse ${SPOTLIGHT_VIDEO_MAX_LABEL}. Exporte-la plus courte ou en 720p.`;
+  }
+
+  if (!resource.duration || resource.duration <= 0) {
+    return 'La durée de cette vidéo est illisible. Exporte-la de nouveau en MP4.';
+  }
+
+  if (resource.duration > SPOTLIGHT_VIDEO_SOURCE_MAX_SECONDS) {
+    return `Cette vidéo dure plus de ${SPOTLIGHT_VIDEO_SOURCE_MAX_SECONDS} secondes. La une n’en montre que ${SPOTLIGHT_VIDEO_MAX_SECONDS} : coupe-la autour du meilleur moment.`;
+  }
+
+  return null;
+}
+
 /** Type de ressource Cloudinary : `raw` pour tout ce qui n'est pas une image. */
 function resourceTypeFor(mimeType: string): 'image' | 'raw' {
   return mimeType.startsWith('image/') ? 'image' : 'raw';
 }
 
-function parseKey(
-  key: string,
-): {
+function parseKey(key: string): {
   deliveryType: 'upload' | 'authenticated';
   resourceType: 'image' | 'raw';
   publicId: string;

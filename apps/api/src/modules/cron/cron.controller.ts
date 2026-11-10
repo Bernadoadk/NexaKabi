@@ -8,6 +8,7 @@ import { NotificationsScheduler } from '../notifications/notifications.scheduler
 import { PaymentRoutingService } from '../payments/payment-routing.service';
 import { ReconciliationService } from '../payments/reconciliation.service';
 import { StorageProvider } from '../media/storage.provider';
+import { SpotlightsScheduler } from '../spotlights/spotlights.scheduler';
 import { CronSecretGuard } from './cron-secret.guard';
 
 /**
@@ -31,6 +32,7 @@ export const CRON_JOBS = [
   'purge-staged-uploads',
   'sync-payment-availability',
   'sync-payment-providers',
+  'settle-spotlights',
 ] as const;
 
 export type CronJobName = (typeof CRON_JOBS)[number];
@@ -69,6 +71,7 @@ export class CronController {
     newsletter: NewsletterScheduler,
     storage: StorageProvider,
     routing: PaymentRoutingService,
+    spotlights: SpotlightsScheduler,
   ) {
     this.jobs = {
       'release-expired-orders': () => reconciliation.releaseExpiredOrders(),
@@ -93,6 +96,9 @@ export class CronController {
       // acheteurs jusqu'au démarrage suivant.
       'sync-payment-availability': () => routing.syncAvailability(),
       'sync-payment-providers': () => routing.syncConnectedProviders(),
+      // Toutes les heures : délais de paiement écoulés, bilans des places
+      // terminées (voir `SpotlightsScheduler`).
+      'settle-spotlights': () => spotlights.settle(),
     };
   }
 

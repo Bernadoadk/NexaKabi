@@ -3,9 +3,11 @@ import {
   ConflictException,
   HttpException,
   HttpStatus,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -33,6 +35,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { CountriesService } from '../countries/countries.service';
 import { OrdersService } from '../orders/orders.service';
+import { SpotlightBookingSettlement } from '../spotlights/spotlight-booking-settlement';
 import { Prisma } from '../../generated/prisma/client';
 import { PaymentRoutingService } from './payment-routing.service';
 import { PaymentProviderRegistry } from './provider.registry';
@@ -65,8 +68,18 @@ export interface PaymentOutcome {
 
 export type OutcomeResult = 'applied' | 'ignored' | 'unchanged';
 
-/** Ce que devient la COMMANDE quand son paiement réussit. */
+/**
+ * Ce que devient ce qu'un paiement règle — la commande, ou la place à la une
+ * — quand il réussit : réglé, ou plus réglable (réservation écoulée, places
+ * reprises, place annulée).
+ */
 type Settlement = 'paid' | 'unfulfillable';
+
+/** Ce que règle un paiement : exactement l'un des deux (contrainte en base). */
+interface PaymentSubject {
+  readonly orderId: string | null;
+  readonly bookingId: string | null;
+}
 
 /**
  * Verdict sur une transaction de fenêtre de paiement : en plus des issues
@@ -103,7 +116,11 @@ const PAGE_POLL_MIN_INTERVAL_MS = 6_000;
  */
 const CHECKOUT_VERIFICATIONS_PER_MINUTE = 10;
 
-/** Un paiement avec ce qu'il faut de sa commande pour reconstruire une fenêtre. */
+/**
+ * Un paiement avec ce qu'il faut de ce qu'il règle pour reconstruire une
+ * fenêtre : la commande et son acheteur, ou la place à la une et le membre
+ * de l'organisation qui l'a demandée.
+ */
 const paymentWithOrder = Prisma.validator<Prisma.PaymentDefaultArgs>()({
   include: {
     order: {
@@ -114,6 +131,15 @@ const paymentWithOrder = Prisma.validator<Prisma.PaymentDefaultArgs>()({
         buyerEmail: true,
         expiresAt: true,
         event: { select: { title: true } },
+      },
+    },
+    spotlightBooking: {
+      select: {
+        reference: true,
+        eventId: true,
+        holdExpiresAt: true,
+        event: { select: { title: true } },
+        requestedBy: { select: { fullName: true, phone: true, email: true } },
       },
     },
   },
@@ -167,6 +193,8 @@ export class PaymentsService {
     private readonly audit: AuditService,
     private readonly events: EventEmitter2,
     config: ConfigService<Env, true>,
+    @Inject(forwardRef(() => SpotlightBookingSettlement))
+    private readonly bookingSettlement: SpotlightBookingSettlement,
   ) {
     this.webUrl =
       config.get('PUBLIC_WEB_URL', { infer: true }) ??
@@ -514,13 +542,38 @@ export class PaymentsService {
       throw new NotFoundException("Ce paiement n'existe pas.");
     }
 
+    return this.confirmWidgetTransaction(payment, providerReference, {
+      settled: (settled) => this.toState(settled, reference),
+      current: (current) => this.buyerState(current, reference),
+      notFoundHint: 'garde ta référence de commande',
+    });
+  }
+
+  /**
+   * Cœur de la confirmation par la page, commun à la commande et à la place
+   * à la une : la même lecture chez le prestataire, le même plafond de
+   * vérifications, le même refus d'une transaction qui n'appartient pas à ce
+   * paiement. Seul change ce que l'on montre ensuite.
+   */
+  private async confirmWidgetTransaction(
+    payment: PaymentWithOrder,
+    providerReference: string,
+    present: {
+      /** Réglé par CETTE transaction : rien à relire. */
+      settled: (payment: PaymentWithOrder) => PaymentState | Promise<PaymentState>;
+      /** État relu après la vérification. */
+      current: (payment: PaymentWithOrder) => Promise<PaymentState>;
+      /** Ce que l'acheteur doit garder pour le support. */
+      notFoundHint: string;
+    },
+  ): Promise<PaymentState> {
     if (this.flowOf(payment) !== 'widget') {
       throw new BadRequestException('Ce paiement ne se confirme pas depuis la page.');
     }
 
     // Déjà réglé par cette transaction : rien à relire.
     if (payment.status === 'SUCCEEDED' && payment.providerReference === providerReference) {
-      return this.toState(payment, reference);
+      return present.settled(payment);
     }
 
     const recentChecks = await this.prisma.paymentAttempt.count({
@@ -559,7 +612,7 @@ export class PaymentsService {
         await this.rejectTransaction(payment, providerReference, error.message, 'checkout');
         throw new BadRequestException(
           'Cette transaction est introuvable chez le prestataire. Si tu as été débité, ' +
-            'garde ta référence de commande : la confirmation peut encore arriver.',
+            `${present.notFoundHint} : la confirmation peut encore arriver.`,
         );
       }
 
@@ -570,7 +623,7 @@ export class PaymentsService {
         'Vérification demandée par la page impossible — la notification ou la réconciliation conclura',
       );
 
-      return this.toState(payment, reference, { widget: this.widgetFor(payment) });
+      return present.current(payment);
     }
 
     await this.prisma.paymentAttempt.create({
@@ -592,8 +645,7 @@ export class PaymentsService {
 
     if (verdict === 'rejected') {
       throw new BadRequestException(
-        'Cette transaction ne correspond pas à ce paiement. Si tu as été débité, garde ta ' +
-          'référence de commande et contacte le support.',
+        `Cette transaction ne correspond pas à ce paiement. Si tu as été débité, ${present.notFoundHint} et contacte le support.`,
       );
     }
 
@@ -602,7 +654,238 @@ export class PaymentsService {
       ...paymentWithOrder,
     });
 
-    return this.buyerState(refreshed, reference);
+    return present.current(refreshed);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Places à la une
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Ouvre (ou rouvre) la fenêtre de paiement d'une place à la une.
+   *
+   * Même règle que pour une commande : tant qu'un paiement est ouvert sur la
+   * place, c'est LUI qui sert — un second paiement ferait abandonner le
+   * premier, sur lequel l'organisateur a peut-être validé. Seule la fenêtre
+   * du prestataire est proposée : une place s'achète depuis un navigateur.
+   *
+   * L'appelant (le service des places) a déjà vérifié que la place attend son
+   * paiement, que le délai court encore, et qui la paie.
+   */
+  async initiateForBooking(input: {
+    bookingId: string;
+    reference: string;
+    countryCode: string;
+    currency: string;
+    amount: number;
+    method: PaymentMethodCode;
+    expiresAt: Date;
+    actorUserId: string;
+  }): Promise<PaymentState> {
+    const route = await this.routing.resolveCollection(input.countryCode, input.method);
+    const flow = route.provider.checkoutFlow(route.method.kind);
+
+    if (flow !== 'widget') {
+      throw new BadRequestException(
+        'Ce moyen de paiement ne s’utilise pas pour une mise en avant. Choisis Mobile Money ou carte.',
+      );
+    }
+
+    const inFlight = await this.prisma.payment.findFirst({
+      where: {
+        spotlightBookingId: input.bookingId,
+        status: { in: ['INITIATED', 'PENDING', 'PROCESSING'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (
+      inFlight &&
+      inFlight.providerCode === route.provider.code &&
+      this.flowOf(inFlight) === 'widget'
+    ) {
+      const reopened = await this.prisma.payment.update({
+        where: { id: inFlight.id },
+        data: { methodCode: route.method.code, failureCode: null, failureReason: null },
+        ...paymentWithOrder,
+      });
+
+      return this.toState(reopened, input.reference, { widget: this.widgetFor(reopened) });
+    }
+
+    if (inFlight) {
+      await this.applyOutcome(inFlight.id, {
+        status: 'CANCELLED',
+        failureReason: "Remplacée par une nouvelle demande de l'organisateur.",
+        source: 'initiate',
+      });
+    }
+
+    // Même raisonnement que `initiate` : le rang ne compte que les demandes
+    // terminées, pour que deux clics simultanés se heurtent à l'index unique.
+    const retryGeneration = await this.prisma.payment.count({
+      where: {
+        spotlightBookingId: input.bookingId,
+        status: { notIn: ['INITIATED', 'PENDING', 'PROCESSING'] },
+      },
+    });
+
+    const idempotencyKey = `spot:${input.bookingId}:${retryGeneration}`;
+    let payment;
+
+    try {
+      payment = await this.prisma.payment.create({
+        data: {
+          spotlightBookingId: input.bookingId,
+          providerCode: route.provider.code,
+          methodCode: route.method.code,
+          countryCode: route.countryCode,
+          idempotencyKey,
+          amount: input.amount,
+          currency: input.currency,
+          status: 'INITIATED',
+        },
+        ...paymentWithOrder,
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+
+      const winner = await this.prisma.payment.findUnique({
+        where: { idempotencyKey },
+        ...paymentWithOrder,
+      });
+
+      if (!winner) throw error;
+      return this.toState(winner, input.reference, { widget: this.widgetFor(winner) });
+    }
+
+    const providerInput = this.providerInputFor(payment);
+    if (!providerInput) {
+      throw new BadRequestException(
+        'Ce moyen de paiement n’est plus proposé. Choisis-en un autre.',
+      );
+    }
+
+    let result;
+
+    try {
+      result = await route.provider.initiate(providerInput);
+    } catch (error) {
+      // Le paiement reste ouvert : la réconciliation tranchera, comme pour une
+      // commande. Rien n'a pu être débité sans fenêtre ouverte.
+      this.logger.error({ err: error, paymentId: payment.id }, "Échec d'initiation du paiement");
+      throw new BadRequestException(
+        "Le service de paiement n'a pas répondu. Réessaie dans quelques instants.",
+      );
+    }
+
+    const updated = await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: result.status,
+        // La place retient ses jours jusqu'à cette échéance (délai de grâce
+        // compris) : le paiement vit aussi longtemps, pas plus.
+        expiresAt: input.expiresAt,
+        providerPayload: toJson(result.rawResponse),
+      },
+      ...paymentWithOrder,
+    });
+
+    await this.prisma.paymentAttempt.create({
+      data: {
+        paymentId: payment.id,
+        kind: 'INITIATE',
+        requestPayload: {
+          provider: route.provider.code,
+          method: route.method.code,
+          country: route.countryCode,
+          amount: input.amount,
+          flow,
+          subject: 'spotlight',
+        },
+        responsePayload: toJson(result.rawResponse),
+      },
+    });
+
+    await this.audit.record({
+      action: AUDIT_ACTIONS.paymentInitiated,
+      entityType: 'payment',
+      entityId: payment.id,
+      actorType: 'USER',
+      actorUserId: input.actorUserId,
+      changes: {
+        provider: route.provider.code,
+        method: route.method.code,
+        amount: input.amount,
+        spotlightBookingId: input.bookingId,
+      },
+    });
+
+    return this.toState(updated, input.reference, {
+      widget: isPaymentPending(updated.status) ? (result.widget ?? null) : null,
+    });
+  }
+
+  /** État d'un paiement de place, avec la même relecture que l'écran d'attente d'une commande. */
+  async getBookingPaymentState(
+    bookingId: string,
+    reference: string,
+    paymentId: string,
+  ): Promise<PaymentState> {
+    const payment = await this.prisma.payment.findFirst({
+      where: { id: paymentId, spotlightBookingId: bookingId },
+    });
+
+    if (!payment) {
+      throw new NotFoundException("Ce paiement n'existe pas.");
+    }
+
+    if (isPaymentPending(payment.status) && (await this.providerCheckIsDue(payment.id))) {
+      await this.pollProvider(payment.id);
+    }
+
+    const refreshed = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      ...paymentWithOrder,
+    });
+
+    return this.bookingState(refreshed, reference);
+  }
+
+  /** La page annonce une transaction faite dans la fenêtre — une piste, relue chez le prestataire. */
+  async confirmForBooking(
+    bookingId: string,
+    reference: string,
+    paymentId: string,
+    providerReference: string,
+  ): Promise<PaymentState> {
+    const payment = await this.prisma.payment.findFirst({
+      where: { id: paymentId, spotlightBookingId: bookingId },
+      ...paymentWithOrder,
+    });
+
+    if (!payment) {
+      throw new NotFoundException("Ce paiement n'existe pas.");
+    }
+
+    return this.confirmWidgetTransaction(payment, providerReference, {
+      settled: (settled) => this.toState(settled, reference),
+      current: (current) => this.bookingState(current, reference),
+      notFoundHint: `garde la référence ${reference}`,
+    });
+  }
+
+  /** Comme `buyerState` : une place réglée par un AUTRE paiement s'affiche réglée. */
+  private async bookingState(payment: PaymentWithOrder, reference: string): Promise<PaymentState> {
+    if (payment.status !== 'SUCCEEDED' && payment.spotlightBookingId) {
+      const settled = await this.prisma.payment.findFirst({
+        where: { spotlightBookingId: payment.spotlightBookingId, status: 'SUCCEEDED' },
+      });
+
+      if (settled) return this.toState(settled, reference);
+    }
+
+    return this.toState(payment, reference, { widget: this.widgetFor(payment) });
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -1043,6 +1326,7 @@ export class PaymentsService {
       providerReference?: string;
       settledBy?: string | null;
       orderId?: string;
+      spotlightBookingId?: string;
       source: OutcomeSource;
     },
   ): Promise<void> {
@@ -1126,12 +1410,15 @@ export class PaymentsService {
           {
             id: string;
             status: PaymentStatus;
-            orderId: string;
+            orderId: string | null;
+            spotlightBookingId: string | null;
             payerPhone: string | null;
             countryCode: string;
+            amount: number;
           }[]
         >`
-        SELECT id, status::text AS status, "orderId", "payerPhone", "countryCode"
+        SELECT id, status::text AS status, "orderId", "spotlightBookingId", "payerPhone",
+               "countryCode", amount
         FROM payment
         WHERE id = ${paymentId}
         FOR UPDATE
@@ -1169,6 +1456,10 @@ export class PaymentsService {
 
         const now = new Date();
         const late = !isPaymentPending(current.status);
+        const subject: PaymentSubject = {
+          orderId: current.orderId,
+          bookingId: current.spotlightBookingId,
+        };
 
         /**
          * ── Un succès sur une commande déjà réglée ne s'applique pas ─────────
@@ -1182,7 +1473,7 @@ export class PaymentsService {
          */
         let orderStatus: string | null = null;
 
-        if (outcome.status === 'SUCCEEDED') {
+        if (outcome.status === 'SUCCEEDED' && current.orderId) {
           const orders = await tx.$queryRaw<{ status: string }[]>`
             SELECT status::text AS status FROM "order" WHERE id = ${current.orderId} FOR UPDATE
           `;
@@ -1195,7 +1486,25 @@ export class PaymentsService {
           });
 
           if (settledElsewhere || SETTLED_ORDER_STATUSES.includes(orderStatus ?? '')) {
-            return { duplicate: true, orderId: current.orderId } as const;
+            return { duplicate: true, subject } as const;
+          }
+        }
+
+        // Une place à la une ne se règle qu'une fois chez le prestataire —
+        // index `payment_one_success_per_spotlight_booking`. Un second
+        // encaissement est consigné, à rembourser, comme pour une commande.
+        if (outcome.status === 'SUCCEEDED' && current.spotlightBookingId) {
+          const settledElsewhere = await tx.payment.findFirst({
+            where: {
+              spotlightBookingId: current.spotlightBookingId,
+              status: 'SUCCEEDED',
+              id: { not: paymentId },
+            },
+            select: { id: true },
+          });
+
+          if (settledElsewhere) {
+            return { duplicate: true, subject } as const;
           }
         }
 
@@ -1227,18 +1536,35 @@ export class PaymentsService {
         });
 
         // Commande encore en attente — ou réservation écoulée, que `markPaid`
-        // honore si les places sont encore libres (`secureForPayment`).
-        const settlement: Settlement | null =
-          outcome.status === 'SUCCEEDED'
-            ? await this.orders.markPaid(tx, current.orderId, now, outcome.providerFeeAmount ?? 0)
-            : null;
+        // honore si les places sont encore libres (`secureForPayment`). Place
+        // à la une : en validation, ou — annulée, expirée entre-temps — son
+        // montant rendu au solde de l'organisation, dans cette même transaction.
+        let settlement: Settlement | null = null;
+
+        if (outcome.status === 'SUCCEEDED') {
+          if (current.orderId) {
+            settlement = await this.orders.markPaid(
+              tx,
+              current.orderId,
+              now,
+              outcome.providerFeeAmount ?? 0,
+            );
+          } else if (current.spotlightBookingId) {
+            settlement = await this.bookingSettlement.settle(tx, {
+              bookingId: current.spotlightBookingId,
+              paymentId,
+              amount: current.amount,
+              now,
+            });
+          }
+        }
 
         // Un échec ne touche PAS à la commande : elle reste en AWAITING_PAYMENT
         // et ses places restent réservées jusqu'à l'expiration, pour que
         // l'acheteur puisse réessayer avec un autre numéro ou un autre moyen.
         // « Aucun montant n'a été débité · panier conservé » (écran A6).
 
-        return { orderId: current.orderId, settlement, late } as const;
+        return { subject, settlement, late } as const;
       },
       {
         /**
@@ -1273,13 +1599,14 @@ export class PaymentsService {
     if ('duplicate' in result) {
       await this.flagDuplicate(paymentId, {
         providerReference: outcome.providerReference,
-        orderId: result.orderId,
+        orderId: result.subject.orderId ?? undefined,
+        spotlightBookingId: result.subject.bookingId ?? undefined,
         source: outcome.source,
       });
       return 'ignored';
     }
 
-    await this.afterTransition(paymentId, result.orderId, outcome, result.settlement, result.late);
+    await this.afterTransition(paymentId, result.subject, outcome, result.settlement, result.late);
 
     return 'applied';
   }
@@ -1532,21 +1859,40 @@ export class PaymentsService {
 
     const after = await this.prisma.payment.findUniqueOrThrow({
       where: { id: paymentId },
-      select: { status: true, order: { select: { status: true } } },
+      select: {
+        status: true,
+        order: { select: { status: true } },
+        spotlightBooking: { select: { status: true, reference: true } },
+      },
     });
 
-    // Non appliqué alors que Kkiapay confirme : la commande était déjà réglée
-    // par un autre paiement (voir `applyOutcome`) — un encaissement en trop.
+    // Non appliqué alors que Kkiapay confirme : la commande (ou la place)
+    // était déjà réglée par un autre paiement (voir `applyOutcome`) — un
+    // encaissement en trop.
     if (after.status !== 'SUCCEEDED') {
       return {
         outcome: 'duplicate',
         message:
-          'Transaction encaissée, mais la commande était déjà réglée : ' +
+          `Transaction encaissée, mais ${after.spotlightBooking ? 'la place à la une' : 'la commande'} était déjà réglée : ` +
           `rembourse ce paiement en double depuis le tableau de bord de ${label}.`,
       };
     }
 
-    if (after.order.status !== 'PAID' && after.order.status !== 'COMPLETED') {
+    if (after.spotlightBooking) {
+      // Une place qui ne pouvait plus être honorée a vu son montant rendu au
+      // solde de l'organisation, dans la même transaction (`settle`).
+      return after.spotlightBooking.status === 'PENDING_REVIEW'
+        ? {
+            outcome: 'settled',
+            message: `Transaction encaissée : la place ${after.spotlightBooking.reference} attend la validation de l’équipe.`,
+          }
+        : {
+            outcome: 'unfulfillable',
+            message: `Transaction encaissée, mais la place ${after.spotlightBooking.reference} n’était plus réservée : le montant a été rendu au solde de l’organisation.`,
+          };
+    }
+
+    if (after.order && after.order.status !== 'PAID' && after.order.status !== 'COMPLETED') {
       return {
         outcome: 'unfulfillable',
         message:
@@ -1697,36 +2043,72 @@ export class PaymentsService {
     if (!isPaymentPending(payment.status) || this.flowOf(payment) !== 'widget') return null;
 
     const provider = this.registry.get(payment.providerCode as PaymentProviderCode);
+    const input = this.providerInputFor(payment);
+
+    if (!provider.widget || !input) return null;
+
+    return provider.widget(input);
+  }
+
+  /**
+   * Ce que le prestataire doit savoir d'un paiement : montant, moyen, payeur,
+   * libellé — pour une commande (l'acheteur) comme pour une place à la une
+   * (le membre de l'organisation qui l'a demandée). `null` si le moyen n'est
+   * plus connu.
+   */
+  private providerInputFor(payment: PaymentWithOrder): ProviderInitiateInput | null {
     const kind = getPaymentMethodDefinition(payment.methodCode)?.kind;
+    if (!kind) return null;
 
-    if (!provider.widget || !kind) return null;
+    const method = {
+      code: payment.methodCode as PaymentMethodCode,
+      kind,
+      providerMethodCode:
+        resolveProviderMethodCode(
+          payment.providerCode,
+          payment.methodCode as PaymentMethodCode,
+          payment.countryCode,
+        ) ?? payment.methodCode,
+    };
 
-    const input: ProviderInitiateInput = {
+    if (payment.order) {
+      return {
+        paymentId: payment.id,
+        orderReference: payment.order.reference,
+        amount: payment.amount,
+        currency: payment.currency,
+        countryCode: payment.countryCode,
+        method,
+        customer: {
+          name: payment.order.buyerName,
+          phone: payment.order.buyerPhone,
+          email: payment.order.buyerEmail ?? undefined,
+        },
+        description: `Nexa-Kabi · ${payment.order.event.title}`,
+        returnUrls: this.returnUrls(payment.order.reference, payment.id),
+      };
+    }
+
+    const booking = payment.spotlightBooking;
+    if (!booking) return null;
+
+    const back = `${this.webUrl}/pro/evenements/${encodeURIComponent(booking.eventId)}/mise-en-avant?paiement=${encodeURIComponent(payment.id)}`;
+
+    return {
       paymentId: payment.id,
-      orderReference: payment.order.reference,
+      orderReference: booking.reference,
       amount: payment.amount,
       currency: payment.currency,
       countryCode: payment.countryCode,
-      method: {
-        code: payment.methodCode as PaymentMethodCode,
-        kind,
-        providerMethodCode:
-          resolveProviderMethodCode(
-            payment.providerCode,
-            payment.methodCode as PaymentMethodCode,
-            payment.countryCode,
-          ) ?? payment.methodCode,
-      },
+      method,
       customer: {
-        name: payment.order.buyerName,
-        phone: payment.order.buyerPhone,
-        email: payment.order.buyerEmail ?? undefined,
+        name: booking.requestedBy.fullName,
+        phone: booking.requestedBy.phone,
+        email: booking.requestedBy.email ?? undefined,
       },
-      description: `Nexa-Kabi · ${payment.order.event.title}`,
-      returnUrls: this.returnUrls(payment.order.reference, payment.id),
+      description: `Nexa-Kabi · Mise en avant · ${booking.event.title}`,
+      returnUrls: { success: `${back}&retour=succes`, error: `${back}&retour=echec` },
     };
-
-    return provider.widget(input);
   }
 
   /**
@@ -1748,11 +2130,18 @@ export class PaymentsService {
 
   private async afterTransition(
     paymentId: string,
-    orderId: string,
+    subject: PaymentSubject,
     outcome: PaymentOutcome,
     settlement: Settlement | null,
     late: boolean,
   ): Promise<void> {
+    if (subject.bookingId) {
+      await this.afterBookingTransition(paymentId, subject.bookingId, outcome, settlement);
+      return;
+    }
+
+    const orderId = subject.orderId ?? '';
+
     if (outcome.status === 'SUCCEEDED') {
       await this.audit.record({
         action: AUDIT_ACTIONS.paymentSucceeded,
@@ -1807,6 +2196,47 @@ export class PaymentsService {
         entityId: paymentId,
         actorType: 'SYSTEM',
         changes: { orderId, reason: outcome.failureCode ?? outcome.status, source: outcome.source },
+      });
+    }
+  }
+
+  /**
+   * Après l'encaissement d'une place à la une : le domaine de la une prend le
+   * relais (journal, notification), comme les billets pour une commande.
+   */
+  private async afterBookingTransition(
+    paymentId: string,
+    bookingId: string,
+    outcome: PaymentOutcome,
+    settlement: Settlement | null,
+  ): Promise<void> {
+    if (outcome.status === 'SUCCEEDED') {
+      await this.audit.record({
+        action: AUDIT_ACTIONS.paymentSucceeded,
+        entityType: 'payment',
+        entityId: paymentId,
+        actorType: 'SYSTEM',
+        changes: { spotlightBookingId: bookingId, source: outcome.source, settlement },
+      });
+
+      this.events.emit(
+        settlement === 'paid' ? 'spotlight-booking.paid' : 'spotlight-booking.unfulfillable',
+        { bookingId, paymentId },
+      );
+      return;
+    }
+
+    if (outcome.status === 'FAILED' || outcome.status === 'EXPIRED') {
+      await this.audit.record({
+        action: AUDIT_ACTIONS.paymentFailed,
+        entityType: 'payment',
+        entityId: paymentId,
+        actorType: 'SYSTEM',
+        changes: {
+          spotlightBookingId: bookingId,
+          reason: outcome.failureCode ?? outcome.status,
+          source: outcome.source,
+        },
       });
     }
   }

@@ -176,7 +176,10 @@ export type AdminPaymentsQuery = z.infer<typeof adminPaymentsQuerySchema>;
 
 export const adminPaymentSummarySchema = z.object({
   id: idSchema,
-  orderId: idSchema,
+  /** Ce que règle le paiement : une commande de billets, ou une place à la une. */
+  purpose: z.enum(['ORDER', 'SPOTLIGHT']),
+  orderId: idSchema.nullable(),
+  /** Référence de la commande — ou de la place à la une (`NKU-…`). */
   orderReference: z.string(),
   eventTitle: z.string(),
   organizationId: idSchema,
@@ -229,7 +232,24 @@ export type PaymentTimelineEntry = z.infer<typeof paymentTimelineEntrySchema>;
 
 export const adminPaymentDetailSchema = adminPaymentSummarySchema.extend({
   eventId: idSchema,
-  orderStatus: orderStatusSchema,
+  /** `null` pour une place à la une. */
+  orderStatus: orderStatusSchema.nullable(),
+  /** La place à la une réglée, quand c'en est une. */
+  spotlight: z
+    .object({
+      bookingId: idSchema,
+      reference: z.string(),
+      status: z.string(),
+      statusLabel: z.string(),
+      days: z.number().int(),
+      pricePerDay: z.number().int(),
+      totalAmount: z.number().int(),
+      creditAmount: z.number().int(),
+      chargedAmount: z.number().int(),
+      refundedAmount: z.number().int(),
+      creditedAmount: z.number().int(),
+    })
+    .nullable(),
   failureCode: z.string().nullable(),
   expiresAt: z.string().nullable(),
   failedAt: z.string().nullable(),

@@ -57,6 +57,12 @@ export const ADMIN_SPACES = [
     description: 'Relecture des premiers événements avant leur mise en ligne.',
   },
   {
+    key: 'spotlights',
+    label: 'À la une',
+    description:
+      'Événements mis en avant sur Découvrir et l’accueil, de la plateforme ou externes.',
+  },
+  {
     key: 'verifications',
     label: 'Vérifications',
     description: 'Dossiers d’identité des organisateurs — pièces comprises.',

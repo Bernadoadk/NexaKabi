@@ -88,7 +88,9 @@ export default async function TransactionPage({ params }: { params: Promise<{ id
             <h2 className="text-body font-bold">Le paiement</h2>
           </div>
           <dl className="flex flex-col gap-2 px-5 py-4 text-body-s">
-            <Detail label="Acheteur">{payment.buyerName}</Detail>
+            <Detail label={payment.purpose === 'SPOTLIGHT' ? 'Demandée par' : 'Acheteur'}>
+              {payment.buyerName}
+            </Detail>
             <Detail label="Numéro débité">
               <span className="tabular">{payment.payerPhone ?? '—'}</span>
             </Detail>
@@ -123,7 +125,64 @@ export default async function TransactionPage({ params }: { params: Promise<{ id
           </dl>
         </Surface>
 
-        <Surface variant="panel" padding="none" className="overflow-hidden">
+        {payment.spotlight ? (
+          <Surface variant="panel" padding="none" className="overflow-hidden">
+            <div className="border-b border-border-subtle px-5 py-4">
+              <h2 className="text-body font-bold">La place à la une</h2>
+              <p className="text-micro text-text-3">
+                {payment.spotlight.reference} · {payment.spotlight.statusLabel} · achetée par{' '}
+                {payment.buyerName}
+              </p>
+            </div>
+            <dl className="flex flex-col gap-2 px-5 py-4 text-body-s">
+              <Amount
+                label={`${payment.spotlight.days} jour${payment.spotlight.days > 1 ? 's' : ''} × ${formatMoney(payment.spotlight.pricePerDay, payment.currency)}`}
+                amount={payment.spotlight.totalAmount}
+                currency={payment.currency}
+              />
+              {payment.spotlight.creditAmount > 0 ? (
+                <Amount
+                  label="Avoir utilisé"
+                  amount={-payment.spotlight.creditAmount}
+                  currency={payment.currency}
+                />
+              ) : null}
+              <div className="border-t border-border pt-2">
+                <Amount
+                  label="Payé"
+                  amount={payment.spotlight.chargedAmount}
+                  currency={payment.currency}
+                  strong
+                />
+              </div>
+              <Amount
+                label="Frais de l’opérateur"
+                amount={-breakdown.providerFee}
+                currency={payment.currency}
+              />
+              {payment.spotlight.refundedAmount > 0 ? (
+                <Amount
+                  label="Rendu au solde de l’organisation"
+                  amount={-payment.spotlight.refundedAmount}
+                  currency={payment.currency}
+                />
+              ) : null}
+              {payment.spotlight.creditedAmount > 0 ? (
+                <Amount
+                  label="Rendu en avoir (hors caisse)"
+                  amount={payment.spotlight.creditedAmount}
+                  currency={payment.currency}
+                />
+              ) : null}
+            </dl>
+          </Surface>
+        ) : null}
+
+        <Surface
+          variant="panel"
+          padding="none"
+          className={payment.spotlight ? 'hidden' : 'overflow-hidden'}
+        >
           <div className="border-b border-border-subtle px-5 py-4">
             <h2 className="text-body font-bold">La commande, en cascade</h2>
             <p className="text-micro text-text-3">

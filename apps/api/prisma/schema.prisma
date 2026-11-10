@@ -170,6 +170,10 @@ model User {
 
   newsletterSubscription     NewsletterSubscriber?
   newsletterCampaignsCreated NewsletterCampaign[]  @relation("NewsletterCampaignCreatedBy")
+  spotlightsCreated          Spotlight[]           @relation("SpotlightCreatedBy")
+  spotlightBookingsRequested SpotlightBooking[]    @relation("SpotlightBookingRequestedBy")
+  spotlightBookingsReviewed  SpotlightBooking[]    @relation("SpotlightBookingReviewedBy")
+  spotlightCreditsGranted    SpotlightCredit[]     @relation("SpotlightCreditGrantedBy")
 
   adminSessions   AdminSession[] @relation("AdminSessionUser")
   reportsFiled    Report[]       @relation("ReportFiledBy")
@@ -454,6 +458,8 @@ model Organization {
   reports             Report[]
   commissionPolicies  CommissionPolicy[]
   followers           OrganizationFollow[]
+  spotlightBookings   SpotlightBooking[]
+  spotlightCredits    SpotlightCredit[]
 
   @@index([status, verificationStatus])
   @@index([ownerId])
@@ -766,6 +772,8 @@ model Country {
   orders             Order[]
   payoutAccounts     PayoutAccount[]
   commissionPolicies CommissionPolicy[]
+  spotlights         Spotlight[]
+  spotlightBookings  SpotlightBooking[]
 
   @@index([isActive, position])
   @@map("country")
@@ -1081,14 +1089,16 @@ model Event {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  ticketTypes   TicketType[]
-  images        EventImage[]
-  signingKey    EventSigningKey?
-  orders        Order[]
-  tickets       Ticket[]
-  checkIns      CheckIn[]
-  ledgerEntries LedgerEntry[]
-  notifications Notification[]
+  ticketTypes       TicketType[]
+  images            EventImage[]
+  signingKey        EventSigningKey?
+  orders            Order[]
+  tickets           Ticket[]
+  checkIns          CheckIn[]
+  ledgerEntries     LedgerEntry[]
+  notifications     Notification[]
+  spotlights        Spotlight[]
+  spotlightBookings SpotlightBooking[]
 
   @@index([status, visibility, startsAt])
   @@index([cityId, categoryId, startsAt])
@@ -1255,6 +1265,10 @@ enum LedgerEntryType {
   FREEZE
   UNFREEZE
   ADJUSTMENT
+  /// Place à la une payée sur le solde (−).
+  SPOTLIGHT_PURCHASE
+  /// Place à la une refusée : le montant revient au solde (+).
+  SPOTLIGHT_REFUND
 }
 
 enum BalanceState {
@@ -1336,7 +1350,7 @@ model Order {
   /// Ce qui revient à l'organisateur.
   organizerNetAmount Int @default(0)
 
-  currency String @default("XOF")
+  currency    String  @default("XOF")
   /// Pays de paiement : celui de l'événement au moment de la commande.
   countryCode String  @default("BJ")
   country     Country @relation(fields: [countryCode], references: [code])
@@ -1432,15 +1446,23 @@ model StockReservation {
 model Payment {
   id String @id @default(cuid())
 
-  orderId String
-  order   Order  @relation(fields: [orderId], references: [id])
+  /// Ce que règle le paiement : une commande de billets, OU une place à la
+  /// une achetée par un organisateur — jamais les deux, jamais aucun
+  /// (contrainte `payment_settles_one_thing`). Un seul circuit d'encaissement
+  /// pour les deux : même vérification chez le prestataire, même
+  /// notification, même réconciliation, mêmes écrans de la console.
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  spotlightBookingId String?
+  spotlightBooking   SpotlightBooking? @relation(fields: [spotlightBookingId], references: [id], onDelete: Restrict)
 
   /// Prestataire qui traite : `kkiapay`, `bictorys` (hérité).
   providerCode      String
   /// Moyen choisi par le participant : `mtn_momo`, `wave`, `card`.
   methodCode        String
   /// Pays de paiement.
-  countryCode       String @default("BJ")
+  countryCode       String  @default("BJ")
   /// Référence chez le prestataire.
   providerReference String?
 
@@ -1484,6 +1506,7 @@ model Payment {
   @@unique([providerCode, providerReference])
   @@index([status, initiatedAt])
   @@index([orderId])
+  @@index([spotlightBookingId])
   @@map("payment")
 }
 
@@ -1571,7 +1594,7 @@ model Refund {
   /// délai dépassé, réponse perdue. Lu par l'administrateur qui reprend.
   failureReason     String?
   /// Conclu à la main plutôt que par le prestataire.
-  manual            Boolean   @default(false)
+  manual            Boolean @default(false)
 
   /// Génération de la clé d'idempotence envoyée au prestataire (`<id>-<n>`).
   /// Elle ne change qu'après un refus pour lequel il a créé une transaction :
@@ -1791,14 +1814,16 @@ model LedgerEntry {
   /// passée. Le temps fait le travail, l'immuabilité est préservée.
   availableAt DateTime?
 
-  eventId   String?
-  event     Event?  @relation(fields: [eventId], references: [id])
-  orderId   String?
-  order     Order?  @relation(fields: [orderId], references: [id])
-  paymentId String?
-  payoutId  String?
-  payout    Payout? @relation(fields: [payoutId], references: [id])
-  refundId  String?
+  eventId            String?
+  event              Event?  @relation(fields: [eventId], references: [id])
+  orderId            String?
+  order              Order?  @relation(fields: [orderId], references: [id])
+  paymentId          String?
+  payoutId           String?
+  payout             Payout? @relation(fields: [payoutId], references: [id])
+  refundId           String?
+  /// Place à la une que l'écriture règle ou rembourse.
+  spotlightBookingId String?
 
   /// Libellé lisible par l'organisateur, en français.
   description String
@@ -1811,6 +1836,7 @@ model LedgerEntry {
   @@index([balanceState, availableAt])
   @@index([eventId])
   @@index([payoutId])
+  @@index([spotlightBookingId])
   @@map("ledger_entry")
 }
 
@@ -1901,6 +1927,8 @@ enum NotificationType {
   VERIFICATION_REVIEWED
   /// Organisation — retrait versé, échoué ou annulé.
   PAYOUT_UPDATED
+  /// Organisation — une place à la une validée, refusée, interrompue ou terminée.
+  SPOTLIGHT_UPDATED
 }
 
 /// Canaux de diffusion. `PUSH` : notification Web Push sur un appareil dont le
@@ -2256,6 +2284,310 @@ model NewsletterDelivery {
   @@index([status, createdAt])
   @@index([campaignId, status])
   @@map("newsletter_delivery")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// À LA UNE
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum SpotlightKind {
+  /// Un événement de la plateforme : la une mène à sa page.
+  EVENT
+  /// Un événement dont la billetterie n'est pas chez nous : la une mène au
+  /// site officiel, dans un nouvel onglet.
+  EXTERNAL
+}
+
+enum SpotlightSource {
+  /// Choix de l'équipe.
+  EDITORIAL
+  /// Place payée — par l'organisateur, ou par un partenaire externe.
+  PAID
+}
+
+enum SpotlightStatus {
+  ACTIVE
+  /// Retirée à la main avant sa fin. Gardée pour son bilan.
+  WITHDRAWN
+}
+
+/// Une mise en avant dans la une de Découvrir et de l'accueil.
+///
+/// ── Ce qui n'est PAS stocké : « en ligne », « programmée », « terminée » ───
+/// Ces états se lisent sur les dates, à l'instant de la lecture. Aucune tâche
+/// planifiée n'a donc à basculer quoi que ce soit, et une mise en avant ne
+/// peut pas rester affichée parce qu'un cron a sauté — même principe que
+/// `availableAt` dans le grand livre.
+///
+/// ── Ce qui l'efface sans qu'on y touche ─────────────────────────────────
+/// Un événement annulé, complet, dépublié ou passé disparaît de la une dès la
+/// lecture suivante ; un événement externe, une fois sa date passée.
+model Spotlight {
+  id String @id @default(cuid())
+
+  kind   SpotlightKind
+  source SpotlightSource @default(EDITORIAL)
+  status SpotlightStatus @default(ACTIVE)
+
+  /// Renseigné pour `EVENT`, absent pour `EXTERNAL` (contrainte en base).
+  eventId String?
+  event   Event?  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  /// Pays où la une la montre. Celui de l'événement par défaut.
+  countryCode String  @default("BJ")
+  country     Country @relation(fields: [countryCode], references: [code])
+
+  /// Fiche d'un événement externe — saisie par l'équipe, jamais par un tiers.
+  externalTitle         String?
+  externalStartsAt      DateTime?
+  externalEndsAt        DateTime?
+  externalVenueName     String?
+  externalCityName      String?
+  externalOrganizerName String?
+  /// Billetterie officielle, en https uniquement.
+  externalUrl           String?
+  /// « Dès 10 000 F », « Prix sur le site officiel ».
+  externalPriceLabel    String?
+  externalCategoryLabel String?
+
+  /// Visuel propre à la une. Pour un événement de la plateforme, sa
+  /// couverture sert quand il est absent ; un événement externe en exige un.
+  imageUrl String?
+
+  /// Vidéo muette, déjà recadrée, compressée et coupée par le stockage. Les
+  /// trois champs vont ensemble (contrainte en base) ; l'image reste l'affiche.
+  videoUrl             String?
+  videoPosterUrl       String?
+  videoDurationSeconds Int?
+
+  /// Fenêtre d'affichage.
+  startsAt DateTime
+  endsAt   DateTime
+
+  /// Ordre dans la une, croissant. Réglé à la main dans la console.
+  position Int @default(0)
+
+  withdrawnAt DateTime?
+
+  createdById String
+  createdBy   User   @relation("SpotlightCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dailyStats SpotlightDailyStat[]
+
+  /// La place achetée dont cette mise en avant est la diffusion.
+  booking SpotlightBooking?
+
+  @@index([countryCode, status, startsAt, endsAt])
+  @@index([eventId])
+  @@map("spotlight")
+}
+
+/// Vues et clics d'une mise en avant, par jour (UTC).
+///
+/// Une vue : la diapositive est restée affichée au moins une seconde, à
+/// moitié visible au moins. Un clic : un passage vers l'événement ou vers la
+/// billetterie externe. Aucune donnée personnelle : des compteurs, rien d'autre.
+model SpotlightDailyStat {
+  spotlightId String
+  spotlight   Spotlight @relation(fields: [spotlightId], references: [id], onDelete: Cascade)
+
+  day    DateTime @db.Date
+  views  Int      @default(0)
+  clicks Int      @default(0)
+
+  @@id([spotlightId, day])
+  @@map("spotlight_daily_stat")
+}
+
+enum SpotlightBookingStatus {
+  /// Places retenues le temps du paiement (`holdExpiresAt`).
+  AWAITING_PAYMENT
+  /// Payée, en attente de la décision de l'équipe.
+  PENDING_REVIEW
+  /// Validée : la mise en avant existe, ses dates disent si elle est en ligne.
+  APPROVED
+  /// Refusée par l'équipe : seul cas où l'argent est rendu (au solde).
+  REJECTED
+  /// Annulée par l'organisateur : les jours non commencés en avoir.
+  CANCELLED
+  /// Arrêtée par un changement de l'événement ou un retrait de l'équipe.
+  INTERRUPTED
+  /// Jamais payée dans le délai : rien n'a été prélevé.
+  EXPIRED
+  /// Diffusée jusqu'au bout, bilan envoyé.
+  COMPLETED
+}
+
+enum SpotlightPaymentMethod {
+  PROVIDER
+  BALANCE
+  CREDIT
+}
+
+enum SpotlightCreditReason {
+  CANCELLATION
+  INTERRUPTION
+  WITHDRAWAL
+  LATE_REVIEW
+  GESTURE
+}
+
+/// Une place à la une achetée par un organisateur.
+///
+/// ── À la journée, dans une capacité limitée ─────────────────────────────────
+/// Des jours entiers, de minuit à minuit (Porto-Novo), dans un nombre de places
+/// par jour et par pays fixé par la console. Le calendrier se lit sur les
+/// places qui retiennent leurs jours — en attente de paiement (jusqu'à
+/// `holdExpiresAt`), en validation, validées — : aucune ligne de stock à
+/// tenir à jour, aucune à oublier.
+///
+/// ── Les montants sont figés ─────────────────────────────────────────────────
+/// Prix du jour, total, part couverte par un avoir, part prélevée : écrits à la
+/// demande et vérifiés par la base. Un changement de tarif ne touche pas une
+/// place déjà vendue — ni son reçu.
+///
+/// ── Ce qui rend de l'argent, ce qui rend un avoir ───────────────────────────
+/// Voir `SpotlightBookingStatus` et `@nexakabi/contracts` (spotlights.ts).
+model SpotlightBooking {
+  id String @id @default(cuid())
+
+  /// `NKU-8F4C21` — sur le modèle des commandes, imprimée sur le reçu.
+  reference String @unique
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id])
+
+  countryCode String
+  country     Country @relation(fields: [countryCode], references: [code])
+
+  requestedById String
+  requestedBy   User   @relation("SpotlightBookingRequestedBy", fields: [requestedById], references: [id])
+
+  status SpotlightBookingStatus @default(AWAITING_PAYMENT)
+
+  /// Jours vendus, bornes comprises (calendrier de Porto-Novo).
+  startDay DateTime @db.Date
+  endDay   DateTime @db.Date
+  days     Int
+  /// Les mêmes, en instants : minuit au début du premier jour, minuit à la fin du dernier.
+  startsAt DateTime
+  endsAt   DateTime
+
+  pricePerDay   Int
+  totalAmount   Int
+  /// Part couverte par un avoir.
+  creditAmount  Int    @default(0)
+  /// Part réglée par le solde ou chez le prestataire : `total − avoir`.
+  chargedAmount Int
+  currency      String @default("XOF")
+
+  paymentMethod SpotlightPaymentMethod
+  /// Fin du délai de paiement, pour une place en attente de paiement.
+  holdExpiresAt DateTime?
+  paidAt        DateTime?
+
+  /// Visuel propre à la une ; absent : la couverture de l'événement.
+  imageUrl             String?
+  videoUrl             String?
+  videoPosterUrl       String?
+  videoDurationSeconds Int?
+
+  reviewedById    String?
+  reviewedBy      User?     @relation("SpotlightBookingReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+  rejectionReason String?
+
+  cancelledAt        DateTime?
+  interruptedAt      DateTime?
+  interruptionReason String?
+  completedAt        DateTime?
+  /// Bilan envoyé à l'organisateur.
+  reportSentAt       DateTime?
+
+  /// Rendu au solde (refus) — et rendu en avoir (jours non diffusés).
+  refundedAmount Int @default(0)
+  creditedAmount Int @default(0)
+
+  /// La mise en avant créée à la validation.
+  spotlightId String?    @unique
+  spotlight   Spotlight? @relation(fields: [spotlightId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments    Payment[]
+  creditUses  SpotlightCreditUse[]
+  creditsMade SpotlightCredit[]
+
+  @@index([countryCode, status, startDay, endDay])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([eventId, status])
+  @@index([status, holdExpiresAt])
+  @@index([status, endsAt])
+  @@map("spotlight_booking")
+}
+
+/// Avoir de mise en avant : des jours non diffusés, rendus en valeur.
+///
+/// Valable douze mois, sur une prochaine place uniquement — jamais retirable.
+/// `remaining` baisse à mesure qu'il sert ; chaque usage est consigné
+/// (`SpotlightCreditUse`) pour être rendu si la place qu'il a payée est
+/// refusée ou n'est jamais réglée.
+model SpotlightCredit {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  amount    Int
+  remaining Int
+  currency  String @default("XOF")
+
+  reason SpotlightCreditReason
+  /// Ce que lira l'organisateur : la cause précise, le geste de l'équipe.
+  note   String?
+
+  /// La place dont les jours ont été rendus.
+  bookingId String?
+  booking   SpotlightBooking? @relation(fields: [bookingId], references: [id])
+
+  /// Membre de l'équipe qui a accordé un geste.
+  grantedById String?
+  grantedBy   User?   @relation("SpotlightCreditGrantedBy", fields: [grantedById], references: [id])
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  uses SpotlightCreditUse[]
+
+  @@index([organizationId, expiresAt])
+  @@map("spotlight_credit")
+}
+
+/// Un avoir dépensé sur une place. `reversedAt` : rendu à l'avoir, la place
+/// n'ayant jamais été réglée ou ayant été refusée.
+model SpotlightCreditUse {
+  id String @id @default(cuid())
+
+  creditId String
+  credit   SpotlightCredit @relation(fields: [creditId], references: [id])
+
+  bookingId String
+  booking   SpotlightBooking @relation(fields: [bookingId], references: [id])
+
+  amount     Int
+  reversedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([bookingId])
+  @@index([creditId])
+  @@map("spotlight_credit_use")
 }
 
 /// Réglages de la plateforme modifiables depuis la console.

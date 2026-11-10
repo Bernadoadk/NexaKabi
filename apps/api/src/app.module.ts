@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { validateEnv } from './config/env';
+import { ApiZodValidationPipe } from './common/pipes/zod-validation.pipe';
 import { PrismaModule } from './infra/prisma/prisma.module';
 import { SchedulingModule } from './infra/scheduling/scheduling.module';
 import { HealthModule } from './modules/health/health.module';
@@ -25,6 +26,7 @@ import { PlacesModule } from './modules/places/places.module';
 import { CountriesModule } from './modules/countries/countries.module';
 import { FollowsModule } from './modules/follows/follows.module';
 import { NewsletterModule } from './modules/newsletter/newsletter.module';
+import { SpotlightsModule } from './modules/spotlights/spotlights.module';
 
 /**
  * Journaux lisibles (pino-pretty) ou JSON.
@@ -96,6 +98,7 @@ function prettyLogs(): boolean {
     PlacesModule,
     FollowsModule,
     NewsletterModule,
+    SpotlightsModule,
     AdminModule,
     CronModule,
     HealthModule,
@@ -116,6 +119,16 @@ function prettyLogs(): boolean {
      * refuser tôt coûte moins cher que refuser tard.
      */
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+
+    /**
+     * Validation GLOBALE des paramètres typés par un DTO.
+     *
+     * Sans elle, un DTO n'est qu'un type TypeScript : il disparaît à la
+     * compilation, et la route reçoit ce que le client a bien voulu envoyer.
+     * Voir `common/pipes/zod-validation.pipe.ts` pour ce qui est validé, ce
+     * qui ne l'est pas, et pourquoi un DTO ne se relit jamais à la main.
+     */
+    { provide: APP_PIPE, useClass: ApiZodValidationPipe },
   ],
 })
 export class AppModule {}

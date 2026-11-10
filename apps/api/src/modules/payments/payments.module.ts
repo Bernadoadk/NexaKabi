@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { FinanceModule } from '../finance/finance.module';
 import { OrdersModule } from '../orders/orders.module';
+import { SpotlightsModule } from '../spotlights/spotlights.module';
 import { PaymentsService } from './payments.service';
 import { PaymentRoutingService } from './payment-routing.service';
 import { ReconciliationService } from './reconciliation.service';
@@ -39,7 +40,13 @@ import type { Env } from '../../config/env';
  * configuration des pays.
  */
 @Module({
-  imports: [forwardRef(() => OrdersModule), forwardRef(() => FinanceModule)],
+  imports: [
+    forwardRef(() => OrdersModule),
+    forwardRef(() => FinanceModule),
+    // Une place à la une se règle dans la transaction de son encaissement
+    // (`SpotlightBookingSettlement`) — voir `SpotlightsModule`.
+    forwardRef(() => SpotlightsModule),
+  ],
   controllers: [WebhooksController],
   providers: [
     {

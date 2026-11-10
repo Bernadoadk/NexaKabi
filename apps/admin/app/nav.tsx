@@ -21,6 +21,7 @@ export interface AdminNavEntry extends SectionNavEntry {
 export const ADMIN_NAV_ENTRIES: readonly AdminNavEntry[] = [
   { href: '/', label: 'Tableau de bord', exact: true },
   { href: '/evenements', label: 'Événements', space: 'events' },
+  { href: '/a-la-une', label: 'À la une', space: 'spotlights' },
   { href: '/verifications', label: 'Vérifications', space: 'verifications' },
   { href: '/signalements', label: 'Signalements', space: 'reports' },
   { href: '/organisations', label: 'Organisations', space: 'organizations' },

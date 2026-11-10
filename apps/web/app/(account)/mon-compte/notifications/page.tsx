@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Flame,
   Info,
+  Megaphone,
   Mic2,
   ShieldCheck,
   Sparkles,
@@ -198,6 +199,7 @@ const ICONS: Readonly<Record<NotificationType, ReactNode>> = {
   EVENT_REVIEWED: <ClipboardCheck className="size-4" />,
   VERIFICATION_REVIEWED: <ShieldCheck className="size-4" />,
   PAYOUT_UPDATED: <Wallet className="size-4" />,
+  SPOTLIGHT_UPDATED: <Megaphone className="size-4" />,
 };
 
 const ICON_STYLES: Readonly<Record<NotificationType, string>> = {
@@ -212,4 +214,5 @@ const ICON_STYLES: Readonly<Record<NotificationType, string>> = {
   EVENT_REVIEWED: 'bg-blue-50 text-blue-700',
   VERIFICATION_REVIEWED: 'bg-mint-50 text-mint-700',
   PAYOUT_UPDATED: 'bg-ink text-mint-300',
+  SPOTLIGHT_UPDATED: 'bg-coral-50 text-coral-700',
 };

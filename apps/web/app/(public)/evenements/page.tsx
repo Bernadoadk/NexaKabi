@@ -2,7 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Calendar, Map as MapIcon, Search } from 'lucide-react';
 import { Button, CategoryIcon, EventCardStandard, SearchEmptyState, Surface } from '@nexakabi/ui';
+import { SpotlightCarousel } from '@/components/spotlight-carousel';
 import { fetchCategories, fetchCities, searchEvents } from '@/lib/events';
+import { fetchSpotlights } from '@/lib/spotlights';
 import { toCard } from '../page';
 import { DiscoverFilters } from './discover-filters';
 import { DATE_FILTERS, buildDiscoverHref } from './discover-shared';
@@ -26,13 +28,17 @@ export default async function DiscoverPage({
 }) {
   const params = await searchParams;
 
-  const [result, categories, cities] = await Promise.all([
+  const hasFilters = Boolean(params.ville ?? params.cat ?? params.date ?? params.prix ?? params.q);
+  // La une n'a sa place que sur la première page, sans filtre : dès qu'on
+  // cherche quelque chose, ce sont les résultats qui doivent monter.
+  const showSpotlight = !hasFilters && (params.page ?? '1') === '1';
+
+  const [result, categories, cities, spotlights] = await Promise.all([
     searchEvents(params),
     fetchCategories(),
     fetchCities(),
+    showSpotlight ? fetchSpotlights() : null,
   ]);
-
-  const hasFilters = Boolean(params.ville ?? params.cat ?? params.date ?? params.prix ?? params.q);
 
   return (
     <main className="mx-auto flex max-w-[1440px] flex-col gap-5 px-4 py-6 sm:px-5 sm:py-8 lg:gap-6">
@@ -83,7 +89,16 @@ export default async function DiscoverPage({
         </Button>
       </form>
 
-      <DiscoverFilters params={params} categories={categories} cities={cities} total={result.total} />
+      {spotlights && spotlights.slides.length > 0 ? (
+        <SpotlightCarousel slides={spotlights.slides} slideSeconds={spotlights.slideSeconds} />
+      ) : null}
+
+      <DiscoverFilters
+        params={params}
+        categories={categories}
+        cities={cities}
+        total={result.total}
+      />
 
       <div className="grid gap-6 lg:grid-cols-[260px_1fr] lg:items-start">
         {/* Palier desktop : colonne de filtres persistante. En dessous, la

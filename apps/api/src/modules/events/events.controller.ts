@@ -1,10 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  createEventSchema,
   discoveryQuerySchema,
-  ticketTypeInputSchema,
-  updateEventSchema,
   type EventDetail,
   type EventMapPin,
   type EventSummary,
@@ -121,7 +118,7 @@ export class OrganizerEventsController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() body: CreateEventDto,
   ): Promise<EventDetail> {
-    return this.events.create(context, user.id, createEventSchema.parse(body));
+    return this.events.create(context, user.id, body);
   }
 
   @Get(':id')
@@ -140,7 +137,7 @@ export class OrganizerEventsController {
     @Param('id') id: string,
     @Body() body: UpdateEventDto,
   ): Promise<EventDetail> {
-    return this.events.update(context, user.id, id, updateEventSchema.parse(body));
+    return this.events.update(context, user.id, id, body);
   }
 
   @Get(':id/readiness')
@@ -226,7 +223,7 @@ export class OrganizerEventsController {
     @Param('id') id: string,
     @Body() body: TicketTypeDto,
   ): Promise<EventDetail> {
-    return this.events.addTicketType(context, user.id, id, ticketTypeInputSchema.parse(body));
+    return this.events.addTicketType(context, user.id, id, body);
   }
 
   @Patch(':id/ticket-types/:ticketTypeId')
@@ -239,13 +236,7 @@ export class OrganizerEventsController {
     @Param('ticketTypeId') ticketTypeId: string,
     @Body() body: TicketTypeDto,
   ): Promise<EventDetail> {
-    return this.events.updateTicketType(
-      context,
-      user.id,
-      id,
-      ticketTypeId,
-      ticketTypeInputSchema.parse(body),
-    );
+    return this.events.updateTicketType(context, user.id, id, ticketTypeId, body);
   }
 
   @Delete(':id/ticket-types/:ticketTypeId')

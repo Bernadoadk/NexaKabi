@@ -44,6 +44,7 @@ export const NOTIFICATION_LABELS: Readonly<Record<NotificationType, string>> = {
   EVENT_REVIEWED: 'Décision sur un événement',
   VERIFICATION_REVIEWED: 'Vérification',
   PAYOUT_UPDATED: 'Retrait',
+  SPOTLIGHT_UPDATED: 'Mise en avant',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +226,24 @@ export const NOTIFICATION_POLICY: Readonly<Record<NotificationType, Notification
     urgent: false,
     sticky: false,
     // L'opérateur de Mobile Money confirme déjà la réception de l'argent.
+    phone: 'none',
+    email: true,
+    ttlSeconds: 24 * HOUR,
+    quietAtNight: true,
+    coalesceSeconds: 0,
+  },
+  /**
+   * Une place payée : validée, refusée et remboursée, interrompue avec ses
+   * jours rendus en avoir, ou terminée avec son bilan. De l'argent est en jeu
+   * à chaque fois — elle ne se désactive pas —, mais rien n'y est urgent : ni
+   * téléphone (le coût d'un WhatsApp n'y serait pas justifié), ni réveil la
+   * nuit. L'e-mail garde la trace d'un service acheté.
+   */
+  SPOTLIGHT_UPDATED: {
+    audience: 'ORGANIZATION',
+    mandatory: true,
+    urgent: false,
+    sticky: false,
     phone: 'none',
     email: true,
     ttlSeconds: 24 * HOUR,
@@ -841,4 +860,126 @@ export function buildPayoutMessage(input: {
         body: `Le retrait ${input.reference} de ${input.amountLabel} a été annulé. Le montant est de nouveau disponible.`,
       };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mise en avant
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Ce qui arrive à une place à la une payée — chaque issue est un message. */
+export type SpotlightBookingOutcome =
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'INTERRUPTED'
+  | 'CANCELLED'
+  | 'COMPLETED'
+  | 'UNFULFILLABLE'
+  | 'CREDITED';
+
+/**
+ * Message d'une place à la une.
+ *
+ * Chacun dit ce qu'il advient de l'ARGENT, quand il y en a : rendu au solde
+ * (refus), rendu en avoir (jours non diffusés), ou dépensé — avec le bilan qui
+ * dit à quoi. Une place payée dont on n'entend plus parler est la plus sûre
+ * façon de ne jamais en vendre une seconde.
+ *
+ * Les montants et la période arrivent déjà formatés.
+ */
+export function buildSpotlightBookingMessage(input: {
+  outcome: SpotlightBookingOutcome;
+  eventTitle: string;
+  periodLabel: string;
+  amountLabel?: string | null;
+  /** Refus : l'avoir qui avait réglé la place, rendu tel quel. */
+  restoredCreditLabel?: string | null;
+  reason?: string | null;
+  report?: { views: number; clicks: number; tickets: number } | null;
+}): { title: string; body: string } {
+  const event = `« ${input.eventTitle} »`;
+  const reason = input.reason?.trim().replace(/\.$/, '');
+
+  switch (input.outcome) {
+    case 'APPROVED':
+      return {
+        title: 'Mise en avant validée',
+        body: [
+          sentence(`${event} sera à la une ${input.periodLabel}`),
+          reason ? sentence(reason) : null,
+          'Tu suivras ses vues, ses clics et ses ventes depuis ton espace.',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      };
+    case 'REJECTED':
+      return {
+        title: 'Mise en avant refusée',
+        body: [
+          reason ? sentence(reason) : null,
+          input.amountLabel
+            ? `${input.amountLabel} ont été recrédités sur ton solde Nexa Kabi.`
+            : null,
+          input.restoredCreditLabel
+            ? `Ton avoir de ${input.restoredCreditLabel} t’est rendu.`
+            : null,
+          !input.amountLabel && !input.restoredCreditLabel ? 'Rien ne t’a été prélevé.' : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      };
+    case 'INTERRUPTED':
+      return {
+        title: 'Mise en avant interrompue',
+        body: [
+          `${event} a quitté la une${reason ? ` : ${reason}` : ''}.`,
+          input.amountLabel
+            ? `Les jours non diffusés te sont rendus en avoir : ${input.amountLabel}, valable 12 mois.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      };
+    case 'CANCELLED':
+      return {
+        title: 'Mise en avant annulée',
+        body: input.amountLabel
+          ? `Les jours non diffusés de ${event} te sont rendus en avoir : ${input.amountLabel}, valable 12 mois.`
+          : `La mise en avant de ${event} est annulée.`,
+      };
+    case 'COMPLETED': {
+      const report = input.report;
+      return {
+        title: 'Bilan de ta mise en avant',
+        body: report
+          ? `${event} ${input.periodLabel} : ${count(report.views, 'vue', 'vues')}, ${count(report.clicks, 'clic', 'clics')}, ${count(report.tickets, 'billet vendu', 'billets vendus')} grâce à la une.`
+          : `La mise en avant de ${event} est terminée.`,
+      };
+    }
+    case 'UNFULFILLABLE':
+      return {
+        title: 'Place à la une indisponible',
+        body: `Ton paiement est arrivé après la fin de la réservation, et la place a été prise. ${
+          input.amountLabel
+            ? `${input.amountLabel} ont été recrédités sur ton solde Nexa Kabi.`
+            : ''
+        }`.trim(),
+      };
+    case 'CREDITED':
+      return {
+        title: 'Avoir de mise en avant',
+        body: `${input.amountLabel ?? 'Un avoir'} te ${input.amountLabel ? 'sont rendus' : 'est accordé'} pour ${event}${
+          reason ? ` : ${reason}` : ''
+        }. Valable 12 mois sur ta prochaine mise en avant.`,
+      };
+  }
+}
+
+/** Une phrase terminée par un point — sans le doubler après « nov. ». */
+function sentence(text: string): string {
+  return /[.!?…]$/.test(text) ? text : `${text}.`;
+}
+
+/** « 0 vue », « 1 clic », « 12 billets vendus » : le singulier jusqu'à un, en français. */
+function count(value: number, singular: string, plural: string): string {
+  return `${value.toLocaleString('fr-FR')} ${value > 1 ? plural : singular}`;
 }

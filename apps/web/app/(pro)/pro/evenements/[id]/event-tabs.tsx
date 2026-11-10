@@ -34,12 +34,17 @@ export function EventTabs({ eventId, published }: { eventId: string; published: 
           { href: `${base}/participants`, label: 'Participants', exact: false },
           { href: `${base}/check-in`, label: 'Contrôle', exact: false },
           { href: `${base}/statistiques`, label: 'Statistiques', exact: false },
+          // Une place à la une ne s'achète que pour un événement en ligne.
+          { href: `${base}/mise-en-avant`, label: 'Mise en avant', exact: false },
         ]
       : []),
   ];
 
   return (
-    <nav aria-label="Sections de l’événement" className="-mx-4 border-b border-border px-4 sm:mx-0 sm:px-0">
+    <nav
+      aria-label="Sections de l’événement"
+      className="-mx-4 border-b border-border px-4 sm:mx-0 sm:px-0"
+    >
       <ul className="flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {entries.map((entry) => {
           const active = entry.exact ? pathname === entry.href : pathname.startsWith(entry.href);

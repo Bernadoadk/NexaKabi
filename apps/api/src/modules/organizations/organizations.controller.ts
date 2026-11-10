@@ -17,13 +17,6 @@ import type { Request } from 'express';
 import { MediaIntakeService } from '../media/media-intake.service';
 import { UPLOAD_CONTENT_TYPE } from '../media/upload.constraints';
 import {
-  createOrganizationSchema,
-  createPayoutAccountSchema,
-  inviteMemberSchema,
-  submitVerificationSchema,
-  updateMemberRoleSchema,
-  updateOrganizationSchema,
-  uploadVerificationDocumentSchema,
   type Invitation,
   type Member,
   type Organization,
@@ -84,7 +77,7 @@ export class OrganizationsController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() body: CreateOrganizationDto,
   ): Promise<Organization> {
-    return this.organizations.create(user.id, createOrganizationSchema.parse(body));
+    return this.organizations.create(user.id, body);
   }
 
   @Get('current')
@@ -102,7 +95,7 @@ export class OrganizationsController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() body: UpdateOrganizationDto,
   ): Promise<Organization> {
-    return this.organizations.update(context, user.id, updateOrganizationSchema.parse(body));
+    return this.organizations.update(context, user.id, body);
   }
 
   // ── Équipe ────────────────────────────────────────────────────────────────
@@ -133,7 +126,7 @@ export class OrganizationsController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() body: InviteMemberDto,
   ) {
-    return this.organizations.invite(context, user.id, inviteMemberSchema.parse(body));
+    return this.organizations.invite(context, user.id, body);
   }
 
   @Patch('current/members/:memberId')
@@ -145,12 +138,7 @@ export class OrganizationsController {
     @Param('memberId') memberId: string,
     @Body() body: UpdateMemberRoleDto,
   ): Promise<Member[]> {
-    return this.organizations.updateMemberRole(
-      context,
-      user.id,
-      memberId,
-      updateMemberRoleSchema.parse(body),
-    );
+    return this.organizations.updateMemberRole(context, user.id, memberId, body);
   }
 
   @Delete('current/members/:memberId')
@@ -182,11 +170,7 @@ export class OrganizationsController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() body: CreatePayoutAccountDto,
   ): Promise<PayoutAccount> {
-    return this.organizations.addPayoutAccount(
-      context,
-      user.id,
-      createPayoutAccountSchema.parse(body),
-    );
+    return this.organizations.addPayoutAccount(context, user.id, body);
   }
 
   // ── Vérification ──────────────────────────────────────────────────────────
@@ -211,11 +195,7 @@ export class OrganizationsController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() body: SubmitVerificationDto,
   ): Promise<VerificationRequestDetail> {
-    return this.organizations.submitVerification(
-      context,
-      user.id,
-      submitVerificationSchema.parse(body),
-    );
+    return this.organizations.submitVerification(context, user.id, body);
   }
 
   /**
@@ -247,7 +227,8 @@ export class OrganizationsController {
       throw new BadRequestException('Aucun fichier reçu.');
     }
 
-    const { type, consent } = uploadVerificationDocumentSchema.parse(query);
+    // Déjà validé par le pipe global, avant même la lecture du fichier.
+    const { type, consent } = query;
 
     return this.organizations.addVerificationDocument(
       context,

@@ -54,6 +54,10 @@ export const LEDGER_ENTRY_SIGNS: Readonly<Record<LedgerEntryType, 1 | -1 | null>
   FREEZE: -1,
   UNFREEZE: 1,
   ADJUSTMENT: null,
+  /** Une place à la une, réglée avec le solde. */
+  SPOTLIGHT_PURCHASE: -1,
+  /** Le montant d'une place refusée, rendu au solde. */
+  SPOTLIGHT_REFUND: 1,
 };
 
 /** Libellés affichés à l'organisateur, dans son relevé. */
@@ -71,6 +75,8 @@ export const LEDGER_ENTRY_LABELS: Readonly<Record<LedgerEntryType, string>> = {
   FREEZE: 'Solde gelé',
   UNFREEZE: 'Gel levé',
   ADJUSTMENT: 'Ajustement',
+  SPOTLIGHT_PURCHASE: 'Mise en avant',
+  SPOTLIGHT_REFUND: 'Mise en avant remboursée',
 };
 
 /**

@@ -28,6 +28,8 @@ export interface WriteEntryInput {
   readonly paymentId?: string;
   readonly payoutId?: string;
   readonly refundId?: string;
+  /** Place à la une réglée (`SPOTLIGHT_PURCHASE`) ou rendue (`SPOTLIGHT_REFUND`). */
+  readonly spotlightBookingId?: string;
   readonly metadata?: Prisma.InputJsonValue;
 }
 
@@ -90,6 +92,7 @@ export class LedgerService {
         paymentId: input.paymentId,
         payoutId: input.payoutId,
         refundId: input.refundId,
+        spotlightBookingId: input.spotlightBookingId,
         description: input.description,
         metadata: input.metadata,
       },
@@ -404,6 +407,54 @@ export class LedgerService {
       canRequestPayout: blocked === null,
       payoutBlockedReason: blocked,
     };
+  }
+
+  /**
+   * Sérialise tout ce qui DÉPENSE le solde disponible d'une organisation.
+   *
+   * ── La course que ce verrou empêche ─────────────────────────────────────────
+   * Un retrait lisait le solde, le jugeait suffisant, puis écrivait son débit.
+   * Deux demandes parties au même instant — deux onglets, un double appui —
+   * lisaient le même solde, le jugeaient chacune suffisant, et débitaient deux
+   * fois le même argent : le solde passait sous zéro, et la plateforme versait
+   * ce qu'elle n'avait pas. Il en va de même d'une mise en avant payée par le
+   * solde pendant qu'un retrait part.
+   *
+   * Un verrou consultatif de TRANSACTION, propre à l'organisation : la seconde
+   * dépense attend que la première soit écrite, puis relit un solde qui en
+   * tient compte (`availableIn`). Il meurt avec la transaction, même sur une
+   * erreur, et ne gêne jamais une autre organisation.
+   *
+   * Les recettes n'ont pas à le prendre : une vente qui arrive pendant un
+   * retrait ne peut que rendre le solde plus confortable.
+   */
+  async lockBalance(tx: Prisma.TransactionClient, organizationId: string): Promise<void> {
+    await tx.$queryRaw`
+      SELECT 1 AS locked
+      FROM pg_advisory_xact_lock(hashtextextended(${`org-balance:${organizationId}`}, 0))
+    `;
+  }
+
+  /**
+   * Solde disponible lu DANS une transaction — après `lockBalance`, c'est la
+   * seule lecture qui fasse foi pour décider d'une dépense.
+   *
+   * Même règle que `balance()` : une écriture `PENDING` dont la date de
+   * déblocage est passée compte comme disponible.
+   */
+  async availableIn(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    now = new Date(),
+  ): Promise<number> {
+    const rows = await tx.$queryRaw<{ available: bigint | number | null }[]>`
+      SELECT COALESCE(SUM("amount"), 0) AS available
+      FROM "ledger_entry"
+      WHERE "organizationId" = ${organizationId}
+        AND ("balanceState" = 'AVAILABLE' OR ("availableAt" IS NOT NULL AND "availableAt" <= ${now}))
+    `;
+
+    return Number(rows[0]?.available ?? 0);
   }
 
   /**

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   KNOWN_COUNTRIES,
   LEDGER_ENTRY_LABELS,
+  SPOTLIGHT_BOOKING_STATUS_LABELS,
   PAYMENT_STATUS_LABELS,
   REFUND_REASON_LABELS,
   getPaymentMethodDefinition,
@@ -347,6 +348,11 @@ export class AdminFinanceService {
       throw new NotFoundException("Ce paiement n'existe pas.");
     }
 
+    // Une place à la une : pas de commande, pas de billets — sa propre cascade.
+    if (!payment.orderId) {
+      return this.bookingPaymentDetail(payment);
+    }
+
     const order = await this.prisma.order.findUniqueOrThrow({
       where: { id: payment.orderId },
       include: {
@@ -500,8 +506,9 @@ export class AdminFinanceService {
 
     return {
       ...summary,
-      eventId: payment.order.eventId,
+      eventId: order.eventId,
       orderStatus: order.status,
+      spotlight: null,
       failureCode: payment.failureCode,
       expiresAt: payment.expiresAt?.toISOString() ?? null,
       failedAt: payment.failedAt?.toISOString() ?? null,
@@ -531,6 +538,158 @@ export class AdminFinanceService {
         createdAt: refund.createdAt.toISOString(),
         completedAt: refund.completedAt?.toISOString() ?? null,
       })),
+      timeline,
+      canAttachTransaction: this.payments.canAttachTransaction(payment),
+    };
+  }
+
+  /**
+   * Le paiement d'une place à la une, et ce qui en est advenu.
+   *
+   * Même chronologie qu'un paiement de commande — échanges avec le
+   * prestataire, notifications, journal —, plus ce que la place a coûté et
+   * ce qui en a été rendu (au solde ou en avoir).
+   */
+  private async bookingPaymentDetail(
+    payment: Prisma.PaymentGetPayload<{
+      include: typeof PAYMENT_LIST_INCLUDE & { attempts: true };
+    }>,
+  ): Promise<AdminPaymentDetail> {
+    const booking = await this.prisma.spotlightBooking.findUniqueOrThrow({
+      where: { id: payment.spotlightBookingId ?? '' },
+      include: {
+        payments: { where: { id: { not: payment.id } }, orderBy: { createdAt: 'asc' } },
+      },
+    });
+
+    const [webhooks, ledger, audits] = await Promise.all([
+      this.prisma.webhookEvent.findMany({
+        where: { paymentId: payment.id },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.ledgerEntry.findMany({
+        where: { OR: [{ paymentId: payment.id }, { spotlightBookingId: booking.id }] },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.auditLog.findMany({
+        where: { entityId: { in: [payment.id, booking.id] } },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    const summary = toPaymentSummary(payment);
+    const timeline: PaymentTimelineEntry[] = [
+      {
+        at: payment.initiatedAt.toISOString(),
+        kind: 'payment',
+        title: 'Paiement demandé',
+        detail: `${summary.methodLabel} · ${summary.providerLabel} · ${formatMoney(payment.amount, payment.currency)}`,
+        tone: 'neutral',
+      },
+      ...payment.attempts.map((attempt) => ({
+        at: attempt.createdAt.toISOString(),
+        kind: 'attempt' as const,
+        title: ATTEMPT_LABELS[attempt.kind] ?? 'Échange avec le prestataire',
+        detail: describeAttempt(attempt),
+        tone: attempt.error ? ('danger' as const) : ('neutral' as const),
+      })),
+      ...webhooks.map((webhook) => ({
+        at: webhook.createdAt.toISOString(),
+        kind: 'webhook' as const,
+        title: `Notification ${WEBHOOK_STATUS_LABELS[webhook.status] ?? webhook.status}`,
+        detail: webhook.error ?? webhook.externalId,
+        tone:
+          webhook.status === 'PROCESSED'
+            ? ('info' as const)
+            : webhook.status === 'FAILED'
+              ? ('danger' as const)
+              : ('neutral' as const),
+      })),
+      ...ledger.map((entry) => ({
+        at: entry.createdAt.toISOString(),
+        kind: 'ledger' as const,
+        title: `Grand livre · ${LEDGER_ENTRY_LABELS[entry.type]}`,
+        detail: `${entry.amount > 0 ? '+' : ''}${formatMoney(entry.amount, entry.currency)}`,
+        tone: 'info' as const,
+      })),
+      ...audits.flatMap((audit) => {
+        const label = AUDIT_LABELS[audit.action];
+        return label
+          ? [
+              {
+                at: audit.createdAt.toISOString(),
+                kind: 'audit' as const,
+                title: label.title,
+                detail: describeAuditChanges(audit.changes),
+                tone: label.tone,
+              },
+            ]
+          : [];
+      }),
+    ];
+
+    if (payment.confirmedAt) {
+      timeline.push({
+        at: payment.confirmedAt.toISOString(),
+        kind: 'payment',
+        title: 'Paiement réussi',
+        detail: payment.providerReference ? `Réf. ${payment.providerReference}` : null,
+        tone: 'success',
+      });
+    }
+
+    if (payment.failedAt) {
+      timeline.push({
+        at: payment.failedAt.toISOString(),
+        kind: 'payment',
+        title: payment.status === 'EXPIRED' ? 'Paiement expiré' : 'Paiement échoué',
+        detail: payment.failureReason,
+        tone: 'danger',
+      });
+    }
+
+    timeline.sort((a, b) => a.at.localeCompare(b.at));
+
+    return {
+      ...summary,
+      eventId: booking.eventId,
+      orderStatus: null,
+      spotlight: {
+        bookingId: booking.id,
+        reference: booking.reference,
+        status: booking.status,
+        statusLabel: SPOTLIGHT_BOOKING_STATUS_LABELS[booking.status],
+        days: booking.days,
+        pricePerDay: booking.pricePerDay,
+        totalAmount: booking.totalAmount,
+        creditAmount: booking.creditAmount,
+        chargedAmount: booking.chargedAmount,
+        refundedAmount: booking.refundedAmount,
+        creditedAmount: booking.creditedAmount,
+      },
+      failureCode: payment.failureCode,
+      expiresAt: payment.expiresAt?.toISOString() ?? null,
+      failedAt: payment.failedAt?.toISOString() ?? null,
+      webhookReceivedAt: payment.webhookReceivedAt?.toISOString() ?? null,
+      // Une place n'a ni frais acheteur ni net organisateur : tout ce qui est
+      // encaissé revient à la plateforme, moins les frais du prestataire.
+      breakdown: {
+        subtotal: booking.totalAmount,
+        discount: booking.creditAmount,
+        buyerFee: 0,
+        total: booking.chargedAmount,
+        providerFee: payment.providerFeeAmount ?? 0,
+        platformCommission: booking.chargedAmount - (payment.providerFeeAmount ?? 0),
+        organizerNet: 0,
+      },
+      otherPayments: booking.payments.map((other) => ({
+        id: other.id,
+        status: other.status,
+        methodLabel: getPaymentMethodDefinition(other.methodCode)?.label ?? other.methodCode,
+        amount: other.amount,
+        createdAt: other.createdAt.toISOString(),
+      })),
+      refunds: [],
       timeline,
       canAttachTransaction: this.payments.canAttachTransaction(payment),
     };
@@ -953,19 +1112,55 @@ const PAYMENT_LIST_INCLUDE = {
       event: { select: { title: true, organization: { select: { id: true, name: true } } } },
     },
   },
+  spotlightBooking: {
+    select: {
+      reference: true,
+      eventId: true,
+      event: { select: { title: true, organization: { select: { id: true, name: true } } } },
+      requestedBy: { select: { fullName: true } },
+    },
+  },
 } as const satisfies Prisma.PaymentInclude;
 
 type PaymentListRow = Prisma.PaymentGetPayload<{ include: typeof PAYMENT_LIST_INCLUDE }>;
 
+/** Ce que règle un paiement, sous une forme commune : commande ou place à la une. */
+function subjectOf(row: PaymentListRow) {
+  if (row.order) {
+    return {
+      purpose: 'ORDER' as const,
+      reference: row.order.reference,
+      eventId: row.order.eventId,
+      eventTitle: row.order.event.title,
+      organization: row.order.event.organization,
+      payerName: row.order.buyerName,
+    };
+  }
+
+  const booking = row.spotlightBooking;
+
+  return {
+    purpose: 'SPOTLIGHT' as const,
+    reference: booking?.reference ?? '—',
+    eventId: booking?.eventId ?? '',
+    eventTitle: booking ? `Mise en avant · ${booking.event.title}` : 'Mise en avant',
+    organization: booking?.event.organization ?? { id: '', name: '—' },
+    payerName: booking?.requestedBy.fullName ?? '—',
+  };
+}
+
 function toPaymentSummary(row: PaymentListRow): AdminPaymentSummary {
+  const subject = subjectOf(row);
+
   return {
     id: row.id,
+    purpose: subject.purpose,
     orderId: row.orderId,
-    orderReference: row.order.reference,
-    eventTitle: row.order.event.title,
-    organizationId: row.order.event.organization.id,
-    organizationName: row.order.event.organization.name,
-    buyerName: row.order.buyerName,
+    orderReference: subject.reference,
+    eventTitle: subject.eventTitle,
+    organizationId: subject.organization.id,
+    organizationName: subject.organization.name,
+    buyerName: subject.payerName,
     payerPhone: row.payerPhone ? safeMask(row.payerPhone) : null,
     methodCode: row.methodCode,
     methodLabel: getPaymentMethodDefinition(row.methodCode)?.label ?? row.methodCode,
@@ -1020,6 +1215,7 @@ function searchConditions(q: string): Prisma.PaymentWhereInput[] {
 
   return [
     { order: { reference: q.toUpperCase() } },
+    { spotlightBooking: { reference: q.toUpperCase() } },
     { providerReference: q },
     { id: q },
     { order: { buyerName: { contains: q, mode: 'insensitive' } } },

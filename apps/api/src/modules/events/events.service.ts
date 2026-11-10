@@ -15,6 +15,7 @@ import {
   type UpdateEventInput,
 } from '@nexakabi/contracts';
 import { generateEventShortCode, slugify, uniqueSlug } from '@nexakabi/utils';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { runInBackground } from '../../infra/scheduling/background';
 import { AuditService } from '../audit/audit.service';
@@ -46,7 +47,19 @@ export class EventsService {
     private readonly eventNotifier: EventNotifierService,
     private readonly refunds: RefundsService,
     private readonly tickets: TicketsService,
+    private readonly signals: EventEmitter2,
   ) {}
+
+  /**
+   * Un événement quitte la vente : les domaines qui en dépendent réagissent
+   * (la une rend les jours non diffusés de ses places en avoir).
+   */
+  private announceUnavailable(
+    eventId: string,
+    cause: 'CANCELLED' | 'UNPUBLISHED' | 'DELETED',
+  ): void {
+    this.signals.emit('event.unavailable', { eventId, cause });
+  }
 
   async list(context: OrgContext): Promise<EventSummary[]> {
     const events = await this.prisma.event.findMany({
@@ -442,6 +455,8 @@ export class EventsService {
       });
     });
 
+    this.announceUnavailable(eventId, 'UNPUBLISHED');
+
     await this.audit.record({
       action: 'event.unpublished',
       entityType: 'Event',
@@ -490,6 +505,8 @@ export class EventsService {
       data: { deletedAt: new Date() },
     });
 
+    this.announceUnavailable(eventId, 'DELETED');
+
     await this.audit.record({
       action: 'event.deleted',
       entityType: 'Event',
@@ -523,6 +540,8 @@ export class EventsService {
       where: { id: eventId },
       data: { status: 'CANCELLED', cancelledAt: new Date(), cancellationReason: reason },
     });
+
+    this.announceUnavailable(eventId, 'CANCELLED');
 
     // Une annulation se dit tout de suite. C'est la notification qui justifie à
     // elle seule d'en avoir un système : quelqu'un qui a acheté trois mois plus

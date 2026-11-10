@@ -127,7 +127,19 @@ function buildPolicy({ nonce, isDevelopment, strict = false }: PolicyOptions): s
       ],
     ],
 
-    ['media-src', ["'self'"]],
+    /**
+     * Les vidéos de la une, servies par le stockage (Cloudinary) — et, en
+     * développement, par l'API locale. Rien d'autre : une vidéo ne se charge
+     * jamais depuis un hôte tiers arbitraire.
+     */
+    [
+      'media-src',
+      [
+        "'self'",
+        ...(strict ? [] : ['https://res.cloudinary.com']),
+        ...(isDevelopment ? ['http://localhost:*'] : []),
+      ],
+    ],
     ['worker-src', ["'self'", 'blob:']],
     ['manifest-src', ["'self'"]],
 

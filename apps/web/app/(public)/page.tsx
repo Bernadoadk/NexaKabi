@@ -3,7 +3,9 @@ import Link from 'next/link';
 import { Map as MapIcon, Search, Ticket } from 'lucide-react';
 import { CategoryIcon, EventCardLarge, EventCardStandard, EmptyState } from '@nexakabi/ui';
 import type { EventSummary } from '@nexakabi/contracts';
+import { SpotlightCarousel } from '@/components/spotlight-carousel';
 import { fetchCategories, fetchHomeSections } from '@/lib/events';
+import { fetchSpotlights } from '@/lib/spotlights';
 
 export const metadata: Metadata = {
   title: 'Découvre et vis les événements au Bénin',
@@ -24,9 +26,20 @@ export const metadata: Metadata = {
  * soir, Week-end, Gratuit, Musique). Sous le palier `md`, c'est ce bloc qui
  * accueille ; au-dessus, la même section respire sur fond papier, avec la
  * recherche à portée de main.
+ *
+ * ── À la une ────────────────────────────────────────────────────────────────
+ * Quand l'équipe a mis des événements en avant, la une prend la place de la
+ * grande carte — qui n'était que le prochain événement par date. Les
+ * événements à venir suivent alors en grille ordinaire : deux vitrines l'une
+ * sous l'autre se disputeraient le regard.
  */
 export default async function HomePage() {
-  const [sections, categories] = await Promise.all([fetchHomeSections(), fetchCategories()]);
+  const [sections, categories, spotlights] = await Promise.all([
+    fetchHomeSections(),
+    fetchCategories(),
+    fetchSpotlights(),
+  ]);
+  const hasSpotlight = spotlights.slides.length > 0;
   const [hero, ...rest] = sections.upcoming;
 
   return (
@@ -85,7 +98,12 @@ export default async function HomePage() {
         </nav>
       </section>
 
-      {hero ? (
+      {hasSpotlight ? (
+        <>
+          <SpotlightCarousel slides={spotlights.slides} slideSeconds={spotlights.slideSeconds} />
+          <Section title="À venir" href="/evenements" events={sections.upcoming.slice(0, 8)} />
+        </>
+      ) : hero ? (
         <section className="grid gap-4 lg:grid-cols-[300px_1fr] lg:items-start">
           <EventCardLarge event={toCard(hero)} href={`/e/${hero.slug}`} />
 

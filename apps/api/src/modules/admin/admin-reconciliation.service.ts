@@ -89,6 +89,7 @@ export class AdminReconciliationService {
           providerCode: true,
           initiatedAt: true,
           order: { select: { reference: true } },
+          spotlightBooking: { select: { reference: true } },
         },
       }),
       this.prisma.webhookEvent.findMany({
@@ -195,7 +196,7 @@ export class AdminReconciliationService {
       ...stalePayments.map<ReconciliationIssue>((payment) => ({
         kind: 'stale_payment',
         severity: 'high',
-        title: `${payment.order.reference} · ${formatMoney(payment.amount, payment.currency)}`,
+        title: `${payment.order?.reference ?? payment.spotlightBooking?.reference ?? payment.id} · ${formatMoney(payment.amount, payment.currency)}`,
         detail:
           `Toujours « ${payment.status} » chez ${providerLabel(payment.providerCode)} : ni ` +
           'notification ni interrogation n’ont tranché. L’acheteur a peut-être été débité sans billet.',
@@ -213,9 +214,9 @@ export class AdminReconciliationService {
       ...paidWithoutOrder.map<ReconciliationIssue>((payment) => ({
         kind: 'paid_without_order',
         severity: 'high',
-        title: `${payment.order.reference} · ${formatMoney(payment.amount, payment.currency)}`,
+        title: `${payment.order?.reference ?? payment.id} · ${formatMoney(payment.amount, payment.currency)}`,
         detail:
-          `Paiement encaissé, mais la commande est « ${payment.order.status} » : ses places ` +
+          `Paiement encaissé, mais la commande est « ${payment.order?.status ?? '—'} » : ses places ` +
           'n’étaient plus disponibles quand le paiement a abouti. L’acheteur a payé sans billet — ' +
           'rembourse-le depuis le tableau de bord du prestataire.',
         at: (payment.confirmedAt ?? new Date(now)).toISOString(),

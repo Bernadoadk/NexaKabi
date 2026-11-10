@@ -151,6 +151,22 @@ export class PayoutsService {
     const netAmount = input.amount - feeAmount;
 
     const payout = await this.prisma.$transaction(async (tx) => {
+      // Sous le verrou du solde, la décision se reprend sur le solde RELU : une
+      // autre dépense a pu s'écrire entre le contrôle ci-dessus et cet instant
+      // (voir `LedgerService.lockBalance`).
+      await this.ledger.lockBalance(tx, organizationId);
+      const available = await this.ledger.availableIn(tx, organizationId);
+      const late = validatePayoutRequest(
+        input.amount,
+        available,
+        policy,
+        resolveCurrency(balance.currency).symbol,
+      );
+
+      if (late) {
+        throw new BadRequestException(late);
+      }
+
       const created = await tx.payout.create({
         data: {
           reference: `NKP-${randomBytes(3).toString('hex').toUpperCase()}`,

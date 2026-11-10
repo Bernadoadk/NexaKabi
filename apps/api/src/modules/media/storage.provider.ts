@@ -1,9 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { DirectUploadTicket, StagedUpload } from '@nexakabi/contracts';
+import type {
+  DirectUploadTicket,
+  SpotlightVideo,
+  SpotlightVideoTicket,
+  StagedUpload,
+} from '@nexakabi/contracts';
 import type { Env } from '../../config/env';
 
 export interface StoredFile {
@@ -60,6 +65,31 @@ export abstract class StorageProvider {
   abstract takeStaged(reference: StagedUpload, ownerId: string): Promise<StagedFile>;
   /** Supprime les fichiers en transit plus vieux que `olderThan`. Rend le nombre supprimé. */
   abstract purgeStaged(olderThan: Date): Promise<number>;
+
+  /**
+   * Ticket de dépôt direct d'une VIDÉO de la une, rangée sous `ownerId`.
+   *
+   * `null` : ce stockage ne sait pas recevoir de vidéo. Une vidéo ne transite
+   * jamais par nos serveurs — trop lourde pour une fonction, et c'est le
+   * stockage qui la recadre, la compresse et la coupe.
+   */
+  abstract createVideoUploadTicket(ownerId: string): Promise<SpotlightVideoTicket | null>;
+
+  /**
+   * Vérifie une vidéo déposée avec un ticket de `ownerId` — signature, durée,
+   * poids, format — et rend ses adresses de diffusion. Une vidéo refusée est
+   * supprimée aussitôt.
+   */
+  abstract confirmVideo(reference: StagedUpload, ownerId: string): Promise<SpotlightVideo>;
+
+  /**
+   * L'adresse désigne-t-elle un fichier PUBLIC servi par ce stockage ?
+   *
+   * Pour ce qu'un organisateur envoie : un visuel ou une vidéo de la une doit
+   * avoir été déposé chez nous, et pas pointer vers n'importe quel serveur —
+   * la une le montrerait à tous les visiteurs.
+   */
+  abstract isOwnPublicUrl(url: string): boolean;
 }
 
 /**
@@ -134,6 +164,23 @@ export class LocalStorageProvider extends StorageProvider {
 
   async purgeStaged(): Promise<number> {
     return Promise.resolve(0);
+  }
+
+  // La vidéo demande un stockage qui la traite : sans lui, on le dit.
+  async createVideoUploadTicket(): Promise<null> {
+    return Promise.resolve(null);
+  }
+
+  async confirmVideo(): Promise<SpotlightVideo> {
+    return Promise.reject(
+      new BadRequestException(
+        'La vidéo demande le stockage Cloudinary : renseigne CLOUDINARY_* dans la configuration de l’API.',
+      ),
+    );
+  }
+
+  isOwnPublicUrl(url: string): boolean {
+    return url.startsWith(`${this.baseUrl}/`);
   }
 }
 

@@ -108,14 +108,29 @@ function buildPolicy({ nonce, isDevelopment, strict = false }: PolicyOptions): s
       [
         "'self'",
         // Tuiles, géométries et polices de la carte : le SDK les demande
-        // lui-même, depuis la page. C'est le seul hôte tiers que le site
-        // public autorise à joindre.
-        ...(strict ? [] : ['https://maps.googleapis.com', 'https://maps.gstatic.com']),
+        // lui-même, depuis la page. Et le dépôt direct des visuels de la une
+        // chez le stockage (voir `lib/upload-client.ts`) : le navigateur y
+        // envoie le fichier avec un ticket signé par l'API, jamais une clé.
+        ...(strict
+          ? []
+          : [
+              'https://maps.googleapis.com',
+              'https://maps.gstatic.com',
+              'https://api.cloudinary.com',
+            ]),
         ...(isDevelopment ? ['ws://localhost:*', 'wss://localhost:*', 'http://localhost:*'] : []),
       ],
     ],
 
-    ['media-src', ["'self'"]],
+    // L'aperçu des vidéos de la une, servies par le stockage.
+    [
+      'media-src',
+      [
+        "'self'",
+        ...(strict ? [] : ['https://res.cloudinary.com']),
+        ...(isDevelopment ? ['http://localhost:*'] : []),
+      ],
+    ],
     ['worker-src', ["'self'", 'blob:']],
     ['manifest-src', ["'self'"]],
 

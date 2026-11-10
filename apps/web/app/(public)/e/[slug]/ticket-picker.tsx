@@ -12,6 +12,12 @@ import {
 } from '@nexakabi/contracts';
 import { Alert, Badge, Button, Money, startRouteProgress } from '@nexakabi/ui';
 
+/** Provenance du lien qui a mené ici (`?ref=`), si elle est bien formée. */
+function readRef(): string | undefined {
+  const ref = new URLSearchParams(window.location.search).get('ref');
+  return ref && /^[\w-]{1,64}$/.test(ref) ? ref : undefined;
+}
+
 /**
  * Sélection des billets.
  *
@@ -67,6 +73,10 @@ export function TicketPicker({
       body: JSON.stringify({
         eventId,
         lines: lines.map((line) => ({ ticketTypeId: line.ticket.id, quantity: line.quantity })),
+        // La provenance du lien (`?ref=une-…` depuis la une) suit la commande :
+        // c'est elle qui dira combien de billets la une a fait vendre. Lue au
+        // moment d'acheter, sans `useSearchParams` — la page reste statique.
+        ref: readRef(),
       }),
     });
 

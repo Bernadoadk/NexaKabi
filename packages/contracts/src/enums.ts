@@ -310,6 +310,10 @@ export const LEDGER_ENTRY_TYPES = [
   'FREEZE',
   'UNFREEZE',
   'ADJUSTMENT',
+  /** Place à la une payée sur le solde. */
+  'SPOTLIGHT_PURCHASE',
+  /** Place à la une refusée par l'équipe : le montant revient au solde. */
+  'SPOTLIGHT_REFUND',
 ] as const;
 export const ledgerEntryTypeSchema = makeEnum(LEDGER_ENTRY_TYPES).schema;
 export type LedgerEntryType = z.infer<typeof ledgerEntryTypeSchema>;
@@ -362,6 +366,8 @@ export const NOTIFICATION_TYPES = [
   'EVENT_REVIEWED',
   'VERIFICATION_REVIEWED',
   'PAYOUT_UPDATED',
+  /** Organisation — une mise en avant validée, refusée, interrompue ou terminée (bilan). */
+  'SPOTLIGHT_UPDATED',
 ] as const;
 export const notificationTypeSchema = makeEnum(NOTIFICATION_TYPES).schema;
 export type NotificationType = z.infer<typeof notificationTypeSchema>;

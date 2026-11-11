@@ -4,7 +4,8 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *
  *  Tout ce qui se modifie sans toucher aux animations se trouve ici :
- *  textes, durées, couleurs, musique et données fictives des maquettes.
+ *  textes, durées, couleurs, son (musique, voix off, effets) et données
+ *  fictives des maquettes.
  *
  *  ── Textes animés ──────────────────────────────────────────────────────────
  *    *mots*   → mis en valeur, en corail
@@ -34,12 +35,81 @@ export const config: VideoConfig = {
 
   fps: 30,
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  SON
+  // ─────────────────────────────────────────────────────────────────────────
   music: {
-    // Déposez votre fichier ici : video/public/audio/musique.mp3
+    // Le fichier n'est pas versionné (licence Pixabay) : voir README.
     file: 'audio/musique.mp3',
-    volume: 0.8,
-    fadeInSeconds: 0.6,
-    fadeOutSeconds: 2,
+    credit: '« Water | Afro-pop Music » par kontraa — Pixabay (licence Pixabay)',
+    volume: 0.6,
+    duckedVolume: 0.16,
+    // Le morceau démarre à 4,23 s : l'entrée du refrain (8,81 s dans le
+    // morceau) tombe sur l'impact du logo (4,57 s dans la vidéo). 110 BPM.
+    startAt: 4.233,
+    playbackRate: 1,
+    fadeInSeconds: 0.2,
+    fadeOutSeconds: 2.5,
+  },
+
+  // Vos enregistrements, un fichier par phrase, dans video/public/audio/voix/.
+  // Sans fichier, la phrase est simplement absente. Si une phrase déborde sur
+  // la suivante, un avertissement s'affiche dans la console du Studio.
+  voiceover: {
+    volume: 1,
+    normalize: true,
+    lines: [
+      {
+        file: 'audio/voix/01-accroche',
+        at: 0.4,
+        // Finie avant l'impact du logo, où la musique explose.
+        end: 4.3,
+        text: 'Un concert ce week-end ? L’info est partout… le billet, nulle part.',
+      },
+      {
+        file: 'audio/voix/02-logo',
+        // Une seconde de musique seule laisse respirer l'arrivée du logo.
+        at: 5.4,
+        text: 'Avec Nexa Kabi, tous vos événements sont au même endroit.',
+      },
+      {
+        file: 'audio/voix/03-decouvrir',
+        at: 9.0,
+        text: 'Concerts, festivals, soirées : trouvez ce qui se passe près de chez vous, jusque sur la carte.',
+      },
+      {
+        file: 'audio/voix/04-reserver',
+        at: 15.4,
+        text: 'Choisissez vos billets, les frais sont affichés dès le départ. Payez en Mobile Money ou par carte… et c’est confirmé !',
+      },
+      {
+        file: 'audio/voix/05-entrer',
+        at: 23.6,
+        text: 'Votre billet ? Un QR code. À l’entrée, un scan suffit, même sans réseau.',
+      },
+      {
+        file: 'audio/voix/06-organisateurs',
+        at: 29.0,
+        text: 'Organisateurs : créez votre événement en cinq minutes, suivez chaque vente et encaissez vos recettes.',
+      },
+      {
+        file: 'audio/voix/07-double-benefice',
+        at: 37.0,
+        text: 'Pour le public comme pour les organisateurs, tout devient simple.',
+      },
+      {
+        file: 'audio/voix/08-appel',
+        at: 41.0,
+        text: 'Cette fin d’année, ne ratez plus rien. Nexa Kabi !',
+      },
+    ],
+  },
+
+  // Effets sonores synthétisés par `npm run sfx` (public/audio/sfx/), posés
+  // dans chaque scène sur ses repères.
+  sfx: {
+    enabled: true,
+    volume: 0.7,
   },
 
   transitionSeconds: 0.5,

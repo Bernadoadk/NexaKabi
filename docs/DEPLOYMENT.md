@@ -227,10 +227,11 @@ Même procédure, deux fois.
 
 **`nexakabi-admin`** — Root Directory `apps/admin`.
 
-| Variable                       | Valeur                                |
-| ------------------------------ | ------------------------------------- |
-| `ENABLE_EXPERIMENTAL_COREPACK` | `1`                                   |
-| `API_URL`                      | `https://nexakabi-api.vercel.app/api` |
+| Variable                       | Valeur                                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `ENABLE_EXPERIMENTAL_COREPACK` | `1`                                                                                               |
+| `API_URL`                      | `https://nexakabi-api.vercel.app/api`                                                             |
+| `CLOUDINARY_CLOUD_NAME`        | même valeur que sur l'API — facultatif : limite la CSP de la console à **votre** cloud Cloudinary |
 
 Ne **pas** définir `NODE_ENV` sur ces deux projets : Next.js construit en production, et c'est ce
 qu'il faut (cookies `secure`, HSTS, CSP stricte).

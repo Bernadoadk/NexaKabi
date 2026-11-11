@@ -14,7 +14,7 @@ export const PHONE_OUTER = {
   height: PHONE.height + PHONE.bezel * 2,
 };
 
-const StatusBar: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
+const StatusBar: React.FC<{ theme: 'dark' | 'light'; clock: string }> = ({ theme, clock }) => {
   const ink = theme === 'dark' ? '#12102B' : '#FFFFFF';
   return (
     <div
@@ -34,7 +34,7 @@ const StatusBar: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         letterSpacing: '-0.01em',
       }}
     >
-      <span>{config.data.clock}</span>
+      <span>{clock}</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <svg width="17" height="11" viewBox="0 0 17 11">
           {[0, 1, 2, 3].map((index) => (
@@ -87,8 +87,16 @@ export const PhoneFrame: React.FC<{
   /** Couleur des icônes de la barre d'état : sombres sur écran clair. */
   statusBar?: 'dark' | 'light';
   screenBackground?: string;
+  /** Heure de la barre d'état (par défaut `config.data.clock`). */
+  clock?: string;
   style?: React.CSSProperties;
-}> = ({ children, statusBar = 'dark', screenBackground = 'var(--color-paper)', style }) => (
+}> = ({
+  children,
+  statusBar = 'dark',
+  screenBackground = 'var(--color-paper)',
+  clock = config.data.clock,
+  style,
+}) => (
   <div
     style={{
       position: 'relative',
@@ -150,7 +158,7 @@ export const PhoneFrame: React.FC<{
       }}
     >
       {children}
-      <StatusBar theme={statusBar} />
+      <StatusBar theme={statusBar} clock={clock} />
       <span
         style={{
           position: 'absolute',

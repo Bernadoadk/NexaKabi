@@ -10,12 +10,19 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { config } from '../config';
+import { Sfx } from '../components/audio/Sfx';
 import { EASE_IN_OUT, ramp, SPRINGS, sp } from '../lib/anim';
 import { useFormat } from '../lib/layout';
 import { useTime } from '../lib/time';
 import { Scene } from './common';
 
 const BENEFITS_DESIGN = 4.5;
+
+/** Entrée de chaque colonne (temps de la scène). */
+const T = { public: 14, organizers: 20 };
+
+/** Instant où la coche d'une ligne apparaît. */
+const checkAt = (start: number, index: number) => start + 14 + index * 7;
 
 /**
  * 7 · Le double bénéfice : le public sur papier, les organisateurs sur
@@ -24,6 +31,13 @@ const BENEFITS_DESIGN = 4.5;
 export const S7Benefits: React.FC<{ durationInFrames: number }> = ({ durationInFrames }) => (
   <Scene design={BENEFITS_DESIGN} durationInFrames={durationInFrames}>
     <Split />
+    <Sfx at={0} sound="whoosh" volume={0.6} />
+    {[0, 1, 2].map((index) => (
+      <React.Fragment key={index}>
+        <Sfx at={checkAt(T.public, index)} sound="tick" volume={0.45} />
+        <Sfx at={checkAt(T.organizers, index)} sound="pop-high" volume={0.3} />
+      </React.Fragment>
+    ))}
   </Scene>
 );
 
@@ -55,7 +69,7 @@ const Split: React.FC = () => {
           title={scene.public.title}
           points={scene.public.points}
           icons={[<Compass key="a" />, <Smartphone key="b" />, <QrCode key="c" />]}
-          start={14}
+          start={T.public}
           light
         />
       </div>
@@ -74,7 +88,7 @@ const Split: React.FC = () => {
           title={scene.organizers.title}
           points={scene.organizers.points}
           icons={[<CalendarPlus key="a" />, <TrendingUp key="b" />, <ScanLine key="c" />]}
-          start={20}
+          start={T.organizers}
         />
       </div>
       <div
@@ -146,7 +160,7 @@ const Column: React.FC<{
       <div style={{ display: 'flex', flexDirection: 'column', gap: portrait ? 26 : 30 }}>
         {points.map((point, index) => {
           const enter = sp(time, start + 8 + index * 7, SPRINGS.snappy);
-          const check = sp(time, start + 14 + index * 7, SPRINGS.pop);
+          const check = sp(time, checkAt(start, index), SPRINGS.pop);
           return (
             <div
               key={point}

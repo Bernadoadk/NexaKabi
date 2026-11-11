@@ -132,6 +132,8 @@ export const PhoneRig: React.FC<{
   rotate?: number;
   statusBar?: 'dark' | 'light';
   screenBackground?: string;
+  /** Heure de la barre d'état (par défaut `config.data.clock`). */
+  clock?: string;
   opacity?: number;
   children: React.ReactNode;
 }> = ({
@@ -145,6 +147,7 @@ export const PhoneRig: React.FC<{
   rotate = 0,
   statusBar,
   screenBackground,
+  clock,
   opacity = 1,
   children,
 }) => {
@@ -163,7 +166,7 @@ export const PhoneRig: React.FC<{
         opacity,
       }}
     >
-      <PhoneFrame statusBar={statusBar} screenBackground={screenBackground}>
+      <PhoneFrame statusBar={statusBar} screenBackground={screenBackground} clock={clock}>
         {children}
       </PhoneFrame>
     </div>

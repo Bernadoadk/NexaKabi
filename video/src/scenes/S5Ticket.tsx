@@ -1,6 +1,7 @@
 import React from 'react';
 import { AbsoluteFill } from 'remotion';
 import { config } from '../config';
+import { Sfx } from '../components/audio/Sfx';
 import { InkBackground, PaperBackground } from '../components/motion/Backgrounds';
 import { Eyebrow, KineticText } from '../components/motion/KineticText';
 import { Button } from '../components/ui/Button';
@@ -44,6 +45,13 @@ export const S5Ticket: React.FC<{ durationInFrames: number }> = ({ durationInFra
           <TextsB />
         </InkBackground>
       </Reveal>
+
+      <Sfx at={0} sound="whoosh-deep" volume={0.55} />
+      {/* Le cercle s'ouvre depuis le QR code */}
+      <Sfx at={T.reveal} sound="whoosh" volume={0.5} />
+      {/* Lecture du billet, puis « Entrée autorisée » */}
+      <Sfx at={T.read} sound="beep" volume={0.45} />
+      <Sfx at={T.read + 3} sound="valid" volume={0.7} />
     </Scene>
   );
 };

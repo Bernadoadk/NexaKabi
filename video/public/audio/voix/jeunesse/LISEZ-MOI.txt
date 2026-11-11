@@ -1,0 +1,42 @@
+VOIX OFF — VIDÉO « JEUNESSE »
+=============================
+
+Même principe que la vidéo principale (voir ../LISEZ-MOI.txt pour les
+conseils d'enregistrement) : une phrase = un fichier, déposé dans CE dossier
+sous le nom indiqué, extension libre (.m4a, .mp3, .wav, .ogg, .opus…).
+
+Chaque fichier est détecté tout seul et joué à son instant, dans les deux
+formats. La musique baisse pendant que vous parlez et le volume des phrases
+est égalisé. Sans fichier, la phrase est simplement absente : la vidéo se
+comprend sans voix (la discussion de la bande et les titres portent
+l'histoire).
+
+  Fichier        Début   Ne pas dépasser   Texte
+  01-question    0,3 s   5,0 s             On fait quoi ce week-end ? Chaque semaine, la même question…
+  02-une         7,2 s   3,9 s             Sur Nexa Kabi, les bons plans du week-end sont à la une.
+  03-achat      15,0 s   5,4 s             Le prix exact, frais compris. Quatre billets en Mobile Money… et c'est confirmé !
+  04-partage    21,0 s   3,6 s             Un lien par billet : envoyez à chacun le sien.
+  05-tenue      24,9 s   2,6 s             Le plus dur maintenant ? Choisir la tenue.
+  06-entree     27,8 s   4,7 s             Samedi soir : un scan chacun… et vous y êtes !
+  07-appel      37,5 s   3,7 s             Et le week-end prochain ? Nexa Kabi. Ne ratez plus rien !
+
+Exemple : 01-question.m4a, 02-une.m4a, etc.
+
+Les deux silences sont voulus, et calés sur la musique :
+- de 5,3 s à 7,2 s : la musique se coupe, puis repart sur l'ouverture de
+  Nexa Kabi (le logo). La phrase 01 doit être finie avant 5,3 s.
+- de 32,5 s à 37,5 s : le dernier refrain et le concert (« Ça. »), sans
+  commentaire. La phrase 06 doit être finie avant 32,5 s.
+
+Ton : complice, énergique, comme on parle à ses amis — mais en
+vouvoiement, comme tous les textes de la marque.
+
+
+AJUSTER
+-------
+
+Tout se règle dans src/jeunesse/config.ts, section « voiceover » : « at »
+pour décaler une phrase, « end » pour l'instant où elle doit être finie,
+« volume » pour la voix, « duckedVolume » (section « music ») pour la
+musique sous la voix. Une phrase trop longue est signalée dans la console
+du Studio.

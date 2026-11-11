@@ -1,11 +1,12 @@
 import React from 'react';
 import { CalendarDays, Phone } from 'lucide-react';
 import { config } from '../config';
+import { Sfx } from '../components/audio/Sfx';
 import { InkBackground } from '../components/motion/Backgrounds';
 import { KineticText } from '../components/motion/KineticText';
 import { EASE_IN, ramp, SPRINGS, sp } from '../lib/anim';
 import { useFormat } from '../lib/layout';
-import { useTime } from '../lib/time';
+import { useSceneRatio, useTime } from '../lib/time';
 import { Scene } from './common';
 
 /** Durée de conception de la scène (secondes). */
@@ -23,8 +24,30 @@ export const S1Hook: React.FC<{ durationInFrames: number }> = ({ durationInFrame
       <Fragments />
       <Titles />
     </InkBackground>
+    <Sounds durationInFrames={durationInFrames} />
   </Scene>
 );
+
+/** Instants d'apparition des fragments (temps de la scène), dans l'ordre. */
+const FRAGMENT_DELAYS = [12, 18, 24, 30, 58, 62, 66, 70];
+
+/**
+ * Effets sonores : un « pop » par fragment, puis une montée qui finit pile
+ * sur l'impact du logo, au début de la scène suivante.
+ */
+const Sounds: React.FC<{ durationInFrames: number }> = ({ durationInFrames }) => {
+  const ratio = useSceneRatio();
+  const riserFrames = 1.5 * config.fps;
+  const logoFrame = durationInFrames - Math.round(config.transitionSeconds * config.fps) + 2;
+  return (
+    <>
+      {FRAGMENT_DELAYS.map((delay, index) => (
+        <Sfx key={delay} at={delay + 1} sound={index % 2 === 0 ? 'pop' : 'pop-high'} volume={0.5} />
+      ))}
+      <Sfx at={(logoFrame - riserFrames) * ratio} sound="riser" volume={0.55} />
+    </>
+  );
+};
 
 const Titles: React.FC = () => {
   const { portrait } = useFormat();
@@ -83,7 +106,7 @@ const Fragments: React.FC = () => {
       landscape: [17, 20],
       portrait: [28, 13],
       rotate: -6,
-      delay: 12,
+      delay: FRAGMENT_DELAYS[0],
       node: <Bubble text={hook.bubbles[0]} />,
     },
     {
@@ -91,7 +114,7 @@ const Fragments: React.FC = () => {
       landscape: [82, 26],
       portrait: [78, 21],
       rotate: 8,
-      delay: 18,
+      delay: FRAGMENT_DELAYS[1],
       node: <Flyer text={hook.flyer} />,
     },
     {
@@ -99,7 +122,7 @@ const Fragments: React.FC = () => {
       landscape: [75, 80],
       portrait: [60, 72],
       rotate: 4,
-      delay: 24,
+      delay: FRAGMENT_DELAYS[2],
       node: <Bubble text={hook.bubbles[1]} dark />,
     },
     {
@@ -107,7 +130,7 @@ const Fragments: React.FC = () => {
       landscape: [16, 74],
       portrait: [25, 83],
       rotate: -8,
-      delay: 30,
+      delay: FRAGMENT_DELAYS[3],
       node: <Note text={hook.note} />,
     },
     {
@@ -115,7 +138,7 @@ const Fragments: React.FC = () => {
       landscape: [48, 11],
       portrait: [44, 31],
       rotate: 2,
-      delay: 58,
+      delay: FRAGMENT_DELAYS[4],
       node: <PhoneChip text={hook.phone} />,
     },
     {
@@ -123,16 +146,23 @@ const Fragments: React.FC = () => {
       landscape: [45, 90],
       portrait: [70, 90],
       rotate: -3,
-      delay: 62,
+      delay: FRAGMENT_DELAYS[5],
       node: <Bubble text={hook.bubbles[2]} />,
     },
-    { id: 'q', landscape: [92, 55], portrait: [86, 60], rotate: 10, delay: 66, node: <Question /> },
+    {
+      id: 'q',
+      landscape: [92, 55],
+      portrait: [86, 60],
+      rotate: 10,
+      delay: FRAGMENT_DELAYS[6],
+      node: <Question />,
+    },
     {
       id: 'cal',
       landscape: [6, 45],
       portrait: [14, 62],
       rotate: -10,
-      delay: 70,
+      delay: FRAGMENT_DELAYS[7],
       node: <CalendarCard />,
     },
   ];

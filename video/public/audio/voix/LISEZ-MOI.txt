@@ -1,0 +1,57 @@
+VOIX OFF
+========
+
+Une phrase = un fichier, déposé dans ce dossier sous le nom indiqué.
+L'extension est libre : .m4a (mémo vocal iPhone), .mp3, .wav, .ogg ou
+.opus (note vocale WhatsApp), .aac…
+
+Chaque fichier est détecté tout seul et joué à son instant, dans les deux
+formats. Pendant que vous parlez, la musique baisse d'elle-même, et le
+volume des phrases est égalisé : inutile de retoucher les niveaux.
+
+  Fichier               Début   Ne pas dépasser   Texte
+  01-accroche           0,4 s   3,9 s             Un concert ce week-end ? L'info est partout… le billet, nulle part.
+  02-logo               5,4 s   3,6 s             Avec Nexa Kabi, tous vos événements sont au même endroit.
+  03-decouvrir          9,0 s   6,4 s             Concerts, festivals, soirées : trouvez ce qui se passe près de chez vous, jusque sur la carte.
+  04-reserver          15,4 s   8,2 s             Choisissez vos billets, les frais sont affichés dès le départ. Payez en Mobile Money ou par carte… et c'est confirmé !
+  05-entrer            23,6 s   5,4 s             Votre billet ? Un QR code. À l'entrée, un scan suffit, même sans réseau.
+  06-organisateurs     29,0 s   8,0 s             Organisateurs : créez votre événement en cinq minutes, suivez chaque vente et encaissez vos recettes.
+  07-double-benefice   37,0 s   4,0 s             Pour le public comme pour les organisateurs, tout devient simple.
+  08-appel             41,0 s   4,0 s             Cette fin d'année, ne ratez plus rien. Nexa Kabi !
+
+Exemple : 01-accroche.m4a, 02-logo.m4a, etc.
+
+La phrase 01 doit finir avant 4,3 s : à 4,6 s, le logo arrive et la
+musique explose. Entre 01 et 02, la musique joue seule une seconde.
+
+
+ENREGISTRER
+-----------
+
+- Une pièce calme et « molle » : un dressing, une chambre avec rideaux et
+  lit, ou une voiture à l'arrêt. Évitez cuisine et salle de bain (écho).
+- Téléphone à 15-20 cm de la bouche, légèrement de côté : les « p » et
+  les « b » ne claquent pas.
+- Ton souriant, énergique, rythme vif mais bien articulé. Souriez en
+  parlant : ça s'entend.
+- Coupez le silence au début de chaque fichier : la phrase démarre à
+  l'instant indiqué, au dixième de seconde près.
+- Vous pouvez tout enregistrer d'une traite, puis découper en huit
+  fichiers.
+
+
+AJUSTER
+-------
+
+Tout se règle dans src/config.ts, section « voiceover » :
+
+- une phrase trop longue : le Studio l'écrit dans la console du
+  navigateur ; parlez un peu plus vite, ou avancez son « at » ;
+- décaler une phrase : changez son « at » (en secondes depuis le début
+  de la vidéo) ;
+- volume de la voix : « volume » ; volume de la musique sous la voix :
+  « duckedVolume » dans la section « music » ;
+- garder les niveaux d'origine des fichiers : « normalize: false ».
+
+Les textes de la config servent de script : ils ne s'affichent pas à
+l'écran.

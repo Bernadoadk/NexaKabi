@@ -47,6 +47,10 @@ export const PaymentScreen: React.FC<{
   selectPress?: number;
   payPress?: number;
   paying?: boolean;
+  /** Nombre de Pass Standard de la commande (par défaut `config.data.quantity`). */
+  quantity?: number;
+  /** Référence de la commande (par défaut `config.data.orderReference`). */
+  orderReference?: string;
 }> = ({
   scroll = 0,
   steps = 1,
@@ -54,11 +58,12 @@ export const PaymentScreen: React.FC<{
   selectPress = 0,
   payPress = 0,
   paying = false,
+  quantity = config.data.quantity,
+  orderReference = config.data.orderReference,
 }) => {
   const time = useTime();
   const event = heroEvent();
   const [standard] = config.data.tickets;
-  const quantity = config.data.quantity;
   const subtotal = quantity * standard.price;
   const fee = serviceFee(subtotal);
   const total = subtotal + fee;
@@ -88,7 +93,7 @@ export const PaymentScreen: React.FC<{
           <header className="flex flex-col gap-1">
             <div className="flex items-baseline justify-between gap-3">
               <h1 className="m-0 font-display text-h2 font-bold tracking-[-0.02em]">Paiement</h1>
-              <span className="tabular text-micro text-text-3">{config.data.orderReference}</span>
+              <span className="tabular text-micro text-text-3">{orderReference}</span>
             </div>
             <p className="m-0 flex items-center gap-1.5 text-micro text-text-3">
               <Timer className="size-3.5" />

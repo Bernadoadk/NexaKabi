@@ -1,14 +1,30 @@
-MUSIQUE DE FOND
-===============
+BANDE-SON
+=========
 
-Déposez ici votre musique sous le nom :
+  musique.mp3   la musique de fond (non versionnée, voir plus bas)
+  voix/         la voix off, une phrase par fichier (voir voix/LISEZ-MOI.txt)
+  sfx/          les effets sonores, fabriqués par « npm run sfx »
 
-    musique.mp3
+Chaque couche est facultative : un fichier absent est simplement ignoré.
 
-Elle sera jouée automatiquement dans les deux formats, avec un fondu
-d'entrée et de sortie. Sans fichier, la vidéo reste muette.
 
-Autre nom, volume, durée des fondus : voir `music` dans src/config.ts.
+MUSIQUE
+-------
 
-Pensez aux droits : utilisez une musique libre de droits ou dont vous
-détenez la licence pour une diffusion commerciale (YouTube, Reels, TikTok).
+Morceau retenu : « Water | Afro-pop Music » de kontraa, sur Pixabay
+https://pixabay.com/music/afrobeat-water-afro-pop-music-445661/
+
+Licence Pixabay : usage commercial autorisé (YouTube, Reels, TikTok,
+publicité), sans obligation de créditer. Le fichier seul ne doit pas être
+redistribué : c'est pourquoi il reste hors du dépôt git. Sur un autre
+poste, téléchargez-le depuis la page ci-dessus et enregistrez-le ici sous
+le nom « musique.mp3 ».
+
+Réglages dans src/config.ts, section « music » : volume, volume sous la
+voix (duckedVolume), instant du morceau qui démarre avec la vidéo
+(startAt), fondus. startAt vaut 4,233 s : l'entrée du refrain, à 8,81 s
+dans le morceau, tombe ainsi sur l'impact du logo (110 BPM).
+
+Changer de morceau : remplacez musique.mp3, puis réglez startAt pour
+qu'un temps fort tombe sur l'arrivée du logo (4,6 s). Choisissez une
+musique libre de droits ou dont vous détenez la licence commerciale.

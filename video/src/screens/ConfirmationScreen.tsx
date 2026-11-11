@@ -13,14 +13,38 @@ import { PublicHeader } from './shared';
  * Confirmation (`app/(public)/commandes/[reference]/confirmation/`, écran A5) :
  * fond encre, pastille menthe, montant payé, billets émis sur-le-champ.
  */
-export const ConfirmationScreen: React.FC<{ appear: number; scroll?: number }> = ({
+export const ConfirmationScreen: React.FC<{
+  appear: number;
+  scroll?: number;
+  /** Billets émis, un par ligne (par défaut : ceux de `config.data`). */
+  tickets?: Array<{ name: string; reference: string }>;
+  /**
+   * Mention de l'application sous la liste : « Un lien par billet… »
+   * (`commandes/[reference]/confirmation/page.tsx`).
+   */
+  linkNote?: boolean;
+  /** Mise en avant (0 → 1) de la ligne d'un billet, par son index. */
+  highlight?: { index: number; amount: number };
+  /** Référence de la commande (par défaut `config.data.orderReference`). */
+  orderReference?: string;
+}> = ({
   appear,
   scroll = 0,
+  tickets: given,
+  linkNote = false,
+  highlight,
+  orderReference = config.data.orderReference,
 }) => {
   const time = useTime();
   const event = heroEvent();
   const [standard] = config.data.tickets;
-  const quantity = config.data.quantity;
+  const tickets = (
+    given ?? [
+      { name: config.data.buyer.name, reference: `${config.data.orderReference}-01` },
+      { name: 'Sèna Dossou', reference: `${config.data.orderReference}-02` },
+    ]
+  ).slice(0, given ? undefined : config.data.quantity);
+  const quantity = given ? given.length : config.data.quantity;
   const subtotal = quantity * standard.price;
   const fee = serviceFee(subtotal);
   const total = subtotal + fee;
@@ -29,10 +53,6 @@ export const ConfirmationScreen: React.FC<{ appear: number; scroll?: number }> =
   const title = sp(time, appear + 4, SPRINGS.snappy);
   const card = sp(time, appear + 7, SPRINGS.smooth);
   const counted = Math.round(ramp(time, appear + 8, appear + 30) * total);
-  const tickets = [
-    { name: config.data.buyer.name, reference: `${config.data.orderReference}-01` },
-    { name: 'Sèna Dossou', reference: `${config.data.orderReference}-02` },
-  ].slice(0, quantity);
 
   return (
     <div className="relative h-full overflow-hidden bg-ink text-white">
@@ -70,7 +90,7 @@ export const ConfirmationScreen: React.FC<{ appear: number; scroll?: number }> =
         >
           <dl className="m-0 flex flex-col gap-3">
             <Row label="Référence">
-              <span className="tabular font-bold">{config.data.orderReference}</span>
+              <span className="tabular font-bold">{orderReference}</span>
             </Row>
             <Row label="Date">
               <span className="font-semibold">
@@ -106,6 +126,13 @@ export const ConfirmationScreen: React.FC<{ appear: number; scroll?: number }> =
                 style={{
                   borderTopWidth: index === 0 ? 0 : 1,
                   paddingTop: index === 0 ? 0 : undefined,
+                  ...(highlight && highlight.index === index && highlight.amount > 0
+                    ? {
+                        background: `rgba(255, 77, 46, ${0.18 * highlight.amount})`,
+                        boxShadow: `0 0 0 ${6 * highlight.amount}px rgba(255, 77, 46, ${0.18 * highlight.amount})`,
+                        borderRadius: 8,
+                      }
+                    : null),
                 }}
               >
                 <div className="flex min-w-0 flex-col gap-0.5">
@@ -118,6 +145,12 @@ export const ConfirmationScreen: React.FC<{ appear: number; scroll?: number }> =
               </li>
             ))}
           </ul>
+          {linkNote ? (
+            <p className="m-0 mt-3 text-micro text-white/60">
+              Un lien par billet. Envoie-le à la personne concernée : elle n’aura pas besoin de
+              compte.
+            </p>
+          ) : null}
         </section>
 
         <div className="flex flex-col gap-2.5">

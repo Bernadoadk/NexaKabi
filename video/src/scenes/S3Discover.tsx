@@ -1,6 +1,7 @@
 import React from 'react';
 import { MapPin, SlidersHorizontal } from 'lucide-react';
 import { config } from '../config';
+import { Sfx } from '../components/audio/Sfx';
 import { InkBackground } from '../components/motion/Backgrounds';
 import { Cursor, pressAt } from '../components/motion/Cursor';
 import { Eyebrow, KineticText } from '../components/motion/KineticText';
@@ -50,7 +51,31 @@ export const S3Discover: React.FC<{ durationInFrames: number }> = ({ durationInF
       <Phone />
       <Texts />
     </InkBackground>
+    <Sounds />
   </Scene>
+);
+
+/** Effets sonores : transition, touchers, changements d'écran, épingles. */
+const Sounds: React.FC = () => (
+  <>
+    <Sfx at={0} sound="whoosh" volume={0.7} />
+    <Sfx at={T.chipClick} sound="tap" />
+    <Sfx at={T.toDiscover} sound="swish" volume={0.4} />
+    <Sfx at={T.zoomIn} sound="swish" volume={0.25} />
+    <Sfx at={T.mapClick} sound="tap" />
+    <Sfx at={T.toMap} sound="swish" volume={0.4} />
+    {/* Une épingle par événement, à la cadence de MapScreen (3,5 images) */}
+    {config.data.events.map((event, index) => (
+      <Sfx
+        key={event.id}
+        at={T.pinsDrop + index * 3.5 + 3}
+        sound={index % 2 === 0 ? 'pop' : 'pop-high'}
+        volume={0.35}
+      />
+    ))}
+    <Sfx at={T.pinClick} sound="tap" />
+    <Sfx at={T.openEvent} sound="tap" />
+  </>
 );
 
 const Texts: React.FC = () => {

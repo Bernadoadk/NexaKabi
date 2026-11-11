@@ -5,14 +5,20 @@
   "description": "Vidéo marketing Nexa Kabi, réalisée avec Remotion (16:9 et 9:16).",
   "scripts": {
     "studio": "remotion studio",
-    "render:16x9": "remotion render NexaKabi-16x9 out/nexakabi-16x9.mp4",
-    "render:9x16": "remotion render NexaKabi-9x16 out/nexakabi-9x16.mp4",
+    "render:16x9": "remotion render NexaKabi-16x9 out/nexakabi-16x9.mp4 && node scripts/master.mjs out/nexakabi-16x9.mp4",
+    "render:9x16": "remotion render NexaKabi-9x16 out/nexakabi-9x16.mp4 && node scripts/master.mjs out/nexakabi-9x16.mp4",
     "render": "npm run render:16x9 && npm run render:9x16",
-    "typecheck": "tsc --noEmit"
+    "render:jeunesse:16x9": "remotion render NexaKabi-Jeunesse-16x9 out/nexakabi-jeunesse-16x9.mp4 && node scripts/master.mjs out/nexakabi-jeunesse-16x9.mp4",
+    "render:jeunesse:9x16": "remotion render NexaKabi-Jeunesse-9x16 out/nexakabi-jeunesse-9x16.mp4 && node scripts/master.mjs out/nexakabi-jeunesse-9x16.mp4",
+    "render:jeunesse": "npm run render:jeunesse:16x9 && npm run render:jeunesse:9x16",
+    "master": "node scripts/master.mjs",
+    "typecheck": "tsc --noEmit",
+    "sfx": "node scripts/sfx.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.530",
     "@remotion/google-fonts": "4.0.530",
+    "@remotion/media-utils": "4.0.530",
     "@remotion/tailwind-v4": "4.0.530",
     "@remotion/transitions": "4.0.530",
     "date-fns": "4.4.0",

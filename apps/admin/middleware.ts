@@ -67,10 +67,10 @@ export function middleware(request: NextRequest) {
   /**
    * Politique STRICTE, plus fermée que celle du site public.
    *
-   * La console n'affiche que ses propres écrans : aucune image de domaine
-   * tiers, aucune police externe, aucun cadre. Tout ce qu'un organisateur a
-   * déposé — un visuel d'événement, une pièce justificative — est servi par
-   * l'API sur notre propre origine. Rien ne justifie d'ouvrir davantage.
+   * Aucune police externe, aucun cadre, aucune image d'un domaine quelconque.
+   * Une seule ouverture : le stockage des médias, où la console dépose les
+   * visuels et les vidéos de la une et d'où elle en affiche les aperçus —
+   * voir `storageSources()` dans `lib/security-headers.ts`.
    */
   applyContentSecurityPolicy(nonce, response, { strict: true });
 

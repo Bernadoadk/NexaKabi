@@ -25,10 +25,21 @@ export const ScannerScreen: React.FC<{
   verdict: number;
   entries: number;
   pending: number;
-}> = ({ held, flash, verdict, entries, pending }) => {
+  /** Titulaire du billet présenté (par défaut l'acheteur de la config). */
+  attendee?: string;
+  /** Référence du billet présenté. */
+  reference?: string;
+}> = ({
+  held,
+  flash,
+  verdict,
+  entries,
+  pending,
+  attendee = config.data.buyer.name,
+  reference = `${config.data.orderReference}-01`,
+}) => {
   const time = useTime();
   const [standard] = config.data.tickets;
-  const reference = `${config.data.orderReference}-01`;
 
   return (
     <div className="relative h-full overflow-hidden bg-ink-900 text-white">
@@ -130,7 +141,7 @@ export const ScannerScreen: React.FC<{
             <h2 className="m-0 font-display text-h1 font-bold leading-tight tracking-[-0.02em]">
               Entrée autorisée
             </h2>
-            <p className="m-0 text-[19px] font-bold">{config.data.buyer.name}</p>
+            <p className="m-0 text-[19px] font-bold">{attendee}</p>
             <p className="m-0 text-body-s opacity-70">
               {standard.name} · {referenceSuffix(reference)}
             </p>

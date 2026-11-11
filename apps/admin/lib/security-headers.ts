@@ -22,9 +22,15 @@ import type { NextRequest, NextResponse } from 'next/server';
  * ── Pourquoi la console mérite la version la plus fermée ──────────────────
  * Elle donne accès aux pièces d'identité de tous les organisateurs et permet
  * de geler des fonds. Elle n'affiche, en retour, que ses propres écrans :
- * aucune image de domaine tiers, aucune police externe, aucun cadre. Rien ne
- * justifie d'ouvrir davantage, et tout ce qui est fermé ici est une catégorie
- * d'attaque en moins.
+ * aucune police externe, aucun cadre, aucune image d'un domaine quelconque.
+ * Tout ce qui est fermé ici est une catégorie d'attaque en moins.
+ *
+ * Une seule ouverture, nommée : le stockage des médias, pour la une. La
+ * console y dépose les visuels et les vidéos — directement depuis le
+ * navigateur, avec un ticket signé par l'API — et en affiche les aperçus.
+ * Sans elle, le navigateur bloque l'envoi avant qu'il parte, et l'écran ne
+ * peut que conclure à une coupure du réseau (constaté en production le
+ * 11 nov. 2026). Voir `storageSources()`.
  *
  * Ce fichier est jumeau de celui du site public. Les deux applications sont
  * déployées séparément, sur des domaines distincts : les faire dépendre d'un
@@ -43,13 +49,45 @@ interface PolicyOptions {
   readonly nonce: string;
   readonly isDevelopment: boolean;
   /**
-   * Console d'administration : aucune image ni police externe, aucun cadre.
-   * Elle n'affiche que ses propres écrans, et rien de ce qu'un tiers a déposé.
+   * Console d'administration : ni police externe, ni cadre, ni carte ; des
+   * images et des vidéos du seul stockage des médias.
    */
   readonly strict?: boolean;
 }
 
+/**
+ * Le stockage des médias (Cloudinary), tel que la politique le nomme.
+ *
+ * ── Pourquoi le nom du cloud, quand on le connaît ─────────────────────────
+ * `https://api.cloudinary.com` tout court laisserait partir un envoi vers
+ * N'IMPORTE QUEL compte Cloudinary — celui d'un attaquant compris, qui n'a
+ * qu'à ouvrir un dépôt sans signature pour recevoir ce qu'un script injecté
+ * lui enverrait. Restreinte au chemin de NOTRE cloud (`/v1_1/<nom>/` pour
+ * l'envoi, `/<nom>/` pour la lecture), la politique fait refuser tout le
+ * reste par le navigateur. Le nom n'a rien de secret : il figure dans
+ * l'adresse de chaque image publiée.
+ *
+ * Sans `CLOUDINARY_CLOUD_NAME`, ou avec une valeur qui n'a pas la forme d'un
+ * nom de cloud : l'hôte entier. La une fonctionne, la restriction en moins.
+ */
+function storageSources(): { upload: string; delivery: string } {
+  const cloud = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+
+  // Lettres, chiffres, tirets et soulignés : rien d'autre ne doit pouvoir
+  // s'écrire dans la politique — un `;` y ouvrirait une directive.
+  if (cloud && /^[\w-]+$/.test(cloud)) {
+    return {
+      upload: `https://api.cloudinary.com/v1_1/${cloud}/`,
+      delivery: `https://res.cloudinary.com/${cloud}/`,
+    };
+  }
+
+  return { upload: 'https://api.cloudinary.com', delivery: 'https://res.cloudinary.com' };
+}
+
 function buildPolicy({ nonce, isDevelopment, strict = false }: PolicyOptions): string {
+  const storage = storageSources();
+
   const directives: Array<[string, string[]]> = [
     ['default-src', ["'self'"]],
 
@@ -86,51 +124,47 @@ function buildPolicy({ nonce, isDevelopment, strict = false }: PolicyOptions): s
       ["'self'", "'unsafe-inline'", ...(strict ? [] : ['https://fonts.googleapis.com'])],
     ],
 
-    // Le stockage objet servira les visuels d'événements ; `data:` couvre les
-    // images encodées du billet PDF et les icônes de l'application.
-    ['img-src', strict ? ["'self'", 'data:'] : ["'self'", 'data:', 'blob:', 'https:']],
+    // `data:` couvre les icônes de l'application. La console n'affiche en
+    // plus que les aperçus de la une — visuels, affiches de vidéo, couvertures
+    // d'événements —, servis par le stockage ; en développement sans
+    // stockage, par l'API locale.
+    [
+      'img-src',
+      strict
+        ? ["'self'", 'data:', storage.delivery, ...(isDevelopment ? ['http://localhost:*'] : [])]
+        : ["'self'", 'data:', 'blob:', 'https:'],
+    ],
 
     ['font-src', ["'self'", 'data:', ...(strict ? [] : ['https://fonts.gstatic.com'])]],
 
     /**
      * Le navigateur ne parle jamais directement à l'API : tout passe par les
-     * route handlers de cette application. `'self'` suffit donc, et toute
-     * tentative d'exfiltration vers un autre hôte est refusée par le navigateur.
+     * route handlers de cette application, et toute tentative d'exfiltration
+     * vers un autre hôte est refusée par le navigateur.
      *
-     * Deux exceptions nommées. Le SDK de la carte, sur le site public seulement.
-     * Et en développement, le rechargement à chaud de Next, qui passe par un
-     * WebSocket — un schéma que `'self'` ne couvre pas : sans ces entrées, le
-     * développeur perd le rechargement automatique, et une CSP qui gêne le
-     * travail quotidien finit désactivée.
+     * Trois exceptions nommées. Le dépôt direct des visuels et des vidéos de
+     * la une chez le stockage (voir `lib/upload-client.ts`) : le navigateur y
+     * envoie le fichier avec un ticket signé par l'API, jamais une clé — sans
+     * cette entrée, l'envoi est bloqué avant de partir. Le SDK de la carte,
+     * sur le site public seulement. Et en développement, le rechargement à
+     * chaud de Next, qui passe par un WebSocket — un schéma que `'self'` ne
+     * couvre pas : sans ces entrées, le développeur perd le rechargement
+     * automatique, et une CSP qui gêne le travail quotidien finit désactivée.
      */
     [
       'connect-src',
       [
         "'self'",
+        storage.upload,
         // Tuiles, géométries et polices de la carte : le SDK les demande
-        // lui-même, depuis la page. Et le dépôt direct des visuels de la une
-        // chez le stockage (voir `lib/upload-client.ts`) : le navigateur y
-        // envoie le fichier avec un ticket signé par l'API, jamais une clé.
-        ...(strict
-          ? []
-          : [
-              'https://maps.googleapis.com',
-              'https://maps.gstatic.com',
-              'https://api.cloudinary.com',
-            ]),
+        // lui-même, depuis la page.
+        ...(strict ? [] : ['https://maps.googleapis.com', 'https://maps.gstatic.com']),
         ...(isDevelopment ? ['ws://localhost:*', 'wss://localhost:*', 'http://localhost:*'] : []),
       ],
     ],
 
     // L'aperçu des vidéos de la une, servies par le stockage.
-    [
-      'media-src',
-      [
-        "'self'",
-        ...(strict ? [] : ['https://res.cloudinary.com']),
-        ...(isDevelopment ? ['http://localhost:*'] : []),
-      ],
-    ],
+    ['media-src', ["'self'", storage.delivery, ...(isDevelopment ? ['http://localhost:*'] : [])]],
     ['worker-src', ["'self'", 'blob:']],
     ['manifest-src', ["'self'"]],
 

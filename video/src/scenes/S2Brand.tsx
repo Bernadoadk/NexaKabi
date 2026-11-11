@@ -1,5 +1,6 @@
 import React from 'react';
 import { config } from '../config';
+import { Sfx } from '../components/audio/Sfx';
 import { InkBackground } from '../components/motion/Backgrounds';
 import { KineticText } from '../components/motion/KineticText';
 import { BrandMark } from '../components/ui/Basics';
@@ -20,6 +21,9 @@ export const S2Brand: React.FC<{ durationInFrames: number }> = ({ durationInFram
     <InkBackground>
       <Content />
     </InkBackground>
+    {/* Le logo frappe avec l'onde de choc, le nom glisse de derrière lui. */}
+    <Sfx at={2} sound="impact" volume={0.9} />
+    <Sfx at={16} sound="swish" volume={0.3} />
   </Scene>
 );
 

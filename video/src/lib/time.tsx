@@ -15,7 +15,12 @@ import { config } from '../config';
  */
 const TimeContext = createContext<number>(0);
 
+/** Images de conception par image réelle (1 quand la durée n'a pas changé). */
+const RatioContext = createContext<number>(1);
+
 export const useTime = () => useContext(TimeContext);
+
+export const useSceneRatio = () => useContext(RatioContext);
 
 export const SceneTime: React.FC<{
   designSeconds: number;
@@ -24,5 +29,9 @@ export const SceneTime: React.FC<{
 }> = ({ designSeconds, durationInFrames, children }) => {
   const frame = useCurrentFrame();
   const ratio = (designSeconds * config.fps) / durationInFrames;
-  return <TimeContext.Provider value={frame * ratio}>{children}</TimeContext.Provider>;
+  return (
+    <RatioContext.Provider value={ratio}>
+      <TimeContext.Provider value={frame * ratio}>{children}</TimeContext.Provider>
+    </RatioContext.Provider>
+  );
 };

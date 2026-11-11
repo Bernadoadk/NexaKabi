@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowRight, Lock } from 'lucide-react';
 import { config } from '../config';
+import { Sfx } from '../components/audio/Sfx';
 import { InkBackground } from '../components/motion/Backgrounds';
 import { pressAt } from '../components/motion/Cursor';
 import { KineticText } from '../components/motion/KineticText';
@@ -13,28 +14,57 @@ import { Scene } from './common';
 
 const CTA_DESIGN = 4.5;
 
-const T = { typeStart: 46, typeEnd: 74, click: 96 };
+const T = { lockup: 34, typeStart: 46, typeEnd: 74, button: 78, click: 96 };
+
+/** Textes de l'appel à l'action (par défaut `config.scenes.cta`). */
+export interface CtaTexts {
+  kicker: string;
+  button: string;
+  subline: string;
+}
 
 /**
  * 8 · Appel à l'action : « Cette fin d'année, ne ratez plus rien. », le logo,
  * l'adresse du site qui se tape, le bouton corail qu'un curseur clique.
  * La dernière seconde et demie est un plan fixe : la vidéo boucle proprement.
+ * `texts` : les textes d'une autre vidéo du projet.
  */
-export const S8Cta: React.FC<{ durationInFrames: number }> = ({ durationInFrames }) => (
+export const S8Cta: React.FC<{ durationInFrames: number; texts?: CtaTexts }> = ({
+  durationInFrames,
+  texts = config.scenes.cta,
+}) => (
   <Scene design={CTA_DESIGN} durationInFrames={durationInFrames}>
     <InkBackground glow={1.2}>
-      <Content />
+      <Content texts={texts} />
     </InkBackground>
+    <Sounds />
   </Scene>
 );
 
-const Content: React.FC = () => {
+/** Effets sonores : logo, frappe de l'adresse, bouton, clic. */
+const Sounds: React.FC = () => (
+  <>
+    <Sfx at={0} sound="whoosh-deep" volume={0.35} />
+    <Sfx at={T.lockup + 1} sound="pop" volume={0.6} />
+    {Array.from({ length: Math.ceil((T.typeEnd - T.typeStart) / 2) }, (_, index) => (
+      <Sfx
+        key={index}
+        at={T.typeStart + 1 + index * 2}
+        sound="type"
+        volume={index % 2 === 0 ? 0.5 : 0.35}
+      />
+    ))}
+    <Sfx at={T.button + 1} sound="pop-high" volume={0.4} />
+    <Sfx at={T.click} sound="tap" />
+  </>
+);
+
+const Content: React.FC<{ texts: CtaTexts }> = ({ texts: scene }) => {
   const time = useTime();
   const { portrait } = useFormat();
-  const scene = config.scenes.cta;
-  const lockup = sp(time, 34, SPRINGS.pop);
+  const lockup = sp(time, T.lockup, SPRINGS.pop);
   const bar = sp(time, 40, SPRINGS.smooth);
-  const button = sp(time, 78, SPRINGS.snappy);
+  const button = sp(time, T.button, SPRINGS.snappy);
   const subline = ramp(time, 84, 98);
   const press = pressAt(time, T.click);
 

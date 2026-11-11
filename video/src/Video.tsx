@@ -1,13 +1,14 @@
 import React from 'react';
-import { AbsoluteFill, Html5Audio, interpolate, staticFile, useVideoConfig } from 'remotion';
+import { AbsoluteFill, useVideoConfig } from 'remotion';
 import { linearTiming, TransitionSeries, type TransitionPresentation } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
 import { iris } from '@remotion/transitions/iris';
 import { slide } from '@remotion/transitions/slide';
 import { wipe } from '@remotion/transitions/wipe';
+import { Soundtrack } from './components/audio/Soundtrack';
+import type { VoiceClip } from './components/audio/voices';
 import { config } from './config';
 import './fonts';
-import { CLAMP } from './lib/anim';
 import { colorVariables } from './theme';
 import { S1Hook } from './scenes/S1Hook';
 import { S2Brand } from './scenes/S2Brand';
@@ -68,15 +69,17 @@ function presentation(boundary: Boundary, width: number, height: number) {
   }
 }
 
+/** Fichiers audio trouvés dans `public/` (voir `calculateMetadata` dans `Root.tsx`). */
 export interface VideoProps extends Record<string, unknown> {
-  hasMusic: boolean;
+  /** Chemin de la musique, ou `null` : pas de musique. */
+  music: string | null;
+  voices: VoiceClip[];
 }
 
-export const Video: React.FC<VideoProps> = ({ hasMusic }) => {
+export const Video: React.FC<VideoProps> = ({ music, voices }) => {
   const { width, height } = useVideoConfig();
   const durations = sceneFrames();
   const transition = transitionFrames();
-  const total = totalFrames();
 
   const children: React.ReactNode[] = [];
   SCENES.forEach((scene, index) => {
@@ -110,26 +113,7 @@ export const Video: React.FC<VideoProps> = ({ hasMusic }) => {
     >
       <TransitionSeries>{children}</TransitionSeries>
 
-      {hasMusic ? (
-        <Html5Audio
-          src={staticFile(config.music.file)}
-          volume={(frame) => {
-            const fadeIn = interpolate(
-              frame,
-              [0, frames(config.music.fadeInSeconds)],
-              [0, 1],
-              CLAMP,
-            );
-            const fadeOut = interpolate(
-              frame,
-              [total - frames(config.music.fadeOutSeconds), total],
-              [1, 0],
-              CLAMP,
-            );
-            return config.music.volume * Math.min(fadeIn, fadeOut);
-          }}
-        />
-      ) : null}
+      <Soundtrack music={music} voices={voices} />
     </AbsoluteFill>
   );
 };

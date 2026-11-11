@@ -1,5 +1,6 @@
 import React from 'react';
 import { config } from '../config';
+import { Sfx } from '../components/audio/Sfx';
 import { InkBackground } from '../components/motion/Backgrounds';
 import { Cursor, pressAt } from '../components/motion/Cursor';
 import { Eyebrow, KineticText } from '../components/motion/KineticText';
@@ -20,6 +21,8 @@ const T = {
   plus2: 54,
   continueClick: 86,
   toPayment: 94,
+  /** Logos MTN, Moov, carte, l'un après l'autre (4 images d'écart). */
+  logos: 98,
   mtnClick: 132,
   payClick: 160,
   toConfirmation: 176,
@@ -46,7 +49,27 @@ export const S4Checkout: React.FC<{ durationInFrames: number }> = ({ durationInF
       <Phone />
       <Texts />
     </InkBackground>
+    <Sounds />
   </Scene>
+);
+
+/** Effets sonores : touchers, changements d'écran, logos, « ding » de confirmation. */
+const Sounds: React.FC = () => (
+  <>
+    <Sfx at={T.buyClick} sound="tap" />
+    <Sfx at={T.sheetOpen} sound="swish" volume={0.3} />
+    <Sfx at={T.plus1} sound="tap" />
+    <Sfx at={T.plus2} sound="tap" />
+    <Sfx at={T.continueClick} sound="tap" />
+    <Sfx at={T.toPayment} sound="swish" volume={0.4} />
+    {[0, 1, 2].map((index) => (
+      <Sfx key={index} at={T.logos + index * 4 + 1} sound="pop-high" volume={0.4} />
+    ))}
+    <Sfx at={T.mtnClick} sound="tap" />
+    <Sfx at={T.payClick} sound="tap" />
+    <Sfx at={T.toConfirmation} sound="swish" volume={0.4} />
+    <Sfx at={T.confirmationAppear + 1} sound="ding" volume={0.75} />
+  </>
 );
 
 const Texts: React.FC = () => {
@@ -87,7 +110,7 @@ const Texts: React.FC = () => {
       </BeatStack>
       <div style={{ display: 'flex', gap: 22, opacity: logos, height: stage.portrait ? 88 : 96 }}>
         {(['mtn', 'moov', 'card'] as const).map((logo, index) => {
-          const pop = sp(time, 98 + index * 4, SPRINGS.pop);
+          const pop = sp(time, T.logos + index * 4, SPRINGS.pop);
           return (
             <PaymentLogo
               key={logo}

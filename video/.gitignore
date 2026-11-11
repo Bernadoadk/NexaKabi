@@ -1,6 +1,14 @@
 node_modules/
 out/
-# La musique est ajoutée à la main, hors du dépôt.
+# Musique (licence Pixabay : pas de redistribution du fichier seul) et voix
+# off : ajoutées à la main, hors du dépôt. Les effets sonores (sfx/) sont
+# versionnés ; `npm run sfx` les refabrique à l'identique.
 public/audio/*.mp3
 public/audio/*.wav
 public/audio/*.m4a
+public/audio/voix/*
+!public/audio/voix/LISEZ-MOI.txt
+# Vidéo « Jeunesse » : seul le mode d'emploi de la voix off est versionné.
+!public/audio/voix/jeunesse/
+public/audio/voix/jeunesse/*
+!public/audio/voix/jeunesse/LISEZ-MOI.txt

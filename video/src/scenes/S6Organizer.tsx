@@ -1,5 +1,6 @@
 import React from 'react';
 import { config } from '../config';
+import { Sfx } from '../components/audio/Sfx';
 import { InkBackground } from '../components/motion/Backgrounds';
 import { Cursor, pressAt } from '../components/motion/Cursor';
 import { BROWSER, BrowserFrame } from '../components/motion/Frames';
@@ -53,7 +54,25 @@ export const S6Organizer: React.FC<{ durationInFrames: number }> = ({ durationIn
       <Device />
       <Texts />
     </InkBackground>
+    <Sounds />
   </Scene>
+);
+
+/** Effets sonores : étapes de l'assistant, publication, écrans, solde, retrait. */
+const Sounds: React.FC = () => (
+  <>
+    <Sfx at={0} sound="whoosh" volume={0.7} />
+    {T.steps.slice(1).map((at) => (
+      <Sfx key={at} at={at} sound="tick" volume={0.35} />
+    ))}
+    <Sfx at={T.publishClick} sound="tap" />
+    <Sfx at={T.dialog + 1} sound="ding" volume={0.6} />
+    <Sfx at={T.toStats} sound="swish" volume={0.35} />
+    <Sfx at={T.toFinance} sound="swish" volume={0.35} />
+    {/* Le solde finit de compter (34 images, voir FinanceScreen) */}
+    <Sfx at={T.financeStart + 30} sound="coins" volume={0.5} />
+    <Sfx at={T.withdrawClick} sound="tap" />
+  </>
 );
 
 const Texts: React.FC = () => {

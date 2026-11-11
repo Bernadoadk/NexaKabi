@@ -86,12 +86,41 @@ export interface VideoConfig {
   };
   fps: number;
   music: {
-    /** Chemin dans `public/`. Sans fichier à cet endroit, la vidéo est muette. */
+    /** Chemin dans `public/`. Sans fichier à cet endroit, la vidéo est sans musique. */
     file: string;
-    /** 0 à 1. */
+    /** Crédit affiché dans le README (titre, auteur, source). */
+    credit: string;
+    /** Volume normal, de 0 à 1. */
     volume: number;
+    /** Volume pendant la voix off : la musique s'efface sous la voix. */
+    duckedVolume: number;
+    /** Instant du morceau (secondes) qui démarre avec la vidéo. */
+    startAt: number;
+    /** Vitesse de lecture (1 = normale), pour caler le tempo sur les coupes. */
+    playbackRate: number;
     fadeInSeconds: number;
     fadeOutSeconds: number;
+  };
+  /**
+   * Voix off : une phrase par fichier, posée à son instant (secondes, depuis
+   * le début de la vidéo). Le fichier se dépose dans `public/` sous le nom
+   * indiqué, avec l'extension de votre choix (.mp3, .m4a, .wav, .ogg).
+   */
+  voiceover: {
+    volume: number;
+    /** Égalise le volume des phrases (enregistrements faits au téléphone). */
+    normalize: boolean;
+    /**
+     * `at` : début (secondes depuis le début de la vidéo). `end` : instant où
+     * la phrase doit être finie, s'il tombe avant la phrase suivante.
+     */
+    lines: Array<{ file: string; at: number; end?: number; text: string }>;
+  };
+  /** Effets sonores (souffles, clics, « ding »), générés par `npm run sfx`. */
+  sfx: {
+    enabled: boolean;
+    /** Volume général des effets, de 0 à 1. */
+    volume: number;
   };
   /** Durée de chaque transition entre deux scènes. */
   transitionSeconds: number;

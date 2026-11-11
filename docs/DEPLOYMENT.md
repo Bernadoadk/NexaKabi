@@ -55,6 +55,13 @@ Trois mécanismes méritent d'être compris avant de toucher à quoi que ce soit
 `turbo run build` lancé depuis `apps/<app>` se limite automatiquement à cette application et à
 ses dépendances internes (`packages/utils`, `packages/contracts`) ; `turbo` est fourni par Vercel.
 
+**Le cache de Turbo.** Vercel garde un cache distant des builds : quand un commit ne touche pas
+l'API (console, site, documentation), son build est rejoué depuis ce cache (« FULL TURBO ») et
+seules les SORTIES déclarées dans `turbo.json` sont restaurées. Le client Prisma généré
+(`apps/api/src/generated/`) doit en faire partie (`@nexakabi/api#build`) : le seed le charge depuis
+`src/`, et sans lui le build échoue sur « Cannot find module '../src/generated/prisma/client' »
+(constaté le 11 nov. 2026).
+
 **Modules ES et chargeur de Vercel.** NestJS 12 est publié en modules ES, et l'API est compilée en
 CommonJS : elle fait donc `require()` de modules ES. Node 22.12+ l'accepte nativement, mais le
 chargeur maison de Vercel le refuse par défaut — d'où la variable `NODE_OPTIONS=--experimental-require-module`
